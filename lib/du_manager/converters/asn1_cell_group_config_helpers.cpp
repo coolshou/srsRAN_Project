@@ -58,88 +58,91 @@ asn1::rrc_nr::coreset_s srsran::srs_du::make_asn1_rrc_coreset(const coreset_conf
 asn1::rrc_nr::search_space_s srsran::srs_du::make_asn1_rrc_search_space(const search_space_configuration& cfg)
 {
   search_space_s ss;
-  ss.search_space_id                                = cfg.id;
+  ss.search_space_id                                = cfg.get_id();
   ss.coreset_id_present                             = true;
-  ss.coreset_id                                     = cfg.cs_id;
+  ss.coreset_id                                     = cfg.get_coreset_id();
   ss.monitoring_slot_periodicity_and_offset_present = true;
   search_space_s::monitoring_slot_periodicity_and_offset_c_::types period;
-  bool success = asn1::number_to_enum(period, cfg.monitoring_slot_period);
+  bool success = asn1::number_to_enum(period, cfg.get_monitoring_slot_periodicity());
   srsran_assert(success, "Invalid slot period");
   ss.monitoring_slot_periodicity_and_offset.set(period);
   switch (ss.monitoring_slot_periodicity_and_offset.type().value) {
     case search_space_s::monitoring_slot_periodicity_and_offset_c_::types_opts::sl1:
       break;
     case search_space_s::monitoring_slot_periodicity_and_offset_c_::types_opts::sl2:
-      ss.monitoring_slot_periodicity_and_offset.sl2() = cfg.monitoring_slot_offset;
+      ss.monitoring_slot_periodicity_and_offset.sl2() = cfg.get_monitoring_slot_offset();
       break;
     case search_space_s::monitoring_slot_periodicity_and_offset_c_::types_opts::sl4:
-      ss.monitoring_slot_periodicity_and_offset.sl4() = cfg.monitoring_slot_offset;
+      ss.monitoring_slot_periodicity_and_offset.sl4() = cfg.get_monitoring_slot_offset();
       break;
     case search_space_s::monitoring_slot_periodicity_and_offset_c_::types_opts::sl5:
-      ss.monitoring_slot_periodicity_and_offset.sl5() = cfg.monitoring_slot_offset;
+      ss.monitoring_slot_periodicity_and_offset.sl5() = cfg.get_monitoring_slot_offset();
       break;
     case search_space_s::monitoring_slot_periodicity_and_offset_c_::types_opts::sl8:
-      ss.monitoring_slot_periodicity_and_offset.sl8() = cfg.monitoring_slot_offset;
+      ss.monitoring_slot_periodicity_and_offset.sl8() = cfg.get_monitoring_slot_offset();
       break;
     case search_space_s::monitoring_slot_periodicity_and_offset_c_::types_opts::sl10:
-      ss.monitoring_slot_periodicity_and_offset.sl10() = cfg.monitoring_slot_offset;
+      ss.monitoring_slot_periodicity_and_offset.sl10() = cfg.get_monitoring_slot_offset();
       break;
     case search_space_s::monitoring_slot_periodicity_and_offset_c_::types_opts::sl16:
-      ss.monitoring_slot_periodicity_and_offset.sl16() = cfg.monitoring_slot_offset;
+      ss.monitoring_slot_periodicity_and_offset.sl16() = cfg.get_monitoring_slot_offset();
       break;
     case search_space_s::monitoring_slot_periodicity_and_offset_c_::types_opts::sl20:
-      ss.monitoring_slot_periodicity_and_offset.sl20() = cfg.monitoring_slot_offset;
+      ss.monitoring_slot_periodicity_and_offset.sl20() = cfg.get_monitoring_slot_offset();
       break;
     case search_space_s::monitoring_slot_periodicity_and_offset_c_::types_opts::sl40:
-      ss.monitoring_slot_periodicity_and_offset.sl40() = cfg.monitoring_slot_offset;
+      ss.monitoring_slot_periodicity_and_offset.sl40() = cfg.get_monitoring_slot_offset();
       break;
     case search_space_s::monitoring_slot_periodicity_and_offset_c_::types_opts::sl80:
-      ss.monitoring_slot_periodicity_and_offset.sl80() = cfg.monitoring_slot_offset;
+      ss.monitoring_slot_periodicity_and_offset.sl80() = cfg.get_monitoring_slot_offset();
       break;
     case search_space_s::monitoring_slot_periodicity_and_offset_c_::types_opts::sl160:
-      ss.monitoring_slot_periodicity_and_offset.sl160() = cfg.monitoring_slot_offset;
+      ss.monitoring_slot_periodicity_and_offset.sl160() = cfg.get_monitoring_slot_offset();
       break;
     case search_space_s::monitoring_slot_periodicity_and_offset_c_::types_opts::sl320:
-      ss.monitoring_slot_periodicity_and_offset.sl320() = cfg.monitoring_slot_offset;
+      ss.monitoring_slot_periodicity_and_offset.sl320() = cfg.get_monitoring_slot_offset();
       break;
     case search_space_s::monitoring_slot_periodicity_and_offset_c_::types_opts::sl640:
-      ss.monitoring_slot_periodicity_and_offset.sl640() = cfg.monitoring_slot_offset;
+      ss.monitoring_slot_periodicity_and_offset.sl640() = cfg.get_monitoring_slot_offset();
       break;
     case search_space_s::monitoring_slot_periodicity_and_offset_c_::types_opts::sl1280:
-      ss.monitoring_slot_periodicity_and_offset.sl1280() = cfg.monitoring_slot_offset;
+      ss.monitoring_slot_periodicity_and_offset.sl1280() = cfg.get_monitoring_slot_offset();
       break;
     case search_space_s::monitoring_slot_periodicity_and_offset_c_::types_opts::sl2560:
-      ss.monitoring_slot_periodicity_and_offset.sl2560() = cfg.monitoring_slot_offset;
+      ss.monitoring_slot_periodicity_and_offset.sl2560() = cfg.get_monitoring_slot_offset();
       break;
     default:
-      srsran_assertion_failure("Invalid PDCCH slot offset={}", cfg.monitoring_slot_offset);
+      srsran_assertion_failure("Invalid PDCCH slot offset={}", cfg.get_monitoring_slot_offset());
   }
-  if (cfg.duration != 1) {
+  if (cfg.get_duration() != 1) {
     ss.dur_present = true;
-    ss.dur         = cfg.duration;
+    ss.dur         = cfg.get_duration();
   }
-  if (cfg.monitoring_symbols_within_slot.has_value()) {
+  if (cfg.get_monitoring_symbols_within_slot().any()) {
     ss.monitoring_symbols_within_slot_present = true;
-    ss.monitoring_symbols_within_slot.from_number(cfg.monitoring_symbols_within_slot->to_ulong());
+    ss.monitoring_symbols_within_slot.from_number(cfg.get_monitoring_symbols_within_slot().to_uint64());
   }
   ss.nrof_candidates_present = true;
-  asn1::number_to_enum(ss.nrof_candidates.aggregation_level1, cfg.nof_candidates[0]);
-  asn1::number_to_enum(ss.nrof_candidates.aggregation_level2, cfg.nof_candidates[1]);
-  asn1::number_to_enum(ss.nrof_candidates.aggregation_level4, cfg.nof_candidates[2]);
-  asn1::number_to_enum(ss.nrof_candidates.aggregation_level8, cfg.nof_candidates[3]);
-  asn1::number_to_enum(ss.nrof_candidates.aggregation_level16, cfg.nof_candidates[4]);
+  asn1::number_to_enum(ss.nrof_candidates.aggregation_level1, cfg.get_nof_candidates()[0]);
+  asn1::number_to_enum(ss.nrof_candidates.aggregation_level2, cfg.get_nof_candidates()[1]);
+  asn1::number_to_enum(ss.nrof_candidates.aggregation_level4, cfg.get_nof_candidates()[2]);
+  asn1::number_to_enum(ss.nrof_candidates.aggregation_level8, cfg.get_nof_candidates()[3]);
+  asn1::number_to_enum(ss.nrof_candidates.aggregation_level16, cfg.get_nof_candidates()[4]);
   ss.search_space_type_present = true;
-  if (cfg.type == search_space_configuration::type_t::common) {
+  if (cfg.is_common_search_space()) {
+    const auto dci_fmt = variant_get<search_space_configuration::common_dci_format>(cfg.get_monitored_dci_formats());
     ss.search_space_type.set_common();
-    ss.search_space_type.common().dci_format0_0_and_format1_0_present = cfg.common.f0_0_and_f1_0;
-    ss.search_space_type.common().dci_format2_0_present               = cfg.common.f2_0;
-    ss.search_space_type.common().dci_format2_1_present               = cfg.common.f2_1;
-    ss.search_space_type.common().dci_format2_2_present               = cfg.common.f2_2;
-    ss.search_space_type.common().dci_format2_3_present               = cfg.common.f2_3;
+    ss.search_space_type.common().dci_format0_0_and_format1_0_present = dci_fmt.f0_0_and_f1_0;
+    ss.search_space_type.common().dci_format2_0_present               = dci_fmt.f2_0;
+    ss.search_space_type.common().dci_format2_1_present               = dci_fmt.f2_1;
+    ss.search_space_type.common().dci_format2_2_present               = dci_fmt.f2_2;
+    ss.search_space_type.common().dci_format2_3_present               = dci_fmt.f2_3;
   } else {
+    const auto dci_fmt =
+        variant_get<search_space_configuration::ue_specific_dci_format>(cfg.get_monitored_dci_formats());
     ss.search_space_type.set_ue_specific();
     ss.search_space_type.ue_specific().dci_formats.value =
-        cfg.ue_specific == srsran::search_space_configuration::ue_specific_dci_format::f0_0_and_f1_0
+        dci_fmt == srsran::search_space_configuration::ue_specific_dci_format::f0_0_and_f1_0
             ? search_space_s::search_space_type_c_::ue_specific_s_::dci_formats_opts::formats0_neg0_and_neg1_neg0
             : search_space_s::search_space_type_c_::ue_specific_s_::dci_formats_opts::formats0_neg1_and_neg1_neg1;
   }
@@ -231,21 +234,20 @@ void calculate_pdcch_config_diff(asn1::rrc_nr::pdcch_cfg_s& out, const pdcch_con
       src.search_spaces,
       dest.search_spaces,
       [](const search_space_configuration& ss) { return make_asn1_rrc_search_space(ss); },
-      [](const search_space_configuration& ss) { return (uint8_t)ss.id; });
+      [](const search_space_configuration& ss) { return (uint8_t)ss.get_id(); });
 
   // TODO: Remaining.
 }
 
 void make_asn1_rrc_dmrs_dl_for_pdsch(asn1::rrc_nr::dmrs_dl_cfg_s& out, const dmrs_downlink_config& cfg)
 {
-  if (cfg.type.has_value() && cfg.type.value() == dmrs_config_type::type2) {
+  if (cfg.is_dmrs_type2) {
     out.dmrs_type_present = true;
   }
 
-  if (cfg.additional_positions.has_value() &&
-      cfg.additional_positions.value() != srsran::dmrs_additional_positions::pos2) {
+  if (cfg.additional_positions != srsran::dmrs_additional_positions::pos2) {
     out.dmrs_add_position_present = true;
-    switch (cfg.additional_positions.value()) {
+    switch (cfg.additional_positions) {
       case dmrs_additional_positions::pos0:
         out.dmrs_add_position = dmrs_dl_cfg_s::dmrs_add_position_opts::pos0;
         break;
@@ -256,13 +258,12 @@ void make_asn1_rrc_dmrs_dl_for_pdsch(asn1::rrc_nr::dmrs_dl_cfg_s& out, const dmr
         out.dmrs_add_position = dmrs_dl_cfg_s::dmrs_add_position_opts::pos3;
         break;
       default:
-        srsran_assertion_failure("Invalid DMRS DL Add. Position={}", cfg.additional_positions.value());
+        srsran_assertion_failure("Invalid DMRS DL Add. Position={}", cfg.additional_positions);
     }
   }
 
-  if (cfg.max_length.has_value() && cfg.max_length.value() != dmrs_max_length::len2) {
-    // Note: Strange ASN1 generated code where there is no max length field.
-    srsran_assertion_failure("Invalid DMRS DL max. length={}", cfg.max_length.value());
+  if (cfg.is_max_length_len2) {
+    out.max_len_present = true;
   }
 
   if (cfg.scrambling_id0.has_value()) {
@@ -509,6 +510,19 @@ void calculate_pdsch_config_diff(asn1::rrc_nr::pdsch_cfg_s& out, const pdsch_con
     }
   }
 
+  // Compute zp CSI-RS resources and resource sets.
+  calculate_addmodremlist_diff(
+      out.zp_csi_rs_res_to_add_mod_list,
+      out.zp_csi_rs_res_to_release_list,
+      src.zp_csi_rs_res_list,
+      dest.zp_csi_rs_res_list,
+      [](const zp_csi_rs_resource& r) { return make_asn1_zp_csi_rs_resource(r); },
+      [](const zp_csi_rs_resource& r) { return r.id; });
+  out.p_zp_csi_rs_res_set_present = calculate_setup_release(
+      out.p_zp_csi_rs_res_set, src.p_zp_csi_rs_res, dest.p_zp_csi_rs_res, [](const zp_csi_rs_resource_set& s) {
+        return make_asn1_zp_csi_rs_resource_set(s);
+      });
+
   // TODO: Remaining.
 }
 
@@ -615,40 +629,47 @@ asn1::rrc_nr::pucch_res_s srsran::srs_du::make_asn1_rrc_pucch_resource(const puc
   pucch_res_s pucch_res;
   pucch_res.pucch_res_id                = cfg.res_id;
   pucch_res.start_prb                   = cfg.starting_prb;
-  pucch_res.intra_slot_freq_hop_present = cfg.intraslot_freq_hopping;
-  pucch_res.second_hop_prb              = cfg.second_hop_prb;
-  pucch_res.second_hop_prb_present      = true;
+  pucch_res.intra_slot_freq_hop_present = cfg.second_hop_prb.has_value();
+  pucch_res.second_hop_prb_present      = cfg.second_hop_prb.has_value();
+  if (cfg.second_hop_prb.has_value()) {
+    pucch_res.second_hop_prb = cfg.second_hop_prb.value();
+  }
   switch (cfg.format) {
     case pucch_format::FORMAT_0: {
-      auto& format0             = pucch_res.format.set_format0();
-      format0.init_cyclic_shift = cfg.format_0.initial_cyclic_shift;
-      format0.nrof_symbols      = cfg.format_0.nof_symbols;
-      format0.start_symbol_idx  = cfg.format_0.starting_sym_idx;
+      const auto& f0            = variant_get<pucch_format_0_cfg>(cfg.format_params);
+      auto&       format0       = pucch_res.format.set_format0();
+      format0.init_cyclic_shift = f0.initial_cyclic_shift;
+      format0.nrof_symbols      = f0.nof_symbols;
+      format0.start_symbol_idx  = f0.starting_sym_idx;
     } break;
     case pucch_format::FORMAT_1: {
-      auto& format1             = pucch_res.format.set_format1();
-      format1.init_cyclic_shift = cfg.format_1.initial_cyclic_shift;
-      format1.nrof_symbols      = cfg.format_1.nof_symbols;
-      format1.start_symbol_idx  = cfg.format_1.starting_sym_idx;
-      format1.time_domain_occ   = cfg.format_1.time_domain_occ;
+      const auto& f1            = variant_get<pucch_format_1_cfg>(cfg.format_params);
+      auto&       format1       = pucch_res.format.set_format1();
+      format1.init_cyclic_shift = f1.initial_cyclic_shift;
+      format1.nrof_symbols      = f1.nof_symbols;
+      format1.start_symbol_idx  = f1.starting_sym_idx;
+      format1.time_domain_occ   = f1.time_domain_occ;
     } break;
     case pucch_format::FORMAT_2: {
-      auto& format2            = pucch_res.format.set_format2();
-      format2.start_symbol_idx = cfg.format_2.starting_sym_idx;
-      format2.nrof_symbols     = cfg.format_2.nof_symbols;
-      format2.nrof_prbs        = cfg.format_2.nof_prbs;
+      const auto& f2           = variant_get<pucch_format_2_3_cfg>(cfg.format_params);
+      auto&       format2      = pucch_res.format.set_format2();
+      format2.start_symbol_idx = f2.starting_sym_idx;
+      format2.nrof_symbols     = f2.nof_symbols;
+      format2.nrof_prbs        = f2.nof_prbs;
     } break;
     case pucch_format::FORMAT_3: {
-      auto& format3            = pucch_res.format.set_format3();
-      format3.start_symbol_idx = cfg.format_3.starting_sym_idx;
-      format3.nrof_symbols     = cfg.format_3.nof_symbols;
-      format3.nrof_prbs        = cfg.format_3.nof_prbs;
+      const auto& f3           = variant_get<pucch_format_2_3_cfg>(cfg.format_params);
+      auto&       format3      = pucch_res.format.set_format3();
+      format3.start_symbol_idx = f3.starting_sym_idx;
+      format3.nrof_symbols     = f3.nof_symbols;
+      format3.nrof_prbs        = f3.nof_prbs;
     } break;
     case pucch_format::FORMAT_4: {
-      auto& format4            = pucch_res.format.set_format4();
-      format4.start_symbol_idx = cfg.format_4.starting_sym_idx;
-      format4.nrof_symbols     = cfg.format_4.nof_symbols;
-      switch (cfg.format_4.occ_index) {
+      const auto& f4           = variant_get<pucch_format_4_cfg>(cfg.format_params);
+      auto&       format4      = pucch_res.format.set_format4();
+      format4.start_symbol_idx = f4.starting_sym_idx;
+      format4.nrof_symbols     = f4.nof_symbols;
+      switch (f4.occ_index) {
         case pucch_f4_occ_idx::n0:
           format4.occ_idx = pucch_format4_s::occ_idx_opts::n0;
           break;
@@ -662,9 +683,9 @@ asn1::rrc_nr::pucch_res_s srsran::srs_du::make_asn1_rrc_pucch_resource(const puc
           format4.occ_idx = pucch_format4_s::occ_idx_opts::n3;
           break;
         default:
-          srsran_assertion_failure("Invalid PUCCH Format 4 index={}", cfg.format_4.occ_index);
+          srsran_assertion_failure("Invalid PUCCH Format 4 index={}", f4.occ_index);
       }
-      switch (cfg.format_4.occ_length) {
+      switch (f4.occ_length) {
         case pucch_f4_occ_len::n2:
           format4.occ_len = pucch_format4_s::occ_len_opts::n2;
           break;
@@ -672,7 +693,7 @@ asn1::rrc_nr::pucch_res_s srsran::srs_du::make_asn1_rrc_pucch_resource(const puc
           format4.occ_len = pucch_format4_s::occ_len_opts::n4;
           break;
         default:
-          srsran_assertion_failure("Invalid PUCCH Format 4 length={}", cfg.format_4.occ_length);
+          srsran_assertion_failure("Invalid PUCCH Format 4 length={}", f4.occ_length);
       }
     } break;
     default:
@@ -914,7 +935,7 @@ void make_asn1_rrc_dmrs_ul_for_pusch(asn1::rrc_nr::dmrs_ul_cfg_s& out,
     out.dmrs_type_present = true;
   }
 
-  if (dest.additional_positions != srsran::dmrs_additional_positions::not_set) {
+  if (dest.additional_positions != srsran::dmrs_additional_positions::pos2) {
     out.dmrs_add_position_present = true;
     switch (dest.additional_positions) {
       case dmrs_additional_positions::pos0:
@@ -2252,9 +2273,11 @@ void srsran::srs_du::calculate_cell_group_config_diff(asn1::rrc_nr::cell_group_c
   out.mac_cell_group_cfg_present = true;
   calculate_mac_cell_group_config_diff(out.mac_cell_group_cfg, src.mcg_cfg, dest.mcg_cfg);
 
-  out.phys_cell_group_cfg_present          = true;
-  out.phys_cell_group_cfg.p_nr_fr1_present = true;
-  out.phys_cell_group_cfg.p_nr_fr1         = dest.pcg_cfg.p_nr_fr1;
+  out.phys_cell_group_cfg_present = true;
+  if (dest.pcg_cfg.p_nr_fr1.has_value()) {
+    out.phys_cell_group_cfg.p_nr_fr1_present = true;
+    out.phys_cell_group_cfg.p_nr_fr1         = dest.pcg_cfg.p_nr_fr1.value();
+  }
   out.phys_cell_group_cfg.pdsch_harq_ack_codebook.value =
       dest.pcg_cfg.pdsch_harq_codebook == pdsch_harq_ack_codebook::dynamic
           ? phys_cell_group_cfg_s::pdsch_harq_ack_codebook_opts::dyn

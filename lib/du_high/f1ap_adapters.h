@@ -22,7 +22,6 @@
 
 #pragma once
 
-#include "srsran/du_high/du_high_ue_executor_mapper.h"
 #include "srsran/du_manager/du_manager.h"
 #include "srsran/f1ap/du/f1ap_du.h"
 #include "srsran/support/async/execute_on.h"
@@ -78,6 +77,14 @@ public:
 
   f1ap_ue_task_scheduler& get_ue_handler(du_ue_index_t ue_index) override { return ues[ue_index]; }
 
+  du_ue_index_t find_free_ue_index() override { return du_mng->find_unused_du_ue_index(); }
+
+  async_task<f1ap_ue_context_creation_response>
+  request_ue_creation(const f1ap_ue_context_creation_request& request) override
+  {
+    return du_mng->handle_ue_context_creation(request);
+  }
+
   async_task<f1ap_ue_context_update_response>
   request_ue_context_update(const f1ap_ue_context_update_request& request) override
   {
@@ -87,6 +94,11 @@ public:
   async_task<void> request_ue_removal(const f1ap_ue_delete_request& request) override
   {
     return du_mng->handle_ue_delete_request(request);
+  }
+
+  void notify_reestablishment_of_old_ue(du_ue_index_t new_ue_index, du_ue_index_t old_ue_index) override
+  {
+    du_mng->handle_ue_reestablishment(new_ue_index, old_ue_index);
   }
 
 private:

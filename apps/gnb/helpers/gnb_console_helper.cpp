@@ -22,10 +22,10 @@
 
 #include "gnb_console_helper.h"
 #include "string_helpers.h"
-#include "srsran/radio/radio_factory.h"
 #include "srsran/ran/band_helper.h"
 #include "srsran/ran/bs_channel_bandwidth.h"
 #include "srsran/support/build_info/build_info.h"
+#include "srsran/support/io/io_broker.h"
 #include <fcntl.h>
 #include <list>
 #include <signal.h>
@@ -114,12 +114,11 @@ void gnb_console_helper::print_help()
 
 void gnb_console_helper::set_cells(const span<du_cell_config>& cells_)
 {
-  cells = cells_;
+  cells = {cells_.begin(), cells_.end()};
 }
 
 void gnb_console_helper::on_app_starting()
 {
-  print_available_radio_factories();
   fmt::print("\n--== srsRAN gNB (commit {}) ==--\n\n", get_build_hash());
 }
 
@@ -148,13 +147,17 @@ void gnb_console_helper::on_app_stopping()
 
 unsigned gnb_console_helper::derive_ssb_arfcn(const du_cell_config& cell)
 {
-  unsigned nof_crbs = band_helper::get_n_rbs_from_bw(MHz_to_bs_channel_bandwidth(cell.dl_carrier.carrier_bw_mhz),
-                                                     cell.scs_common,
-                                                     band_helper::get_freq_range(cell.dl_carrier.band));
-  uint8_t  ss0_idx  = 0;
-  optional<band_helper::ssb_coreset0_freq_location> ssb_freq_loc = band_helper::get_ssb_coreset0_freq_location(
-      cell.dl_carrier.arfcn, cell.dl_carrier.band, nof_crbs, cell.scs_common, cell.scs_common, ss0_idx);
+  const unsigned nof_crbs = band_helper::get_n_rbs_from_bw(MHz_to_bs_channel_bandwidth(cell.dl_carrier.carrier_bw_mhz),
+                                                           cell.scs_common,
+                                                           band_helper::get_freq_range(cell.dl_carrier.band));
+  optional<unsigned> ssb_arfcn = band_helper::get_ssb_arfcn(cell.dl_carrier.arfcn,
+                                                            cell.dl_carrier.band,
+                                                            nof_crbs,
+                                                            cell.scs_common,
+                                                            cell.scs_common,
+                                                            cell.ssb_cfg.offset_to_point_A,
+                                                            cell.ssb_cfg.k_ssb);
+  srsran_assert(ssb_arfcn.has_value(), "Unable to derive SSB location correctly");
 
-  srsran_assert(ssb_freq_loc.has_value(), "Unable to derive SSB location correctly");
-  return ssb_freq_loc->ssb_arfcn;
+  return ssb_arfcn.value();
 }

@@ -69,7 +69,9 @@ void scheduler_impl::handle_ue_creation_request(const sched_ue_creation_request_
   error_type<std::string> result =
       config_validators::validate_sched_ue_creation_request_message(ue_request, cells[pcell_index]->cell_cfg);
   if (result.is_error()) {
-    report_fatal_error("Invalid ue={} creation request message. Cause: {}", ue_request.crnti, result.error());
+    logger.warning(
+        "ue={} rnti={:#x}: Discarding invalid UE creation request. Cause: {}", ue_request.crnti, result.error());
+    config_notifier.on_ue_config_complete(ue_request.ue_index, false);
   }
 
   ue_to_cell_group_index.emplace(ue_request.ue_index, cells[pcell_index]->cell_cfg.cell_group_index);
@@ -111,6 +113,13 @@ void scheduler_impl::handle_ul_bsr_indication(const ul_bsr_indication_message& b
   groups[group_index]->get_feedback_handler().handle_ul_bsr_indication(bsr);
 }
 
+void scheduler_impl::handle_ul_phr_indication(const ul_phr_indication_message& phr_ind)
+{
+  srsran_assert(cells.contains(phr_ind.cell_index), "cell={} does not exist", phr_ind.cell_index);
+
+  cells[phr_ind.cell_index]->ue_sched.get_feedback_handler().handle_ul_phr_indication(phr_ind);
+}
+
 void scheduler_impl::handle_dl_buffer_state_indication(const dl_buffer_state_indication_message& bs)
 {
   if (not ue_to_cell_group_index.contains(bs.ue_index)) {
@@ -147,7 +156,7 @@ void scheduler_impl::handle_dl_mac_ce_indication(const dl_mac_ce_indication& mac
   groups[group_index]->get_feedback_handler().handle_dl_mac_ce_indication(mac_ce);
 }
 
-const sched_result* scheduler_impl::slot_indication(slot_point sl_tx, du_cell_index_t cell_index)
+const sched_result& scheduler_impl::slot_indication(slot_point sl_tx, du_cell_index_t cell_index)
 {
   srsran_assert(cells.contains(cell_index), "cell={} does not exist", cell_index);
   cell_scheduler& cell = *cells[cell_index];
@@ -161,7 +170,7 @@ const sched_result* scheduler_impl::slot_indication(slot_point sl_tx, du_cell_in
   cell.run_slot(sl_tx);
 
   // Return result for the slot.
-  return &cell.last_result();
+  return cell.last_result();
 }
 
 void scheduler_impl::handle_paging_information(const sched_paging_information& pi)

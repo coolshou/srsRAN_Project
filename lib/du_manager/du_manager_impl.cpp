@@ -122,11 +122,22 @@ void du_manager_impl::handle_ul_ccch_indication(const ul_ccch_indication_message
         // Start UE create procedure
         ue_mng.handle_ue_create_request(msg);
       })) {
-    logger.warning("Discarding UL-CCCH message cell={} c-rnti={:#x} slot_rx={}. Cause: DU manager task queue is full",
+    logger.warning("Discarding UL-CCCH message cell={} tc-rnti={:#x} slot_rx={}. Cause: DU manager task queue is full",
                    msg.cell_index,
-                   msg.crnti,
+                   msg.tc_rnti,
                    msg.slot_rx);
   }
+}
+
+du_ue_index_t du_manager_impl::find_unused_du_ue_index()
+{
+  return ue_mng.find_unused_du_ue_index();
+}
+
+async_task<f1ap_ue_context_creation_response>
+du_manager_impl::handle_ue_context_creation(const f1ap_ue_context_creation_request& request)
+{
+  return ue_mng.handle_ue_create_request(request);
 }
 
 async_task<f1ap_ue_context_update_response>
@@ -138,6 +149,11 @@ du_manager_impl::handle_ue_context_update(const f1ap_ue_context_update_request& 
 async_task<void> du_manager_impl::handle_ue_delete_request(const f1ap_ue_delete_request& request)
 {
   return ue_mng.handle_ue_delete_request(request);
+}
+
+void du_manager_impl::handle_ue_reestablishment(du_ue_index_t new_ue_index, du_ue_index_t old_ue_index)
+{
+  ue_mng.handle_reestablishment_request(new_ue_index, old_ue_index);
 }
 
 size_t du_manager_impl::nof_ues()

@@ -111,19 +111,11 @@ public:
           if (!device_addr.has_key("master_clock_rate")) {
             device_addr.set("master_clock_rate", "184.32e6");
           }
-          // Set the default send frame size.
-          if (!device_addr.has_key("send_frame_size")) {
-            device_addr.set("send_frame_size", "8000");
-          }
-          // Set the default receive frame size.
-          if (!device_addr.has_key("recv_frame_size")) {
-            device_addr.set("recv_frame_size", "8000");
-          }
           break;
         case radio_uhd_device_type::types::X410:
           // Set the default master clock rate.
           if (!device_addr.has_key("master_clock_rate")) {
-            device_addr.set("master_clock_rate", "491.52e6");
+            device_addr.set("master_clock_rate", "245.76e6");
           }
           break;
         case radio_uhd_device_type::types::N3x0:
@@ -143,6 +135,19 @@ public:
         default:
           // No default parameters are required.
           break;
+      }
+
+      // Set frame sizes for network based USRP devices.
+      if ((type == radio_uhd_device_type::types::N32x) || (type == radio_uhd_device_type::types::N3x0) ||
+          (type == radio_uhd_device_type::types::X3x0) || (type == radio_uhd_device_type::types::X410)) {
+        // Set the default send frame size.
+        if (!device_addr.has_key("send_frame_size")) {
+          device_addr.set("send_frame_size", "8000");
+        }
+        // Set the default receive frame size.
+        if (!device_addr.has_key("recv_frame_size")) {
+          device_addr.set("recv_frame_size", "8000");
+        }
       }
     }
 
@@ -266,11 +271,11 @@ public:
     return safe_execution([this, &sync_source, &clock_source]() { usrp->set_sync_source(clock_source, sync_source); });
 #endif
   }
-  bool set_rx_rate(double rate)
+  bool set_rx_rate(double& actual_rate, double rate)
   {
     logger.debug("Setting Rx Rate to {} MHz.", to_MHz(rate));
 
-    return safe_execution([this, rate]() {
+    return safe_execution([this, &actual_rate, rate]() {
       uhd::meta_range_t range = usrp->get_rx_rates();
 
       if (!radio_uhd_device_validate_freq_range(range, rate)) {
@@ -279,13 +284,15 @@ public:
       }
 
       usrp->set_rx_rate(rate);
+
+      actual_rate = usrp->get_rx_rate();
     });
   }
-  bool set_tx_rate(double rate)
+  bool set_tx_rate(double& actual_rate, double rate)
   {
     logger.debug("Setting Tx Rate to {} MHz.", to_MHz(rate));
 
-    return safe_execution([this, rate]() {
+    return safe_execution([this, &actual_rate, rate]() {
       uhd::meta_range_t range = usrp->get_tx_rates();
 
       if (!radio_uhd_device_validate_freq_range(range, rate)) {
@@ -294,6 +301,8 @@ public:
       }
 
       usrp->set_tx_rate(rate);
+
+      actual_rate = usrp->get_tx_rate();
     });
   }
   bool set_command_time(const uhd::time_spec_t& timespec)

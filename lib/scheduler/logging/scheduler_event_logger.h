@@ -66,12 +66,24 @@ public:
     du_ue_index_t ue_index;
     rnti_t        rnti;
   };
+  struct csi_report_event {
+    du_ue_index_t   ue_index;
+    rnti_t          rnti;
+    csi_report_data csi;
+  };
   struct bsr_event {
     du_ue_index_t          ue_index;
     rnti_t                 rnti;
     bsr_format             type;
     ul_bsr_lcg_report_list reported_lcgs;
     units::bytes           tot_ul_pending_bytes;
+  };
+  struct phr_event {
+    du_ue_index_t              ue_index;
+    rnti_t                     rnti;
+    du_cell_index_t            cell_index;
+    ph_db_range                ph;
+    optional<p_cmax_dbm_range> p_cmax;
   };
 
   scheduler_event_logger() :
@@ -119,9 +131,11 @@ private:
   void enqueue_impl(const sr_event& sr);
   void enqueue_impl(const bsr_event& bsr);
   void enqueue_impl(const harq_ack_event& harq_ev);
+  void enqueue_impl(const csi_report_event& csi);
   void enqueue_impl(const crc_event& crc_ev);
   void enqueue_impl(const dl_mac_ce_indication& mac_ce);
   void enqueue_impl(const dl_buffer_state_indication_message& bs);
+  void enqueue_impl(const phr_event& phr_ev);
 
   fmt::memory_buffer fmtbuf;
 };

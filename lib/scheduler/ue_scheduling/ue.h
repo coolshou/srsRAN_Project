@@ -35,7 +35,8 @@ class ue
 public:
   ue(const scheduler_ue_expert_config&        expert_cfg_,
      const cell_configuration&                cell_cfg_common_,
-     const sched_ue_creation_request_message& req);
+     const sched_ue_creation_request_message& req,
+     harq_timeout_handler&                    harq_timeout_notifier_);
   ue(const ue&)            = delete;
   ue(ue&&)                 = delete;
   ue& operator=(const ue&) = delete;
@@ -83,7 +84,12 @@ public:
   void activate_cells(bounded_bitset<MAX_NOF_DU_CELLS> activ_bitmap) {}
 
   /// \brief Handle received SR indication.
-  void handle_sr_indication() { ul_lc_ch_mgr.handle_sr_indication(); }
+  void handle_sr_indication()
+  {
+    // Reception of SR means that the UE has applied its dedicated configuration.
+    ue_cells[0]->set_fallback_state(false);
+    ul_lc_ch_mgr.handle_sr_indication();
+  }
 
   /// \brief Once an UL grant is given, the SR status of the UE must be reset.
   void reset_sr_indication() { ul_lc_ch_mgr.reset_sr_indication(); }
@@ -101,10 +107,6 @@ public:
   void handle_dl_buffer_state_indication(const dl_buffer_state_indication_message& msg)
   {
     dl_lc_ch_mgr.handle_dl_buffer_status_indication(msg.lcid, msg.bs);
-    if (msg.lcid == LCID_SRB0 and msg.bs > 0) {
-      // Enqueue a UE Contention Resolution ID.
-      dl_lc_ch_mgr.handle_mac_ce_indication(lcid_dl_sch_t::UE_CON_RES_ID);
-    }
   }
 
   void handle_reconfiguration_request(const sched_ue_reconfiguration_message& msg);
@@ -119,7 +121,7 @@ public:
 
   /// \brief Computes the number of DL pending bytes that are not already allocated in a DL HARQ. The value is used
   /// to derive the required transport block size for an DL grant.
-  /// \remark Excludes SRB0 and UE Contention Resolution Identity CE.
+  /// \remark Excludes SRB0.
   unsigned pending_dl_newtx_bytes() const;
 
   /// \brief Computes the number of DL pending bytes that are not already allocated in a DL HARQ for SRB0. The value is
@@ -132,7 +134,7 @@ public:
 
   /// \brief Defines the list of subPDUs, including LCID and payload size, that will compose the transport block.
   /// \return Returns the number of bytes reserved in the TB for subPDUs (other than padding).
-  /// \remark Excludes SRB0 and UE Contention Resolution Identity CE.
+  /// \remark Excludes SRB0.
   unsigned build_dl_transport_block_info(dl_msg_tb_info& tb_info, unsigned tb_size_bytes);
 
   /// \brief Defines the list of subPDUs, including LCID and payload size, that will compose the transport block for
@@ -152,6 +154,9 @@ private:
 
   /// \c schedulingRequestToAddModList, TS 38.331; \ref sched_ue_creation_request_message.
   std::vector<scheduling_request_to_addmod> sched_request_configs;
+
+  /// Notifier used by HARQ processes to signal timeouts due to undetected HARQ ACKs/CRCs.
+  ue_harq_timeout_notifier harq_timeout_notif;
 
   srslog::basic_logger& logger;
 

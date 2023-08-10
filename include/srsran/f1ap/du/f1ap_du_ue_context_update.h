@@ -35,6 +35,20 @@ namespace srs_du {
 /// \brief Possible modes for an DRB RLC entity.
 enum class drb_rlc_mode { am = 0, um_bidir, um_unidir_ul, um_unidir_dl };
 
+/// \brief F1AP sends this request to the DU to create a new UE context. This happens in the particular case
+/// of a F1AP UE Context Setup Request received without associated logical F1-connection.
+struct f1ap_ue_context_creation_request {
+  du_ue_index_t   ue_index;
+  du_cell_index_t pcell_index;
+};
+
+/// \brief Response from the DU back to the F1AP with the created UE index.
+struct f1ap_ue_context_creation_response {
+  bool result;
+  /// C-RNTI allocated during the UE creation, that the F1AP can send to the CU-CP in its response.
+  rnti_t crnti;
+};
+
 /// \brief DRB to be setup in the UE context.
 struct f1ap_drb_to_setup {
   drb_id_t                             drb_id;
@@ -74,6 +88,18 @@ struct f1ap_ue_context_update_response {
   std::vector<drb_id_t>       drbs_failed_to_setup;
   byte_buffer                 du_to_cu_rrc_container;
 };
+
+/// \brief Handled causes for RLF.
+enum class rlf_cause { max_mac_kos_reached, max_rlc_retxs_reached, rlc_protocol_failure };
+
+/// \brief Request Command for F1AP UE CONTEXT Release Request.
+struct f1ap_ue_context_release_request {
+  du_ue_index_t ue_index;
+  rlf_cause     cause;
+};
+
+/// \brief Request Command for F1AP UE CONTEXT Modification Required.
+struct f1ap_ue_context_modification_required {};
 
 } // namespace srs_du
 } // namespace srsran

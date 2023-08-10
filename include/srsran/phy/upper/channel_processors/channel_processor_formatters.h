@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "srsran/phy/support/precoding_formatters.h"
 #include "srsran/phy/upper/channel_processors/pdcch_processor.h"
 #include "srsran/phy/upper/channel_processors/pdsch_processor.h"
 #include "srsran/phy/upper/channel_processors/prach_detector.h"
@@ -115,7 +116,7 @@ struct formatter<srsran::pdcch_processor::pdu_t> {
     helper.format_if_verbose(ctx, "n_rnti={}", pdu.dci.n_rnti);
     helper.format_if_verbose(ctx, "power_dmrs={:+.1f}dB", pdu.dci.dmrs_power_offset_dB);
     helper.format_if_verbose(ctx, "power_data={:+.1f}dB", pdu.dci.data_power_offset_dB);
-    helper.format_if_verbose(ctx, "ports={}", srsran::span<const uint8_t>(pdu.dci.ports));
+    helper.format_if_verbose(ctx, "precoding={}", pdu.dci.precoding);
     return ctx.out();
   }
 };
@@ -141,6 +142,33 @@ struct formatter<srsran::pdsch_processor::codeword_description> {
   {
     helper.format_always(ctx, "mod={}", to_string(codeword_descr.modulation));
     helper.format_always(ctx, "rv={}", codeword_descr.rv);
+
+    return ctx.out();
+  }
+};
+
+// \brief Custom formatter for \c re_pattern.
+template <>
+struct formatter<srsran::re_pattern> {
+  /// Helper used to parse formatting options and format fields.
+  srsran::delimited_formatter helper;
+
+  /// Default constructor.
+  formatter() = default;
+
+  template <typename ParseContext>
+  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  {
+    return helper.parse(ctx);
+  }
+
+  template <typename FormatContext>
+  auto format(const srsran::re_pattern& pattern, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  {
+    helper.format_always(
+        ctx, "symb={:n}", static_cast<srsran::bounded_bitset<srsran::MAX_NSYMB_PER_SLOT>>(pattern.symbols));
+    helper.format_always(ctx, "rb={:n}", pattern.prb_mask);
+    helper.format_always(ctx, "re={:n}", static_cast<srsran::bounded_bitset<srsran::NRE>>(pattern.re_mask));
 
     return ctx.out();
   }
@@ -184,12 +212,14 @@ struct formatter<srsran::pdsch_processor::pdu_t> {
     helper.format_if_verbose(ctx, "ncgwd={}", pdu.nof_cdm_groups_without_data);
     helper.format_if_verbose(ctx, "bg={}", (pdu.ldpc_base_graph == srsran::ldpc_base_graph_type::BG1) ? "BG1" : "BG2");
     helper.format_if_verbose(ctx, "lbrm={}bytes", pdu.tbs_lbrm_bytes);
-    helper.format_if_verbose(ctx, "power_dmrs={:+.1f}dB", pdu.ratio_pdsch_dmrs_to_sss_dB);
+    helper.format_if_verbose(ctx, "power_dmrs={:+.1f}dB", -pdu.ratio_pdsch_dmrs_to_sss_dB);
     helper.format_if_verbose(ctx, "power_data={:+.1f}dB", pdu.ratio_pdsch_data_to_sss_dB);
     helper.format_if_verbose(ctx, "slot={}", pdu.slot);
     helper.format_if_verbose(ctx, "cp={}", pdu.cp.to_string());
-    helper.format_if_verbose(ctx, "ports={}", srsran::span<const uint8_t>(pdu.ports));
-
+    helper.format_if_verbose(ctx, "precoding={}", pdu.precoding);
+    if (pdu.reserved.get_nof_entries() > 0) {
+      helper.format_if_verbose(ctx, "reserved=[{:,}]", pdu.reserved.get_re_patterns());
+    }
     return ctx.out();
   }
 };
@@ -218,9 +248,11 @@ struct formatter<srsran::prach_detector::configuration> {
                              "preambles=[{}, {})",
                              config.start_preamble_index,
                              config.start_preamble_index + config.nof_preamble_indices);
-    helper.format_if_verbose(ctx, "format={}", config.format);
+    helper.format_if_verbose(ctx, "format={}", to_string(config.format));
     helper.format_if_verbose(ctx, "set={}", to_string(config.restricted_set));
     helper.format_if_verbose(ctx, "zcz={}", config.zero_correlation_zone);
+    helper.format_if_verbose(ctx, "scs={}", to_string(config.ra_scs));
+    helper.format_if_verbose(ctx, "nof_rx_ports={}", config.nof_rx_ports);
 
     return ctx.out();
   }

@@ -25,6 +25,7 @@
 #include "../du_processor_test_messages.h"
 #include "../test_helpers.h"
 #include "du_processor_test_helpers.h"
+#include "lib/cu_cp/du_processor/du_processor_factory.h"
 #include "lib/cu_cp/ue_manager_impl.h"
 #include "lib/f1ap/common/asn1_helpers.h"
 #include "tests/unittests/f1ap/common/test_helpers.h"
@@ -32,7 +33,6 @@
 #include "tests/unittests/rrc/test_helpers.h"
 #include "srsran/cu_cp/cu_cp_types.h"
 #include "srsran/cu_cp/du_processor.h"
-#include "srsran/cu_cp/du_processor_factory.h"
 #include "srsran/rrc/rrc.h"
 #include "srsran/support/executors/manual_task_worker.h"
 #include "srsran/support/test_utils.h"
@@ -57,13 +57,16 @@ protected:
 
   timer_manager                                         timers;
   ue_configuration                                      ue_config;
-  ue_manager                                            ue_mng{ue_config};
+  up_resource_manager_cfg                               up_config;
+  ue_manager                                            ue_mng{ue_config, up_config};
+  dummy_cell_meas_manager                               cell_meas_mng;
   dummy_du_processor_cu_cp_notifier                     cu_cp_notifier;
   dummy_f1ap_pdu_notifier                               f1ap_pdu_notifier;
   dummy_f1ap_du_management_notifier                     f1ap_du_mgmt_notifier;
   dummy_du_processor_e1ap_control_notifier              e1ap_ctrl_notifier;
   dummy_du_processor_ngap_control_notifier              ngap_ctrl_notifier;
   dummy_rrc_ue_ngap_adapter                             rrc_ue_ngap_notifier;
+  dummy_rrc_ue_cu_cp_adapter                            rrc_ue_cu_cp_notifier;
   std::unique_ptr<dummy_du_processor_ue_task_scheduler> ue_task_sched;
   manual_task_worker                                    ctrl_worker{128};
   std::unique_ptr<du_processor_interface>               du_processor_obj;

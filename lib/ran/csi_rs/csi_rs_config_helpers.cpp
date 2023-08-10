@@ -91,7 +91,7 @@ unsigned srsran::csi_rs::get_csi_rs_resource_mapping_row_number(uint8_t         
   for (const csi_rs_resource_mapping_info& info : csi_rs_resource_mapping_within_slot) {
     if (info.nof_ports == nof_ports and info.cdm_type == cdm_type and info.density == density) {
       // As per Table 7.4.1.5.3-1, TS 38.211, rows 6 and 7 have the same nof_ports, cdm_type and density. The only way
-      // we can tell them apart is by checking the number of bits in the frequency allocation vector \c
+      // we can tell them apart is by checking the number of bits set to 1 in the frequency allocation vector \c
       // frequencyDomainAllocation, which is 2 and 6 bits for row 6 and 7, respectively, as per Section 7.4.1.5.3,
       // TS 38.211.
       if (info.row == 6U or info.row == 7U) {
@@ -102,10 +102,56 @@ unsigned srsran::csi_rs::get_csi_rs_resource_mapping_row_number(uint8_t         
         }
         continue;
       }
+      // As per Table 7.4.1.5.3-1, TS 38.211, rows 4 and 5 have the same nof_ports, cdm_type and density. The only way
+      // we can tell them apart is by checking the size of the frequency allocation vector \c frequencyDomainAllocation,
+      // which is 3 and 6 bits for row 4 and row 5 respectively.
+      if (info.row == 4U or info.row == 5U) {
+        if (fd_alloc.size() == 3) {
+          return 4U;
+        } else if (fd_alloc.size() == 6) {
+          return 5U;
+        }
+        continue;
+      }
       return info.row;
     }
   }
   srsran_assertion_failure("The CSI-RS resource config does not match any row of Table 7.4.1.5.3-1, TS 38.211.");
   const unsigned invalid_row_index = 0;
   return invalid_row_index;
+}
+
+unsigned srsran::csi_rs::get_nof_csi_rs_ports(unsigned csi_rs_row_id)
+{
+  switch (csi_rs_row_id) {
+    case 1:
+    case 2:
+      return 1;
+    case 3:
+      return 2;
+    case 4:
+    case 5:
+      return 4;
+    case 6:
+    case 7:
+    case 8:
+      return 8;
+    case 9:
+    case 10:
+      return 12;
+    case 11:
+    case 12:
+      return 16;
+    case 13:
+    case 14:
+    case 15:
+      return 24;
+    case 16:
+    case 17:
+    case 18:
+      return 32;
+    default:
+      srsran_assertion_failure("Invalid CSI-RS mapping table row, i.e., {}.", csi_rs_row_id);
+      return 0;
+  }
 }

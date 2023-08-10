@@ -45,9 +45,6 @@ struct rlc_bearer_config {
   }
 };
 
-rlc_mode convert_asn1_f1ap_to_rlc_mode(asn1::f1ap::rlc_mode_e mode);
-rlc_mode convert_asn1_f1ap_to_rlc_mode(drb_rlc_mode mode);
-
 /// \brief Generates default SRB RLC configuration for SRBs other than SRB0.
 rlc_config make_default_srb_rlc_config();
 
@@ -55,13 +52,15 @@ rlc_config make_default_srb_rlc_config();
 rlc_entity_creation_message make_rlc_entity_creation_message(du_ue_index_t                            ue_index,
                                                              du_cell_index_t                          pcell_index,
                                                              du_ue_srb&                               bearer,
-                                                             const du_manager_params::service_params& du_services);
+                                                             const du_manager_params::service_params& du_services,
+                                                             rlc_tx_upper_layer_control_notifier&     rlc_rlf_notifier);
 
 /// \brief Create configuration for RLC DRB entity.
 rlc_entity_creation_message make_rlc_entity_creation_message(du_ue_index_t                            ue_index,
                                                              du_cell_index_t                          pcell_index,
                                                              du_ue_drb&                               bearer,
-                                                             const du_manager_params::service_params& du_services);
+                                                             const du_manager_params::service_params& du_services,
+                                                             rlc_tx_upper_layer_control_notifier&     rlc_rlf_notifier);
 
 } // namespace srs_du
 } // namespace srsran

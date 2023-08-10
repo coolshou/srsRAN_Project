@@ -22,15 +22,16 @@
 
 #pragma once
 
+#include "srsran/f1u/du/f1u_config.h"
 #include "srsran/rlc/rlc_config.h"
 #include <cstdint>
 
 namespace srsran {
 
-/// QoS Configuration, i.e. 5QI and the associated RLC
-/// configuration for DRBs
+/// \brief QoS Configuration, i.e. 5QI and the associated RLC configuration for DRBs
 struct du_qos_config {
-  rlc_config rlc;
+  rlc_config         rlc;
+  srs_du::f1u_config f1u;
 };
 
 } // namespace srsran

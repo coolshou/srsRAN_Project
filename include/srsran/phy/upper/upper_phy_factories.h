@@ -22,6 +22,9 @@
 
 #pragma once
 
+#include "srsran/phy/support/support_factories.h"
+#include "srsran/phy/upper/channel_coding/channel_coding_factories.h"
+#include "srsran/phy/upper/channel_processors/channel_processor_factories.h"
 #include "srsran/phy/upper/downlink_processor.h"
 #include "srsran/phy/upper/rx_softbuffer_pool.h"
 #include "srsran/phy/upper/uplink_processor.h"
@@ -136,11 +139,27 @@ struct downlink_processor_factory_sw_config {
   /// - \c lut: for using a look-up table CRC calculator, or
   /// - \c clmul: for using a look-up table CRC calculator (x86_64 CPUs only).
   std::string crc_calculator_type;
+  /// Number of threads for processing PDSCH codeblocks concurrently.
+  unsigned nof_pdsch_codeblock_threads;
+  /// PDSCH codeblock task executor. Set to \c nullptr if \ref nof_pdsch_threads is less than 2.
+  task_executor* pdsch_codeblock_task_executor;
 };
 
 /// Creates a full software based downlink processor factory.
 std::shared_ptr<downlink_processor_factory>
 create_downlink_processor_factory_sw(const downlink_processor_factory_sw_config& config);
+
+/// \brief Downlink processor hardware-accelerated factory configuration.
+struct downlink_processor_factory_hw_config {
+  /// \brief CRC calculator factory.
+  std::shared_ptr<crc_calculator_factory> crc_calc_factory;
+  /// \brief PDSCH encoder factory.
+  std::shared_ptr<pdsch_encoder_factory> pdsch_enc_factory;
+};
+
+/// Creates a full hardware-accelerated based downlink processor factory.
+std::shared_ptr<downlink_processor_factory>
+create_downlink_processor_factory_hw(const downlink_processor_factory_hw_config& config);
 
 /// Describes all downlink processors in a pool.
 struct downlink_processor_pool_config {
@@ -158,8 +177,6 @@ struct downlink_processor_pool_config {
   std::vector<sector_dl_processor> dl_processors;
   /// Number of base station sector.
   unsigned num_sectors;
-  /// Null processor.
-  std::unique_ptr<downlink_processor> null_proc;
 };
 
 /// \brief Creates and returns a downlink processor pool.
@@ -210,8 +227,10 @@ struct upper_phy_config {
   bool ldpc_decoder_early_stop;
   /// Radio sector identifier.
   unsigned sector_id;
-  /// Port identifier within the sector.
-  unsigned nof_ports;
+  /// Number of transmit antenna ports.
+  unsigned nof_tx_ports;
+  /// Number of receive antenna ports.
+  unsigned nof_rx_ports;
   /// Number of slots the downlink resource grid will support.
   unsigned nof_slots_dl_rg;
   /// Number of slots the uplink resource grid will support.
@@ -240,14 +259,16 @@ struct upper_phy_config {
   rx_softbuffer_pool_config softbuffer_config;
   /// Upper PHY resource grid gateway.
   upper_phy_rg_gateway* rg_gateway;
-  /// Downlink task executor.
-  task_executor* dl_executor;
+  /// Downlink task executors.
+  span<task_executor*> dl_executors;
   /// PUCCH task executor.
   task_executor* pucch_executor;
   /// PUSCH task executor.
   task_executor* pusch_executor;
   /// PRACH task executor.
   task_executor* prach_executor;
+  /// PDSCH encoder task executor. Set to \c nullptr to
+  task_executor* pdsch_encoder_executor;
   /// Received symbol request notifier.
   upper_phy_rx_symbol_request_notifier* rx_symbol_request_notifier;
 };
@@ -271,6 +292,7 @@ public:
 
 /// Creates and returns an upper PHY factory.
 std::unique_ptr<upper_phy_factory>
-create_upper_phy_factory(std::shared_ptr<downlink_processor_factory> downlink_proc_factory);
+create_upper_phy_factory(std::shared_ptr<downlink_processor_factory> downlink_proc_factory,
+                         std::shared_ptr<resource_grid_factory>      rg_factory);
 
 } // namespace srsran

@@ -20,6 +20,7 @@
  *
  */
 
+#include "lib/mac/mac_ul/mac_scheduler_ce_info_handler.h"
 #include "lib/mac/mac_ul/mac_ul_processor.h"
 #include "mac_ctrl_test_dummies.h"
 #include "mac_test_helpers.h"
@@ -32,45 +33,63 @@
 using namespace srsran;
 using namespace test_helpers;
 
-// Implement dummy scheduler feedback handler, only used for this test.
-class dummy_scheduler_feedback_handler : public scheduler_feedback_handler
+class dummy_sched_ce_info_handler : public mac_scheduler_ce_info_handler
 {
 public:
-  dummy_scheduler_feedback_handler() = default;
-  void handle_ul_bsr_indication(const ul_bsr_indication_message& bsr) override { last_bsr_msg = bsr; };
-  void handle_crc_indication(const ul_crc_indication& crc) override {}
-  void handle_uci_indication(const uci_indication& msg) override { last_uci_ind = msg; }
-  void handle_dl_mac_ce_indication(const dl_mac_ce_indication& ce) override {}
+  optional<mac_phr_ce_info>           last_phr_msg;
+  optional<mac_bsr_ce_info>           last_bsr_msg;
+  optional<mac_ul_scheduling_command> last_sched_cmd;
+  optional<mac_ce_scheduling_command> last_ce_cmd;
+
+  /// \brief Forward to scheduler any decoded UL BSRs for a given UE.
+  void handle_ul_bsr_indication(const mac_bsr_ce_info& bsr) override { last_bsr_msg = bsr; }
+
+  /// \brief Force the UL grant scheduling for a given UE.
+  void handle_ul_sched_command(const mac_ul_scheduling_command& sched_cmd) override { last_sched_cmd = sched_cmd; }
+
+  void handle_dl_mac_ce_indication(const mac_ce_scheduling_command& mac_ce) override { last_ce_cmd = mac_ce; }
 
   /// Verify a SR indication was added for a given UE.
   bool verify_sched_req_msg(du_ue_index_t ue_index)
   {
-    for (unsigned i = 0; i != last_uci_ind.ucis.size(); ++i) {
-      if (last_uci_ind.ucis[i].ue_index == ue_index and
-          variant_holds_alternative<uci_indication::uci_pdu::uci_pucch_f0_or_f1_pdu>(last_uci_ind.ucis[i].pdu) and
-          variant_get<uci_indication::uci_pdu::uci_pucch_f0_or_f1_pdu>(last_uci_ind.ucis[i].pdu).sr_detected) {
-        return true;
-      }
+    if (last_sched_cmd.has_value()) {
+      return last_sched_cmd->ue_index == ue_index;
     }
     return false;
   }
 
-  // Compare last_bsr_msg with a test message passed to the function.
-  void verify_bsr_msg(const ul_bsr_indication_message& test_usr_msg)
+  /// Compare last_bsr_msg with a test message passed to the function.
+  void verify_bsr_msg(const mac_bsr_ce_info& bsr)
   {
-    EXPECT_EQ(last_bsr_msg->cell_index, test_usr_msg.cell_index);
-    EXPECT_EQ(last_bsr_msg->ue_index, test_usr_msg.ue_index);
-    EXPECT_EQ(last_bsr_msg->crnti, test_usr_msg.crnti);
-    EXPECT_EQ(last_bsr_msg->type, test_usr_msg.type);
-    EXPECT_EQ(last_bsr_msg->reported_lcgs.size(), test_usr_msg.reported_lcgs.size());
-    for (size_t n = 0; n < test_usr_msg.reported_lcgs.size(); ++n) {
-      EXPECT_EQ(last_bsr_msg->reported_lcgs[n].lcg_id, test_usr_msg.reported_lcgs[n].lcg_id);
-      EXPECT_EQ(last_bsr_msg->reported_lcgs[n].nof_bytes, test_usr_msg.reported_lcgs[n].nof_bytes);
+    EXPECT_EQ(last_bsr_msg->cell_index, bsr.cell_index);
+    EXPECT_EQ(last_bsr_msg->ue_index, bsr.ue_index);
+    EXPECT_EQ(last_bsr_msg->rnti, bsr.rnti);
+    EXPECT_EQ(last_bsr_msg->bsr_fmt, bsr.bsr_fmt);
+    EXPECT_EQ(last_bsr_msg->lcg_reports.size(), bsr.lcg_reports.size());
+    for (size_t n = 0; n < bsr.lcg_reports.size(); ++n) {
+      EXPECT_EQ(last_bsr_msg->lcg_reports[n].lcg_id, bsr.lcg_reports[n].lcg_id);
+      EXPECT_EQ(last_bsr_msg->lcg_reports[n].buffer_size, bsr.lcg_reports[n].buffer_size);
+    }
+    if (bsr.bsr_fmt == bsr_format::SHORT_BSR or bsr.bsr_fmt == bsr_format::SHORT_TRUNC_BSR) {
+      EXPECT_EQ(last_bsr_msg->lcg_reports.size(), 1);
     }
   }
 
-  optional<ul_bsr_indication_message> last_bsr_msg;
-  uci_indication                      last_uci_ind;
+  /// \brief Forward to scheduler any decoded UL PHRs for a given UE.
+  virtual void handle_ul_phr_indication(const mac_phr_ce_info& phr) override { last_phr_msg = phr; }
+
+  /// Compare verify_phr_msg with a test message passed to the function.
+  // TODO: Handle verification of Multiple Entry PHR.
+  void verify_phr_msg(const mac_phr_ce_info& phr_info)
+  {
+    EXPECT_EQ(last_phr_msg->cell_index, phr_info.cell_index);
+    EXPECT_EQ(last_phr_msg->ue_index, phr_info.ue_index);
+    EXPECT_EQ(last_phr_msg->rnti, phr_info.rnti);
+    EXPECT_EQ(last_phr_msg->phr.get_se_phr().ph, phr_info.phr.get_se_phr().ph);
+    EXPECT_EQ(last_phr_msg->phr.get_se_phr().p_cmax, phr_info.phr.get_se_phr().p_cmax);
+    EXPECT_EQ(last_phr_msg->phr.get_se_phr().serv_cell_id, phr_info.phr.get_se_phr().serv_cell_id);
+    EXPECT_EQ(last_phr_msg->phr.get_se_phr().ph_type, phr_info.phr.get_se_phr().ph_type);
+  }
 };
 
 // Helper struct that creates a MAC UL to test the correct processing of RX indication messages.
@@ -133,13 +152,13 @@ struct test_bench {
   }
 
   // Call the dummy scheduler to compare the SR indication with a benchmark message.
-  bool verify_sched_req_notification(du_ue_index_t ue_index) { return sched_feedback.verify_sched_req_msg(ue_index); }
+  bool verify_sched_req_notification(du_ue_index_t ue_index) { return sched_ce_handler.verify_sched_req_msg(ue_index); }
 
   // Call the dummy scheduler to compare the BSR indication with a benchmark message.
-  void verify_sched_bsr_notification(const ul_bsr_indication_message& test_msg)
-  {
-    sched_feedback.verify_bsr_msg(test_msg);
-  }
+  void verify_sched_bsr_notification(const mac_bsr_ce_info& bsr) { sched_ce_handler.verify_bsr_msg(bsr); }
+
+  // Call the dummy scheduler to compare the PHR indication with a benchmark message.
+  void verify_sched_phr_notification(const mac_phr_ce_info& phr) { sched_ce_handler.verify_phr_msg(phr); }
 
   // Call the dummy DU notifier to compare the UL CCCH indication with a benchmark message.
   bool verify_du_ul_ccch_msg(const ul_ccch_indication_message& test_msg)
@@ -152,40 +171,31 @@ struct test_bench {
   void run_slot()
   {
     logger.set_level(srslog::basic_levels::debug);
-    timers.tick();
     task_exec.run_pending_tasks();
   }
 
   bool verify_no_bsr_notification(rnti_t rnti) const
   {
-    return not sched_feedback.last_bsr_msg.has_value() or sched_feedback.last_bsr_msg->crnti != rnti;
+    return not sched_ce_handler.last_bsr_msg.has_value() or sched_ce_handler.last_bsr_msg->rnti != rnti;
   }
 
   bool verify_no_sr_notification(rnti_t rnti) const
   {
-    for (const auto& uci : sched_feedback.last_uci_ind.ucis) {
-      if (uci.crnti == rnti) {
-        return false;
-      }
-    }
-    return true;
+    return not sched_ce_handler.last_sched_cmd.has_value() or sched_ce_handler.last_sched_cmd->rnti != rnti;
   }
 
 private:
-  srslog::basic_logger&            logger = srslog::fetch_basic_logger("MAC", true);
-  timer_manager                    timers;
-  manual_task_worker               task_exec{128};
-  dummy_ue_executor_mapper         ul_exec_mapper{task_exec};
-  dummy_dl_executor_mapper         dl_exec_mapper{&task_exec};
-  dummy_mac_result_notifier        phy_notifier;
-  dummy_mac_event_indicator        du_mng_notifier;
-  dummy_mac_pcap                   pcap;
-  mac_common_config_t              cfg{du_mng_notifier, ul_exec_mapper, dl_exec_mapper, task_exec, phy_notifier, pcap};
-  du_rnti_table                    rnti_table;
-  dummy_scheduler_feedback_handler sched_feedback;
+  srslog::basic_logger&       logger = srslog::fetch_basic_logger("MAC", true);
+  manual_task_worker          task_exec{128};
+  dummy_ue_executor_mapper    ul_exec_mapper{task_exec};
+  dummy_mac_event_indicator   du_mng_notifier;
+  du_rnti_table               rnti_table;
+  dummy_sched_ce_info_handler sched_ce_handler;
+  dummy_mac_pcap              pcap;
+  mac_ul_config               cfg{task_exec, ul_exec_mapper, du_mng_notifier, sched_ce_handler, rnti_table, pcap};
   // This is the RNTI of the UE that appears in the mac_rx_pdu created by send_rx_indication_msg()
   du_cell_index_t        cell_idx;
-  mac_ul_processor       mac_ul{cfg, sched_feedback, rnti_table};
+  mac_ul_processor       mac_ul{cfg};
   mac_rx_data_indication rx_msg_sbsr;
 
   slotted_array<mac_test_ue, MAX_NOF_DU_UES> test_ues;
@@ -214,7 +224,7 @@ TEST(mac_ul_processor, decode_ul_ccch_48bit)
   struct ul_ccch_indication_message ul_ccch_msg {};
   ul_ccch_msg.cell_index = cell_idx;
   ul_ccch_msg.slot_rx    = slot_point{0, 1};
-  ul_ccch_msg.crnti      = to_rnti(0x4601);
+  ul_ccch_msg.tc_rnti    = to_rnti(0x4601);
   // Remove R/R/LCID header (0x34) from PDU
   ul_ccch_msg.subpdu.append({0x1e, 0x4f, 0xc0, 0x04, 0xa6, 0x06});
 
@@ -243,7 +253,7 @@ TEST(mac_ul_processor, decode_ul_ccch_64bit)
   struct ul_ccch_indication_message ul_ccch_msg {};
   ul_ccch_msg.cell_index = cell_idx;
   ul_ccch_msg.slot_rx    = slot_point{0, 1};
-  ul_ccch_msg.crnti      = to_rnti(0x4601);
+  ul_ccch_msg.tc_rnti    = to_rnti(0x4601);
   // Remove R/R/LCID header (0x00) from PDU
   ul_ccch_msg.subpdu.append({0x1e, 0x4f, 0xc0, 0x04, 0xa6, 0x06, 0x13, 0x54});
 
@@ -269,15 +279,15 @@ TEST(mac_ul_processor, decode_short_bsr)
   t_bench.send_rx_indication_msg(ue1_rnti, pdu);
 
   // Create UL BSR indication  message to compare with one passed to the scheduler.
-  ul_bsr_indication_message ul_bsr_ind{};
-  ul_bsr_ind.cell_index = cell_idx;
-  ul_bsr_ind.ue_index   = ue1_idx;
-  ul_bsr_ind.crnti      = ue1_rnti;
-  ul_bsr_ind.type       = bsr_format::SHORT_BSR;
-  ul_bsr_lcg_report sbsr_report{.lcg_id = uint_to_lcg_id(2U), .nof_bytes = 28581};
-  ul_bsr_ind.reported_lcgs.push_back(sbsr_report);
+  mac_bsr_ce_info bsr;
+  bsr.cell_index  = cell_idx;
+  bsr.ue_index    = ue1_idx;
+  bsr.rnti        = ue1_rnti;
+  bsr.bsr_fmt     = bsr_format::SHORT_BSR;
+  bsr.lcg_reports = {lcg_bsr_report{.lcg_id = uint_to_lcg_id(2U), .buffer_size = 25}};
+
   // Test if notification sent to Scheduler has been received and it is correct.
-  ASSERT_NO_FATAL_FAILURE(t_bench.verify_sched_bsr_notification(ul_bsr_ind));
+  ASSERT_NO_FATAL_FAILURE(t_bench.verify_sched_bsr_notification(bsr));
 }
 
 // Test UL MAC processing of RX indication message with MAC PDU for MAC CE Short Truncated BSR.
@@ -298,16 +308,15 @@ TEST(mac_ul_processor, decode_short_trunc_bsr)
   t_bench.send_rx_indication_msg(ue1_rnti, pdu);
 
   // Create UL BSR indication  message to compare with one passed to the scheduler.
-  ul_bsr_indication_message ul_bsr_ind{};
-  ul_bsr_ind.cell_index = cell_idx;
-  ul_bsr_ind.ue_index   = ue1_idx;
-  ul_bsr_ind.crnti      = ue1_rnti;
-  ul_bsr_ind.type       = bsr_format::SHORT_TRUNC_BSR;
-  ul_bsr_lcg_report sbsr_report{.lcg_id = uint_to_lcg_id(5U), .nof_bytes = 745};
-  ul_bsr_ind.reported_lcgs.push_back(sbsr_report);
+  mac_bsr_ce_info bsr;
+  bsr.cell_index  = cell_idx;
+  bsr.ue_index    = ue1_idx;
+  bsr.rnti        = ue1_rnti;
+  bsr.bsr_fmt     = bsr_format::SHORT_TRUNC_BSR;
+  bsr.lcg_reports = {lcg_bsr_report{.lcg_id = uint_to_lcg_id(5U), .buffer_size = 14}};
 
   // Test if notification sent to Scheduler has been received and it is correct.
-  ASSERT_NO_FATAL_FAILURE(t_bench.verify_sched_bsr_notification(ul_bsr_ind));
+  ASSERT_NO_FATAL_FAILURE(t_bench.verify_sched_bsr_notification(bsr));
 }
 
 // Test UL MAC processing of RX indication message with MAC PDU for MAC CE Long BSR.
@@ -327,19 +336,42 @@ TEST(mac_ul_processor, decode_long_bsr)
   // Send RX data indication to MAC UL.
   t_bench.send_rx_indication_msg(ue1_rnti, pdu);
 
-  // Create UL BSR indication  message to compare with one passed to the scheduler.
-  ul_bsr_indication_message ul_bsr_ind{};
-  ul_bsr_ind.cell_index = to_du_cell_index(1);
-  ul_bsr_ind.ue_index   = ue1_idx;
-  ul_bsr_ind.crnti      = ue1_rnti;
-  ul_bsr_ind.type       = bsr_format::LONG_BSR;
-  ul_bsr_lcg_report bsr_report_lcg0{.lcg_id = uint_to_lcg_id(0U), .nof_bytes = 8453028U};
-  ul_bsr_ind.reported_lcgs.push_back(bsr_report_lcg0);
-  ul_bsr_lcg_report bsr_report_lcg7{.lcg_id = uint_to_lcg_id(7U), .nof_bytes = 468377U};
-  ul_bsr_ind.reported_lcgs.push_back(bsr_report_lcg7);
+  // Create UL BSR indication message to compare with one passed to the scheduler.
+  mac_bsr_ce_info bsr;
+  bsr.cell_index  = cell_idx;
+  bsr.ue_index    = ue1_idx;
+  bsr.rnti        = ue1_rnti;
+  bsr.bsr_fmt     = bsr_format::LONG_BSR;
+  bsr.lcg_reports = {lcg_bsr_report{.lcg_id = uint_to_lcg_id(0U), .buffer_size = 217},
+                     lcg_bsr_report{.lcg_id = uint_to_lcg_id(7U), .buffer_size = 171}};
+  ASSERT_NO_FATAL_FAILURE(t_bench.verify_sched_bsr_notification(bsr));
+}
 
-  // Test if notification sent to Scheduler has been received and it is correct.
-  ASSERT_NO_FATAL_FAILURE(t_bench.verify_sched_bsr_notification(ul_bsr_ind));
+// Test UL MAC processing of RX indication message with MAC PDU and invalid MAC CE Long BSR.
+TEST(mac_ul_processor, decode_invalid_long_bsr)
+{
+  // Define UE and create test_bench.
+  rnti_t          ue1_rnti = to_rnti(0x4601);
+  du_ue_index_t   ue1_idx  = to_du_ue_index(1U);
+  du_cell_index_t cell_idx = to_du_cell_index(1U);
+  test_bench      t_bench(ue1_rnti, ue1_idx, cell_idx);
+
+  // Create PDU content.
+  // R/F/LCID/L MAC subheader | MAC CE Long BSR
+  // { 0x3e, 0x03 | 0x81, 0xd9, 0xab }
+  byte_buffer pdu({0x3e, 0x02, 0x1, 0xff});
+
+  // Send RX data indication to MAC UL.
+  t_bench.send_rx_indication_msg(ue1_rnti, pdu);
+
+  // Create UL BSR indication message to compare with one passed to the scheduler.
+  mac_bsr_ce_info bsr;
+  bsr.cell_index  = cell_idx;
+  bsr.ue_index    = ue1_idx;
+  bsr.rnti        = ue1_rnti;
+  bsr.bsr_fmt     = bsr_format::LONG_BSR;
+  bsr.lcg_reports = {lcg_bsr_report{.lcg_id = uint_to_lcg_id(0U), .buffer_size = 255}};
+  ASSERT_TRUE(t_bench.verify_no_bsr_notification(ue1_rnti));
 }
 
 // Test UL MAC processing of RX indication message with MAC PDU for MAC CE C-RNTI.
@@ -394,14 +426,13 @@ TEST(mac_ul_processor, decode_crnti_ce_and_sbsr)
   ASSERT_TRUE(t_bench.verify_sched_req_notification(to_du_ue_index(1U)));
 
   // Create UL BSR indication message to compare with one passed to the scheduler.
-  ul_bsr_indication_message ul_bsr_ind{};
-  ul_bsr_ind.cell_index = cell_idx;
-  ul_bsr_ind.ue_index   = ue1_idx;
-  ul_bsr_ind.crnti      = ue1_rnti;
-  ul_bsr_ind.type       = bsr_format::SHORT_BSR;
-  ul_bsr_lcg_report sbsr_report{.lcg_id = uint_to_lcg_id(2U), .nof_bytes = 28581};
-  ul_bsr_ind.reported_lcgs.push_back(sbsr_report);
-  ASSERT_NO_FATAL_FAILURE(t_bench.verify_sched_bsr_notification(ul_bsr_ind));
+  mac_bsr_ce_info bsr;
+  bsr.cell_index  = cell_idx;
+  bsr.ue_index    = ue1_idx;
+  bsr.rnti        = ue1_rnti;
+  bsr.bsr_fmt     = bsr_format::SHORT_BSR;
+  bsr.lcg_reports = {lcg_bsr_report{.lcg_id = uint_to_lcg_id(2U), .buffer_size = 25}};
+  ASSERT_NO_FATAL_FAILURE(t_bench.verify_sched_bsr_notification(bsr));
 }
 
 // Test UL MAC processing of RX indication message with MAC PDU for multiple subPDUs (MAC CE C-RNTI, MAC CE Short BSR),
@@ -435,4 +466,44 @@ TEST(mac_ul_processor, handle_crnti_ce_with_inexistent_old_crnti)
   ASSERT_TRUE(t_bench.verify_no_bsr_notification(to_rnti(0x4601)));
   ASSERT_TRUE(t_bench.verify_no_bsr_notification(ue2_rnti));
   ASSERT_TRUE(t_bench.verify_no_sr_notification(to_rnti(0x4601)));
+}
+
+// Test UL MAC processing of RX indication message with MAC PDU for MAC CE Single Entry PHR.
+TEST(mac_ul_processor, verify_single_entry_phr)
+{
+  // Define UE and create test_bench.
+  const rnti_t          ue1_rnti = to_rnti(0x4601);
+  const du_ue_index_t   ue1_idx  = to_du_ue_index(1U);
+  const du_cell_index_t cell_idx = to_du_cell_index(1U);
+  test_bench            t_bench(ue1_rnti, ue1_idx, cell_idx);
+
+  // Create PDU content.
+  // MAC subPDU with:
+  // - 8-bit R/LCID MAC subheader.
+  // - MAC CE with Single Entry PHR.
+  //
+  // |   |   |   |   |   |   |   |   |
+  // | R | R |         LCID          |  Octet 1
+  // | R | R |          PH           |  Octet 2
+  // | R | R |        P_CMAX         |  Octet 3
+
+  // R/LCID MAC subheader = R|R|LCID = 0x39 or LCID=57
+  // MAC CE SE PHR = {0x27, 0x2f}
+  byte_buffer pdu({0x39, 0x27, 0x2f});
+
+  // Send RX data indication to MAC UL
+  t_bench.send_rx_indication_msg(ue1_rnti, pdu);
+
+  // Create UL PHR indication message to compare with one passed to the scheduler.
+  mac_phr_ce_info phr_ind{};
+  phr_ind.cell_index = cell_idx;
+  phr_ind.ue_index   = ue1_idx;
+  phr_ind.rnti       = ue1_rnti;
+  phr_ind.phr.set_se_phr({.serv_cell_id = to_du_cell_index(0),
+                          .ph_type      = srsran::ph_field_type_t::type1,
+                          .ph           = ph_db_range(6, 7),
+                          .p_cmax       = p_cmax_dbm_range(17, 18)});
+
+  // Test if notification sent to Scheduler has been received and it is correct.
+  ASSERT_NO_FATAL_FAILURE(t_bench.verify_sched_phr_notification(phr_ind));
 }

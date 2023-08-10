@@ -22,6 +22,7 @@
 
 #include "helpers.h"
 #include "srsran/fapi_adaptor/mac/messages/pdsch.h"
+#include "srsran/fapi_adaptor/precoding_matrix_table_generator.h"
 #include "srsran/mac/mac_cell_result.h"
 #include "srsran/support/srsran_test.h"
 
@@ -33,16 +34,18 @@ static void test_conversion_ok()
 {
   sib_information pdu          = build_valid_sib1_information_pdu();
   unsigned        nof_csi_pdus = 2;
+  unsigned        nof_prbs     = 51U;
 
   fapi::dl_pdsch_pdu fapi_pdu;
-  convert_pdsch_mac_to_fapi(fapi_pdu, pdu, nof_csi_pdus);
+  auto               pm_tools = generate_precoding_matrix_tables(1);
+  convert_pdsch_mac_to_fapi(fapi_pdu, pdu, nof_csi_pdus, *std::get<0>(pm_tools), nof_prbs);
 
   // BWP params
   const bwp_configuration& bwp_cfg = *pdu.pdsch_cfg.bwp_cfg;
   TESTASSERT_EQ(pdu.pdsch_cfg.coreset_cfg->coreset0_crbs().length(), fapi_pdu.bwp_size);
   TESTASSERT_EQ(pdu.pdsch_cfg.coreset_cfg->coreset0_crbs().start(), fapi_pdu.bwp_start);
   TESTASSERT_EQ(bwp_cfg.scs, fapi_pdu.scs);
-  TESTASSERT_EQ(bwp_cfg.cp_extended ? cyclic_prefix::EXTENDED : cyclic_prefix::NORMAL, fapi_pdu.cp);
+  TESTASSERT_EQ(bwp_cfg.cp, fapi_pdu.cp);
 
   // Codewords.
   const auto& fapi_cw = fapi_pdu.cws.front();
@@ -70,11 +73,11 @@ static void test_conversion_ok()
   TESTASSERT_EQ(dmrs_cfg.dmrs_ports.to_uint64(), fapi_pdu.dmrs_ports);
 
   // Frequency allocation.
-  const prb_grant& prb_cfg = pdu.pdsch_cfg.prbs;
+  const vrb_alloc& prb_cfg = pdu.pdsch_cfg.rbs;
   TESTASSERT(fapi_pdu.resource_alloc == fapi::resource_allocation_type::type_1);
   TESTASSERT(fapi_pdu.vrb_to_prb_mapping == fapi::vrb_to_prb_mapping_type::non_interleaved);
-  TESTASSERT_EQ(prb_cfg.prbs().start(), fapi_pdu.rb_start);
-  TESTASSERT_EQ(prb_cfg.prbs().length(), fapi_pdu.rb_size);
+  TESTASSERT_EQ(prb_cfg.type1().start(), fapi_pdu.rb_start);
+  TESTASSERT_EQ(prb_cfg.type1().length(), fapi_pdu.rb_size);
 
   // CSI-RS rm.
   const static_vector<uint16_t, 16>& csi_rm = fapi_pdu.pdsch_maintenance_v3.csi_for_rm;

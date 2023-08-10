@@ -21,7 +21,6 @@
  */
 
 #include "srsran/phy/upper/upper_phy_factories.h"
-#include "downlink_processor_null_executor.h"
 #include "downlink_processor_pool_impl.h"
 #include "downlink_processor_single_executor_impl.h"
 #include "logging_downlink_processor_decorator.h"
@@ -41,13 +40,6 @@
 using namespace srsran;
 
 namespace {
-
-/// Dummy NZP CSI RS processor.
-class csi_rs_processor_dummy : public nzp_csi_rs_generator
-{
-public:
-  void map(resource_grid_writer& grid, const config_t& config) override {}
-};
 
 class uplink_processor_base_factory : public uplink_processor_factory
 {
@@ -317,7 +309,12 @@ public:
     }
     report_fatal_error_if_not(ssb, "Invalid SSB processor.");
 
-    std::unique_ptr<nzp_csi_rs_generator> nzp_csi = nzp_csi_rs_factory->create();
+    std::unique_ptr<nzp_csi_rs_generator> nzp_csi;
+    if (enable_broadcast) {
+      nzp_csi = nzp_csi_rs_factory->create(logger);
+    } else {
+      nzp_csi = nzp_csi_rs_factory->create();
+    }
     report_fatal_error_if_not(nzp_csi, "Invalid NZP-CSI-RS generator.");
 
     std::unique_ptr<downlink_processor> downlink_proc = std::make_unique<downlink_processor_single_executor_impl>(
@@ -350,7 +347,6 @@ create_downlink_processor_pool(std::shared_ptr<downlink_processor_factory> facto
 
   downlink_processor_pool_config config_pool;
   config_pool.num_sectors = 1;
-  config_pool.null_proc   = std::make_unique<downlink_processor_null_executor>(*config.rg_gateway, dl_phy_logger);
 
   for (unsigned numerology = 0, numerology_end = to_numerology_value(subcarrier_spacing::invalid);
        numerology != numerology_end;
@@ -362,17 +358,20 @@ create_downlink_processor_pool(std::shared_ptr<downlink_processor_factory> facto
 
     downlink_processor_pool_config::sector_dl_processor info = {0, to_subcarrier_spacing(numerology), {}};
 
-    for (unsigned i = 0, e = config.nof_dl_processors; i != e; ++i) {
+    for (unsigned i_proc = 0, nof_procs = config.nof_dl_processors; i_proc != nof_procs; ++i_proc) {
       downlink_processor_config processor_config;
-      processor_config.id       = i;
-      processor_config.gateway  = config.rg_gateway;
-      processor_config.executor = config.dl_executor;
+      processor_config.id      = i_proc;
+      processor_config.gateway = config.rg_gateway;
+
+      // Assign an executor to each DL processor from the list in round-robin fashion.
+      processor_config.executor = config.dl_executors[i_proc % config.dl_executors.size()];
+
       std::unique_ptr<downlink_processor> dl_proc;
       if (config.log_level == srslog::basic_levels::none) {
         dl_proc = factory->create(processor_config);
       } else {
         // Fetch and configure logger.
-        srslog::basic_logger& logger = srslog::fetch_basic_logger("DL-PHY" + std::to_string(i), true);
+        srslog::basic_logger& logger = srslog::fetch_basic_logger("DL-PHY" + std::to_string(i_proc), true);
         logger.set_level(config.log_level);
         logger.set_hex_dump_max_size(config.logger_max_hex_size);
 
@@ -388,9 +387,11 @@ create_downlink_processor_pool(std::shared_ptr<downlink_processor_factory> facto
   return create_dl_processor_pool(std::move(config_pool));
 }
 
-static std::unique_ptr<resource_grid_pool> create_dl_resource_grid_pool(const upper_phy_config& config)
+static std::unique_ptr<resource_grid_pool>
+create_dl_resource_grid_pool(const upper_phy_config& config, std::shared_ptr<resource_grid_factory> rg_factory)
 {
   // Configure one pool per upper PHY.
+  report_fatal_error_if_not(rg_factory, "Invalid resource grid factory.");
   unsigned                                    nof_sectors = 1;
   unsigned                                    nof_slots   = config.nof_slots_dl_rg;
   std::vector<std::unique_ptr<resource_grid>> grids;
@@ -398,7 +399,7 @@ static std::unique_ptr<resource_grid_pool> create_dl_resource_grid_pool(const up
   for (unsigned sector_idx = 0; sector_idx != nof_sectors; ++sector_idx) {
     for (unsigned slot_id = 0; slot_id != nof_slots; ++slot_id) {
       std::unique_ptr<resource_grid> grid =
-          create_resource_grid(config.nof_ports, MAX_NSYMB_PER_SLOT, config.dl_bw_rb * NRE);
+          rg_factory->create(config.nof_tx_ports, MAX_NSYMB_PER_SLOT, config.dl_bw_rb * NRE);
       report_fatal_error_if_not(grid, "Invalid resource grid.");
       grids.push_back(std::move(grid));
     }
@@ -407,8 +408,10 @@ static std::unique_ptr<resource_grid_pool> create_dl_resource_grid_pool(const up
   return create_resource_grid_pool(nof_sectors, nof_slots, std::move(grids));
 }
 
-static std::unique_ptr<resource_grid_pool> create_ul_resource_grid_pool(const upper_phy_config& config)
+static std::unique_ptr<resource_grid_pool>
+create_ul_resource_grid_pool(const upper_phy_config& config, std::shared_ptr<resource_grid_factory> rg_factory)
 {
+  report_fatal_error_if_not(rg_factory, "Invalid resource grid factory.");
   unsigned                                    nof_sectors = 1;
   unsigned                                    nof_slots   = config.nof_slots_ul_rg;
   std::vector<std::unique_ptr<resource_grid>> grids;
@@ -416,7 +419,7 @@ static std::unique_ptr<resource_grid_pool> create_ul_resource_grid_pool(const up
   for (unsigned sector_idx = 0; sector_idx != nof_sectors; ++sector_idx) {
     for (unsigned slot_id = 0; slot_id != nof_slots; ++slot_id) {
       std::unique_ptr<resource_grid> grid =
-          create_resource_grid(config.nof_ports, MAX_NSYMB_PER_SLOT, config.ul_bw_rb * NRE);
+          rg_factory->create(config.nof_rx_ports, MAX_NSYMB_PER_SLOT, config.ul_bw_rb * NRE);
       report_fatal_error_if_not(grid, "Invalid resource grid.");
       grids.push_back(std::move(grid));
     }
@@ -438,7 +441,7 @@ static std::shared_ptr<uplink_processor_factory> create_ul_processor_factory(con
   report_fatal_error_if_not(prach_gen_factory, "Invalid PRACH generator factory.");
 
   std::shared_ptr<prach_detector_factory> prach_factory =
-      create_prach_detector_factory_simple(dft_factory, prach_gen_factory, 1536U);
+      create_prach_detector_factory_sw(dft_factory, prach_gen_factory);
   report_fatal_error_if_not(prach_factory, "Invalid PRACH detector factory.");
 
   /// PUSCH FACTORY.
@@ -480,7 +483,7 @@ static std::shared_ptr<uplink_processor_factory> create_ul_processor_factory(con
   pusch_config.ch_estimate_dimensions.nof_symbols   = 14;
   pusch_config.ch_estimate_dimensions.nof_tx_layers = 1;
   pusch_config.ch_estimate_dimensions.nof_prb       = config.ul_bw_rb;
-  pusch_config.ch_estimate_dimensions.nof_rx_ports  = 1;
+  pusch_config.ch_estimate_dimensions.nof_rx_ports  = config.nof_rx_ports;
 
   std::shared_ptr<pusch_processor_factory> pusch_factory = create_pusch_processor_factory_sw(pusch_config);
   report_fatal_error_if_not(pusch_factory, "Invalid PUSCH processor factory.");
@@ -596,9 +599,10 @@ static std::unique_ptr<prach_buffer_pool> create_prach_pool(const upper_phy_conf
     std::unique_ptr<prach_buffer> buffer;
 
     if (config.is_prach_long_format) {
-      buffer = create_prach_buffer_long(config.max_nof_fd_prach_occasions);
+      buffer = create_prach_buffer_long(config.nof_rx_ports, config.max_nof_fd_prach_occasions);
     } else {
-      buffer = create_prach_buffer_short(config.max_nof_td_prach_occasions, config.max_nof_fd_prach_occasions);
+      buffer = create_prach_buffer_short(
+          config.nof_rx_ports, config.max_nof_td_prach_occasions, config.max_nof_fd_prach_occasions);
     }
 
     report_fatal_error_if_not(buffer, "Invalid PRACH buffer.");
@@ -611,10 +615,12 @@ static std::unique_ptr<prach_buffer_pool> create_prach_pool(const upper_phy_conf
 class upper_phy_factory_impl : public upper_phy_factory
 {
 public:
-  upper_phy_factory_impl(std::shared_ptr<downlink_processor_factory> downlink_proc_factory_) :
-    downlink_proc_factory(downlink_proc_factory_)
+  upper_phy_factory_impl(std::shared_ptr<downlink_processor_factory> downlink_proc_factory_,
+                         std::shared_ptr<resource_grid_factory>      rg_factory_) :
+    downlink_proc_factory(std::move(downlink_proc_factory_)), rg_factory(std::move(rg_factory_))
   {
     srsran_assert(downlink_proc_factory, "Invalid downlink processor factory.");
+    srsran_assert(rg_factory, "Invalid resource grid factory.");
   }
 
   std::unique_ptr<upper_phy> create(const upper_phy_config& config) override
@@ -627,12 +633,12 @@ public:
     phy_config.rx_symbol_request_notifier  = config.rx_symbol_request_notifier;
     phy_config.nof_slots_ul_pdu_repository = config.nof_ul_processors * 2;
 
-    phy_config.dl_rg_pool = create_dl_resource_grid_pool(config);
+    phy_config.dl_rg_pool = create_dl_resource_grid_pool(config, rg_factory);
     report_fatal_error_if_not(phy_config.dl_rg_pool, "Invalid downlink resource grid pool.");
 
     std::shared_ptr<uplink_processor_factory> ul_processor_fact = create_ul_processor_factory(config);
 
-    phy_config.ul_rg_pool = create_ul_resource_grid_pool(config);
+    phy_config.ul_rg_pool = create_ul_resource_grid_pool(config, rg_factory);
     report_fatal_error_if_not(phy_config.ul_rg_pool, "Invalid uplink resource grid pool.");
 
     phy_config.dl_processor_pool = create_downlink_processor_pool(downlink_proc_factory, config);
@@ -651,11 +657,14 @@ public:
     phy_config.dl_pdu_validator = downlink_proc_factory->create_pdu_validator();
     phy_config.ul_pdu_validator = ul_processor_fact->create_pdu_validator();
 
+    phy_config.timing_handler_executor = config.pusch_executor;
+
     return std::make_unique<upper_phy_impl>(std::move(phy_config));
   }
 
 private:
   std::shared_ptr<downlink_processor_factory> downlink_proc_factory;
+  std::shared_ptr<resource_grid_factory>      rg_factory;
 };
 
 } // namespace
@@ -751,6 +760,115 @@ srsran::create_downlink_processor_factory_sw(const downlink_processor_factory_sw
   report_fatal_error_if_not(pdcch_proc_factory, "Invalid PDCCH processor factory.");
 
   // Create channel processors - PDSCH
+  std::shared_ptr<pdsch_processor_factory> pdsch_proc_factory;
+  if (config.nof_pdsch_codeblock_threads > 1) {
+    report_fatal_error_if_not(config.pdsch_codeblock_task_executor, "Invalid codeblock executor.");
+    pdsch_proc_factory = create_pdsch_concurrent_processor_factory_sw(ldpc_seg_tx_factory,
+                                                                      ldpc_enc_factory,
+                                                                      ldpc_rm_factory,
+                                                                      prg_factory,
+                                                                      mod_factory,
+                                                                      dmrs_pdsch_proc_factory,
+                                                                      *config.pdsch_codeblock_task_executor,
+                                                                      config.nof_pdsch_codeblock_threads);
+  } else {
+    pdsch_proc_factory =
+        create_pdsch_processor_factory_sw(pdsch_enc_factory, pdsch_mod_factory, dmrs_pdsch_proc_factory);
+  }
+  report_fatal_error_if_not(pdsch_proc_factory, "Invalid PDSCH processor factory.");
+
+  // Create channel processors - SSB
+  ssb_processor_factory_sw_configuration ssb_factory_config;
+  ssb_factory_config.encoder_factory                      = pbch_enc_factory;
+  ssb_factory_config.modulator_factory                    = pbch_mod_factory;
+  ssb_factory_config.dmrs_factory                         = dmrs_pbch_proc_factory;
+  ssb_factory_config.pss_factory                          = pss_proc_factory;
+  ssb_factory_config.sss_factory                          = sss_proc_factory;
+  std::shared_ptr<ssb_processor_factory> ssb_proc_factory = create_ssb_processor_factory_sw(ssb_factory_config);
+  report_fatal_error_if_not(ssb_proc_factory, "Invalid SSB processor factory.");
+
+  // Create signal generators - NZP-CSI-RS
+  std::shared_ptr<nzp_csi_rs_generator_factory> nzp_csi_rs_factory =
+      create_nzp_csi_rs_generator_factory_sw(prg_factory);
+  report_fatal_error_if_not(nzp_csi_rs_factory, "Invalid NZP-CSI-RS generator factory.");
+
+  return std::make_shared<downlink_processor_single_executor_factory>(
+      pdcch_proc_factory, pdsch_proc_factory, ssb_proc_factory, nzp_csi_rs_factory);
+}
+
+std::shared_ptr<downlink_processor_factory>
+srsran::create_downlink_processor_factory_hw(const downlink_processor_factory_hw_config& config)
+{
+  // Create channel coding factories - CRC
+  std::shared_ptr<crc_calculator_factory> crc_calc_factory = config.crc_calc_factory;
+  report_fatal_error_if_not(crc_calc_factory, "Invalid CRC calculator factory.");
+
+  // Create channel coding factories - Polar
+  std::shared_ptr<polar_factory> polar_factory = create_polar_factory_sw();
+  report_fatal_error_if_not(polar_factory, "Invalid POLAR factory.");
+
+  // Create sequence generators factories - PRG
+  std::shared_ptr<pseudo_random_generator_factory> prg_factory = create_pseudo_random_generator_sw_factory();
+  report_fatal_error_if_not(prg_factory, "Invalid PRG factory.");
+
+  // Create modulation mapper factory.
+  std::shared_ptr<channel_modulation_factory> mod_factory = create_channel_modulation_sw_factory();
+  report_fatal_error_if_not(mod_factory, "Invalid modulation factory.");
+
+  // Create channel processors encoder factories - PBCH
+  std::shared_ptr<pbch_encoder_factory> pbch_enc_factory =
+      create_pbch_encoder_factory_sw(crc_calc_factory, prg_factory, polar_factory);
+  report_fatal_error_if_not(pbch_enc_factory, "Invalid PBCH encoder factory.");
+
+  // Create channel processors encoder factories - PDCCH
+  std::shared_ptr<pdcch_encoder_factory> pdcch_enc_factory =
+      create_pdcch_encoder_factory_sw(crc_calc_factory, polar_factory);
+  report_fatal_error_if_not(pdcch_enc_factory, "Invalid PDCCH encoder factory.");
+
+  std::shared_ptr<pdsch_encoder_factory> pdsch_enc_factory = config.pdsch_enc_factory;
+  report_fatal_error_if_not(pdsch_enc_factory, "Invalid PDSCH encoder factory.");
+
+  // Create channel processors modulation factories - PBCH
+  std::shared_ptr<pbch_modulator_factory> pbch_mod_factory = create_pbch_modulator_factory_sw(mod_factory, prg_factory);
+  report_fatal_error_if_not(pbch_mod_factory, "Invalid PBCH modulation factory.");
+
+  // Create channel processors modulation factories - PDCCH
+  std::shared_ptr<pdcch_modulator_factory> pdcch_mod_factory =
+      create_pdcch_modulator_factory_sw(mod_factory, prg_factory);
+  report_fatal_error_if_not(pdcch_mod_factory, "Invalid PDCCH modulation factory.");
+
+  // Create channel processors modulation factories - PDSCH
+  std::shared_ptr<pdsch_modulator_factory> pdsch_mod_factory =
+      create_pdsch_modulator_factory_sw(mod_factory, prg_factory);
+  report_fatal_error_if_not(pdsch_mod_factory, "Invalid PDSCH modulation factory.");
+
+  // Create DMRS generators - PBCH, PSS, SSS
+  std::shared_ptr<dmrs_pbch_processor_factory> dmrs_pbch_proc_factory =
+      create_dmrs_pbch_processor_factory_sw(prg_factory);
+  report_fatal_error_if_not(dmrs_pbch_proc_factory, "Invalid DMRS PBCH factory.");
+
+  std::shared_ptr<pss_processor_factory> pss_proc_factory = create_pss_processor_factory_sw();
+  report_fatal_error_if_not(pss_proc_factory, "Invalid PSS factory.");
+
+  std::shared_ptr<sss_processor_factory> sss_proc_factory = create_sss_processor_factory_sw();
+  report_fatal_error_if_not(sss_proc_factory, "Invalid SSS factory.");
+
+  // Create DMRS generators - PDCCH
+  std::shared_ptr<dmrs_pdcch_processor_factory> dmrs_pdcch_proc_factory =
+      create_dmrs_pdcch_processor_factory_sw(prg_factory);
+  report_fatal_error_if_not(dmrs_pdcch_proc_factory, "Invalid DMRS PDCCH factory.");
+
+  // Create DMRS generators - PDSCH
+  std::shared_ptr<dmrs_pdsch_processor_factory> dmrs_pdsch_proc_factory =
+      create_dmrs_pdsch_processor_factory_sw(prg_factory);
+  report_fatal_error_if_not(dmrs_pdsch_proc_factory, "Invalid DMRS PDSCH factory.");
+
+  // Create channel processors - PDCCH
+  std::shared_ptr<pdcch_processor_factory> pdcch_proc_factory =
+      create_pdcch_processor_factory_sw(pdcch_enc_factory, pdcch_mod_factory, dmrs_pdcch_proc_factory);
+  report_fatal_error_if_not(pdcch_proc_factory, "Invalid PDCCH processor factory.");
+
+  // Create channel processors - PDSCH
   std::shared_ptr<pdsch_processor_factory> pdsch_proc_factory =
       create_pdsch_processor_factory_sw(pdsch_enc_factory, pdsch_mod_factory, dmrs_pdsch_proc_factory);
   report_fatal_error_if_not(pdsch_proc_factory, "Invalid PDSCH processor factory.");
@@ -792,7 +910,6 @@ std::unique_ptr<downlink_processor_pool> srsran::create_dl_processor_pool(downli
   // Convert from pool config to pool_impl config.
   downlink_processor_pool_impl_config dl_processors;
   dl_processors.num_sectors = config.num_sectors;
-  dl_processors.null_proc   = std::move(config.null_proc);
 
   for (auto& proc : config.dl_processors) {
     dl_processors.procs.push_back({proc.sector, proc.scs, std::move(proc.procs)});
@@ -802,7 +919,8 @@ std::unique_ptr<downlink_processor_pool> srsran::create_dl_processor_pool(downli
 }
 
 std::unique_ptr<upper_phy_factory>
-srsran::create_upper_phy_factory(std::shared_ptr<downlink_processor_factory> downlink_proc_factory)
+srsran::create_upper_phy_factory(std::shared_ptr<downlink_processor_factory> downlink_proc_factory,
+                                 std::shared_ptr<resource_grid_factory>      rg_factory)
 {
-  return std::make_unique<upper_phy_factory_impl>(downlink_proc_factory);
+  return std::make_unique<upper_phy_factory_impl>(downlink_proc_factory, rg_factory);
 }

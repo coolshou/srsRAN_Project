@@ -112,6 +112,7 @@ private:
   {
     sched_cell_configuration_request_message msg     = test_helpers::make_default_sched_cell_configuration_request();
     msg.dl_carrier.arfcn                             = freq_arfcn;
+    msg.dl_carrier.band                              = band_helper::get_band_from_dl_arfcn(freq_arfcn);
     msg.dl_cfg_common.freq_info_dl.offset_to_point_a = offset_to_point_A;
     msg.dl_cfg_common.init_dl_bwp.generic_params.scs = init_bwp_scs;
     msg.ssb_config.scs                               = init_bwp_scs;
@@ -375,11 +376,10 @@ void test_ssb_case_B(const slot_point&             slot_tx,
         ++expected_ssb_per_slot;
 
         // Check OFDM symbols and frequency allocation in the ssb_information struct.
-        crb_interval expected_ssb_crbs{};
-        unsigned     ssb_crb_start = cell_cfg.dl_cfg_common.init_dl_bwp.generic_params.scs == subcarrier_spacing::kHz15
-                                         ? ssb_cfg.offset_to_point_A.to_uint()
-                                         : ssb_cfg.offset_to_point_A.to_uint() / 2;
-        unsigned     ssb_crb_stop =
+        unsigned ssb_crb_start = cell_cfg.dl_cfg_common.init_dl_bwp.generic_params.scs == subcarrier_spacing::kHz15
+                                     ? ssb_cfg.offset_to_point_A.to_uint()
+                                     : ssb_cfg.offset_to_point_A.to_uint() / 2;
+        unsigned ssb_crb_stop =
             ssb_cfg.k_ssb.to_uint() > 0 ? ssb_crb_start + NOF_SSB_PRBS + 1 : ssb_crb_start + NOF_SSB_PRBS;
         test_ssb_information(
             ssb_burst_ofdm_symb[n], sl_point_mod - 1, crb_interval{ssb_crb_start, ssb_crb_stop}, ssb_item);

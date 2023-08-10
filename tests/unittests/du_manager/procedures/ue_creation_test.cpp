@@ -22,7 +22,7 @@
 
 #include "du_manager_procedure_test_helpers.h"
 #include "lib/du_manager/procedures/ue_creation_procedure.h"
-#include "srsran/asn1/rrc_nr/rrc_nr.h"
+#include "srsran/asn1/rrc_nr/cell_group_config.h"
 #include "srsran/du/du_cell_config_helpers.h"
 #include "srsran/support/test_utils.h"
 #include <gtest/gtest.h>
@@ -58,14 +58,13 @@ protected:
     f1ap.next_ue_create_response.f1c_bearers_added[0] = &f1ap.f1ap_ues[ue_index].f1c_bearers[srb_id_t::srb0];
     f1ap.next_ue_create_response.f1c_bearers_added[1] = &f1ap.f1ap_ues[ue_index].f1c_bearers[srb_id_t::srb1];
 
-    proc = launch_async<ue_creation_procedure>(ue_index,
-                                               create_test_ul_ccch_message(rnti),
-                                               ue_mng,
-                                               params.services,
-                                               params.mac,
-                                               params.rlc,
-                                               params.f1ap,
-                                               cell_res_alloc);
+    ul_ccch_indication_message ul_ccch_msg = create_test_ul_ccch_message(rnti);
+
+    proc = launch_async<ue_creation_procedure>(
+        du_ue_creation_request{ue_index, ul_ccch_msg.cell_index, rnti, std::move(ul_ccch_msg.subpdu)},
+        ue_mng,
+        params,
+        cell_res_alloc);
     proc_launcher.emplace(proc);
   }
 
@@ -133,9 +132,9 @@ TEST_F(du_manager_ue_creation_tester,
   start_procedure(ue_index, rnti);
 
   ASSERT_FALSE(proc.ready());
-  mac.wait_ue_create.result.result     = true;
-  mac.wait_ue_create.result.ue_index   = ue_index;
-  mac.wait_ue_create.result.cell_index = to_du_cell_index(0);
+  mac.wait_ue_create.result.allocated_crnti = rnti;
+  mac.wait_ue_create.result.ue_index        = ue_index;
+  mac.wait_ue_create.result.cell_index      = to_du_cell_index(0);
   mac.wait_ue_create.ready_ev.set();
 
   // Check procedure has finished.
@@ -156,13 +155,13 @@ TEST_F(du_manager_ue_creation_tester,
   // > Create first UE.
   set_sr_offset(ue_idx1, to_du_cell_index(0), sr_offset1);
   start_procedure(ue_idx1, to_rnti(0x4601));
-  mac_ue_create_request_message req1 = *this->mac.last_ue_create_msg;
+  mac_ue_create_request req1 = *this->mac.last_ue_create_msg;
   ASSERT_NO_FATAL_FAILURE(check_du_to_cu_rrc_container_validity());
   du_ue_index_t ue_res_idx1 = *cell_res_alloc.last_ue_index;
   // > Create second UE.
   set_sr_offset(ue_idx2, to_du_cell_index(0), sr_offset2);
   start_procedure(ue_idx2, to_rnti(0x4602));
-  mac_ue_create_request_message req2 = *this->mac.last_ue_create_msg;
+  mac_ue_create_request req2 = *this->mac.last_ue_create_msg;
   ASSERT_NO_FATAL_FAILURE(check_du_to_cu_rrc_container_validity());
   du_ue_index_t ue_res_idx2 = *cell_res_alloc.last_ue_index;
 

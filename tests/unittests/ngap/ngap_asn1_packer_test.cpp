@@ -30,10 +30,10 @@
 using namespace srsran;
 using namespace srs_cu_cp;
 
-security::sec_as_key make_sec_as_key(std::string hex_str)
+security::sec_key make_sec_key(std::string hex_str)
 {
-  byte_buffer          key_buf = make_byte_buffer(hex_str);
-  security::sec_as_key key     = {};
+  byte_buffer       key_buf = make_byte_buffer(hex_str);
+  security::sec_key key     = {};
   std::copy(key_buf.begin(), key_buf.end(), key.begin());
   return key;
 }
@@ -120,7 +120,7 @@ TEST_F(ngap_asn1_packer_test, when_packing_unsuccessful_then_message_not_forward
   ngap_msg.pdu.set_successful_outcome();
   ngap_msg.pdu.successful_outcome().load_info_obj(ASN1_NGAP_ID_NG_SETUP);
   auto& setup_res = ngap_msg.pdu.successful_outcome().value.ng_setup_resp();
-  setup_res->amf_name.value.from_string("open5gs-amf0");
+  setup_res->amf_name.from_string("open5gs-amf0");
 
   // Action 3: Pack message and forward to gateway
   packer->handle_message(ngap_msg);
@@ -139,8 +139,8 @@ TEST_F(ngap_asn1_packer_test, when_unpack_init_ctx_extract_sec_params_correctly)
       "42010177000bf200f110020040dd00b06454072000f11000000715020101210201005e0129";
 
   // get expected security key
-  const char*          security_key_cstr = "50636e38151d62356d9a1a0c9f2391885177307ad494be15281dfe5fdac06302";
-  security::sec_as_key security_key      = make_sec_as_key(security_key_cstr);
+  const char*       security_key_cstr = "50636e38151d62356d9a1a0c9f2391885177307ad494be15281dfe5fdac06302";
+  security::sec_key security_key      = make_sec_key(security_key_cstr);
 
   byte_buffer buf = make_byte_buffer(ngap_init_ctx_req);
 
@@ -151,12 +151,12 @@ TEST_F(ngap_asn1_packer_test, when_unpack_init_ctx_extract_sec_params_correctly)
   const asn1::ngap::ngap_pdu_c&                   pdu     = msg.pdu;
   const asn1::ngap::init_context_setup_request_s& request = pdu.init_msg().value.init_context_setup_request();
 
-  security::sec_as_key           security_key_o;
+  security::sec_key              security_key_o;
   security::supported_algorithms inte_algos;
   security::supported_algorithms ciph_algos;
-  copy_asn1_key(security_key_o, *request->security_key);
-  fill_supported_algorithms(inte_algos, request->ue_security_cap->nr_integrity_protection_algorithms);
-  fill_supported_algorithms(ciph_algos, request->ue_security_cap->nr_encryption_algorithms);
+  copy_asn1_key(security_key_o, request->security_key);
+  fill_supported_algorithms(inte_algos, request->ue_security_cap.nr_integrity_protection_algorithms);
+  fill_supported_algorithms(ciph_algos, request->ue_security_cap.nr_encryption_algorithms);
   test_logger.debug("{}", inte_algos);
   test_logger.debug("{}", ciph_algos);
 
@@ -187,7 +187,7 @@ TEST_F(ngap_asn1_packer_test, when_dl_nas_message_packing_successful_then_unpack
   ASSERT_EQ(ngap->last_msg.pdu.type(), dl_nas_transport.pdu.type());
 
   // Assert that the AMF UE ID of the originally created message is equal to the one of the unpacked message
-  ASSERT_EQ(ngap->last_msg.pdu.init_msg().value.dl_nas_transport()->amf_ue_ngap_id.value.value,
+  ASSERT_EQ(ngap->last_msg.pdu.init_msg().value.dl_nas_transport()->amf_ue_ngap_id,
             amf_ue_id_to_uint(amf_ue_id_t::max));
 }
 
@@ -209,6 +209,6 @@ TEST_F(ngap_asn1_packer_test, when_ul_nas_message_packing_successful_then_unpack
   ASSERT_EQ(ngap->last_msg.pdu.type(), ul_nas_transport.pdu.type());
 
   // Assert that the AMF UE ID of the originally created message is equal to the one of the unpacked message
-  ASSERT_EQ(ngap->last_msg.pdu.init_msg().value.ul_nas_transport()->amf_ue_ngap_id.value.value,
+  ASSERT_EQ(ngap->last_msg.pdu.init_msg().value.ul_nas_transport()->amf_ue_ngap_id,
             amf_ue_id_to_uint(amf_ue_id_t::max));
 }

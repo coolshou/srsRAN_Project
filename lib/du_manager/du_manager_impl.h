@@ -51,10 +51,17 @@ public:
     ue_mng.schedule_async_task(ue_index, std::move(task));
   }
 
+  du_ue_index_t find_unused_du_ue_index() override;
+
+  async_task<f1ap_ue_context_creation_response>
+  handle_ue_context_creation(const f1ap_ue_context_creation_request& request) override;
+
   async_task<f1ap_ue_context_update_response>
   handle_ue_context_update(const f1ap_ue_context_update_request& request) override;
 
   async_task<void> handle_ue_delete_request(const f1ap_ue_delete_request& request) override;
+
+  void handle_ue_reestablishment(du_ue_index_t new_ue_index, du_ue_index_t old_ue_index) override;
 
   size_t nof_ues() override;
 

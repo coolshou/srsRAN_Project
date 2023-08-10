@@ -22,10 +22,15 @@
 
 #pragma once
 
+#include "lib/e2/common/e2_subscription_manager_impl.h"
 #include "lib/e2/common/e2ap_asn1_packer.h"
+#include "lib/e2/e2sm/e2sm_kpm_asn1_packer.h"
+#include "lib/e2/e2sm/e2sm_kpm_impl.h"
 #include "srsran/asn1/e2ap/e2ap.h"
 #include "srsran/e2/e2.h"
 #include "srsran/e2/e2_factory.h"
+#include "srsran/e2/e2ap_configuration_helpers.h"
+#include "srsran/e2/e2sm/e2sm_factory.h"
 #include "srsran/gateways/network_gateway.h"
 #include "srsran/support/executors/manual_task_worker.h"
 #include "srsran/support/timers.h"
@@ -58,6 +63,16 @@ public:
 private:
   srslog::basic_logger& logger;
   e2_message_handler*   handler = nullptr;
+};
+
+class dummy_e2ap_pcap : public dlt_pcap
+{
+public:
+  void open(const std::string& filename_) override {}
+  void close() override {}
+  bool is_write_enabled() override { return false; }
+  void push_pdu(const_span<uint8_t> pdu) override {}
+  void push_pdu(byte_buffer pdu) override {}
 };
 
 inline e2_message generate_e2_setup_request()
@@ -94,7 +109,8 @@ inline e2_message generate_e2_setup_request()
       "6C6F796D656E74010101010001051E804F2D43552D5550204D6561737572656D656E7420436F6E7461696E657220666F7220746865203547"
       "4320636F6E6E6563746564206465706C6F796D656E74010101010001061E804F2D43552D5550204D6561737572656D656E7420436F6E7461"
       "696E657220666F72207468652045504320636F6E6E6563746564206465706C6F796D656E7401010101");
-  ran_func_item.value().ra_nfunction_item().ran_function_oid.resize(1);
+  ran_func_item.value().ra_nfunction_item().ran_function_oid.resize(30);
+  ran_func_item.value().ra_nfunction_item().ran_function_oid.from_string("1.3.6.1.4.1.53148.1.2.2.2");
   setup->ra_nfunctions_added.value.push_back(ran_func_item);
 
   // E2 node component config
@@ -111,10 +127,16 @@ inline e2_message generate_e2_setup_request()
   return e2_msg;
 }
 
-class dummy_e2_subscriber : public e2_subscriber
+class dummy_e2_du_metrics : public e2_du_metrics_interface
 {
 public:
-  dummy_e2_subscriber() : logger(srslog::fetch_basic_logger("TEST")){};
+  void get_metrics(scheduler_ue_metrics& ue_metrics) override {}
+};
+
+class dummy_e2_subscription_mngr : public e2_subscription_manager
+{
+public:
+  dummy_e2_subscription_mngr() : logger(srslog::fetch_basic_logger("TEST")){};
   e2_subscribe_reponse_message handle_subscription_setup(const asn1::e2ap::ricsubscription_request_s& request) override
   {
     last_subscription = request;
@@ -124,6 +146,27 @@ public:
     get_subscription_result(msg);
     return msg;
   }
+
+  e2_subscribe_delete_response_message
+  handle_subscription_delete(const asn1::e2ap::ricsubscription_delete_request_s& msg) override
+  {
+    e2_subscribe_delete_response_message outcome;
+    return outcome;
+  };
+
+  void start_subscription(int ric_instance_id, e2_event_manager& ev_mng, uint16_t ran_func_id) override {}
+
+  void stop_subscription(int                                                 ric_instance_id,
+                         e2_event_manager&                                   ev_mng,
+                         const asn1::e2ap::ricsubscription_delete_request_s& msg) override
+  {
+  }
+
+  void add_e2sm_service(std::string oid, std::unique_ptr<e2sm_interface> e2sm_iface) override {}
+
+  e2sm_interface* get_e2sm_interface(std::string oid) override { return nullptr; }
+
+  void add_ran_function_oid(uint16_t ran_func_id, std::string oid) override {}
 
 private:
   void get_subscription_result(e2_subscribe_reponse_message& msg)
@@ -165,9 +208,11 @@ inline e2_message generate_e2_setup_response(unsigned transaction_id)
   e2_setup_response.pdu.set_successful_outcome();
   e2_setup_response.pdu.successful_outcome().load_info_obj(ASN1_E2AP_ID_E2SETUP);
 
-  auto& setup                       = e2_setup_response.pdu.successful_outcome().value.e2setup_resp();
-  setup->transaction_id.value.value = transaction_id;
-
+  auto& setup                           = e2_setup_response.pdu.successful_outcome().value.e2setup_resp();
+  setup->transaction_id.value.value     = transaction_id;
+  setup->ra_nfunctions_accepted_present = true;
+  setup->ra_nfunctions_accepted.value.resize(1);
+  setup->ra_nfunctions_accepted.value[0].value().ra_nfunction_id_item().ran_function_id = 1;
   setup->global_ric_id.value.plmn_id.from_number(131014);
   setup->global_ric_id.value.ric_id.from_number(699598);
   return e2_setup_response;
@@ -212,20 +257,103 @@ public:
   byte_buffer last_pdu;
 };
 
+class dummy_e2sm_handler : public e2sm_handler
+{
+  asn1::e2sm_kpm::e2_sm_kpm_action_definition_s
+  handle_packed_e2sm_kpm_action_definition(const srsran::byte_buffer& buf) override
+  {
+    e2_sm_kpm_action_definition_s action_def;
+    action_def.ric_style_type = 3;
+    action_def.action_definition_formats.set_action_definition_format3();
+    action_def.action_definition_formats.action_definition_format3().meas_cond_list.resize(1);
+    action_def.action_definition_formats.action_definition_format3()
+        .meas_cond_list[0]
+        .meas_type.set_meas_name()
+        .from_string("RSRP");
+    action_def.action_definition_formats.action_definition_format3().granul_period = 10;
+    return action_def;
+  }
+  asn1::e2sm_kpm::e2_sm_kpm_event_trigger_definition_s
+  handle_packed_event_trigger_definition(const srsran::byte_buffer& buf) override
+  {
+    e2_sm_kpm_event_trigger_definition_s event_trigger_def;
+    event_trigger_def.event_definition_formats.event_definition_format1().report_period = 10;
+    return event_trigger_def;
+  }
+  asn1::unbounded_octstring<true> pack_ran_function_description() override { return {}; };
+};
+
+class dummy_e2_connection_client final : public e2_connection_client
+{
+public:
+  explicit dummy_e2_connection_client(e2ap_packer& packer_) :
+    logger(srslog::fetch_basic_logger("TEST")), packer(packer_){};
+
+  // E2 Agent interface.
+  std::unique_ptr<e2_message_notifier> handle_connection_request() override
+  {
+    return std::make_unique<dummy_e2_pdu_notifier>(nullptr);
+  }
+
+  void connect_e2ap(e2_message_notifier* e2_rx_pdu_notifier,
+                    e2_message_handler*  e2ap_msg_handler_,
+                    e2_event_handler*    event_handler_) override
+  {
+    msg_notifier = dynamic_cast<dummy_e2_pdu_notifier*>(e2_rx_pdu_notifier);
+    msg_notifier->attach_handler(&packer);
+  }
+
+  dummy_e2_pdu_notifier* get_e2_msg_notifier() { return msg_notifier; }
+
+  void close() override{};
+
+private:
+  srslog::basic_logger&  logger;
+  e2ap_packer&           packer;
+  dummy_e2_pdu_notifier* msg_notifier;
+};
+
 /// Fixture class for E2AP
-class e2_test : public ::testing::Test
+class e2_test_base : public ::testing::Test
 {
 protected:
+  void tick()
+  {
+    timers.tick();
+    task_worker.run_pending_tasks();
+  }
+  e2ap_configuration                                  cfg = {};
+  timer_factory                                       factory;
+  timer_manager                                       timers;
+  std::unique_ptr<dummy_network_gateway_data_handler> gw;
+  std::unique_ptr<e2_interface>                       e2;
+  std::unique_ptr<dummy_e2ap_pcap>                    pcap;
+  std::unique_ptr<srsran::e2ap_asn1_packer>           packer;
+  std::unique_ptr<e2sm_interface>                     e2sm_iface;
+  std::unique_ptr<e2sm_handler>                       e2sm_packer;
+  std::unique_ptr<e2_subscription_manager>            e2_subscription_mngr;
+  std::unique_ptr<e2_du_metrics_interface>            du_metrics;
+  manual_task_worker                                  task_worker{64};
+  std::unique_ptr<dummy_e2_pdu_notifier>              msg_notifier;
+  std::unique_ptr<dummy_e2_connection_client>         e2_client;
+  srslog::basic_logger&                               test_logger = srslog::fetch_basic_logger("TEST");
+};
+
+class e2_test : public e2_test_base
+{
   void SetUp() override
   {
     srslog::fetch_basic_logger("TEST").set_level(srslog::basic_levels::debug);
     srslog::init();
 
-    msg_notifier = std::make_unique<dummy_e2_pdu_notifier>(nullptr);
-    subscriber   = std::make_unique<dummy_e2_subscriber>();
-    e2           = create_e2(timer_factory{timers, task_worker}, *msg_notifier, *subscriber);
-    gw           = std::make_unique<dummy_network_gateway_data_handler>();
-    packer       = std::make_unique<srsran::e2ap_asn1_packer>(*gw, *e2);
+    msg_notifier         = std::make_unique<dummy_e2_pdu_notifier>(nullptr);
+    e2_subscription_mngr = std::make_unique<dummy_e2_subscription_mngr>();
+    du_metrics           = std::make_unique<dummy_e2_du_metrics>();
+    factory              = timer_factory{timers, task_worker};
+    e2                   = create_e2(cfg, factory, *msg_notifier, *e2_subscription_mngr);
+    gw                   = std::make_unique<dummy_network_gateway_data_handler>();
+    pcap                 = std::make_unique<dummy_e2ap_pcap>();
+    packer               = std::make_unique<srsran::e2ap_asn1_packer>(*gw, *e2, *pcap);
     msg_notifier->attach_handler(&(*packer));
   }
 
@@ -234,13 +362,120 @@ protected:
     // flush logger after each test
     srslog::flush();
   }
-  std::unique_ptr<dummy_network_gateway_data_handler> gw;
-  std::unique_ptr<e2_interface>                       e2;
-  std::unique_ptr<srsran::e2ap_asn1_packer>           packer;
-  std::unique_ptr<dummy_e2_subscriber>                subscriber;
-  timer_manager                                       timers;
-  manual_task_worker                                  task_worker{64};
-  std::unique_ptr<dummy_e2_pdu_notifier>              msg_notifier;
-  srslog::basic_logger&                               test_logger = srslog::fetch_basic_logger("TEST");
+};
+
+class e2_external_test : public e2_test_base
+{
+  void SetUp() override
+  {
+    srslog::fetch_basic_logger("TEST").set_level(srslog::basic_levels::debug);
+    srslog::init();
+
+    cfg                  = srsran::config_helpers::make_default_e2ap_config();
+    cfg.e2sm_kpm_enabled = true;
+
+    msg_notifier         = std::make_unique<dummy_e2_pdu_notifier>(nullptr);
+    du_metrics           = std::make_unique<dummy_e2_du_metrics>();
+    e2sm_packer          = std::make_unique<e2sm_kpm_asn1_packer>();
+    e2sm_iface           = std::make_unique<e2sm_kpm_impl>(test_logger, *e2sm_packer, *du_metrics);
+    e2_subscription_mngr = std::make_unique<e2_subscription_manager_impl>(*msg_notifier);
+    e2_subscription_mngr->add_e2sm_service("1.3.6.1.4.1.53148.1.2.2.2", std::move(e2sm_iface));
+    factory = timer_factory{timers, task_worker};
+    e2      = create_e2_with_task_exec(cfg, factory, *msg_notifier, *e2_subscription_mngr, task_worker);
+    gw      = std::make_unique<dummy_network_gateway_data_handler>();
+    pcap    = std::make_unique<dummy_e2ap_pcap>();
+    packer  = std::make_unique<srsran::e2ap_asn1_packer>(*gw, *e2, *pcap);
+    msg_notifier->attach_handler(&(*packer));
+  }
+
+  void TearDown() override
+  {
+    // flush logger after each test
+    srslog::flush();
+  }
+};
+
+class e2_entity_test : public e2_test_base
+{
+  void SetUp() override
+  {
+    srslog::fetch_basic_logger("TEST").set_level(srslog::basic_levels::debug);
+    srslog::init();
+
+    cfg                  = srsran::config_helpers::make_default_e2ap_config();
+    cfg.e2sm_kpm_enabled = true;
+
+    gw         = std::make_unique<dummy_network_gateway_data_handler>();
+    pcap       = std::make_unique<dummy_e2ap_pcap>();
+    packer     = std::make_unique<srsran::e2ap_asn1_packer>(*gw, *e2, *pcap);
+    e2_client  = std::make_unique<dummy_e2_connection_client>(*packer);
+    du_metrics = std::make_unique<dummy_e2_du_metrics>();
+    factory    = timer_factory{timers, task_worker};
+    e2         = create_e2_entity(cfg, e2_client.get(), *du_metrics, factory, task_worker);
+  }
+
+  void TearDown() override
+  {
+    // flush logger after each test
+    srslog::flush();
+  }
+};
+
+class e2_test_subscriber : public e2_test_base
+{
+  void SetUp() override
+  {
+    srslog::fetch_basic_logger("TEST").set_level(srslog::basic_levels::debug);
+    srslog::init();
+    cfg                  = srsran::config_helpers::make_default_e2ap_config();
+    cfg.e2sm_kpm_enabled = true;
+
+    factory              = timer_factory{timers, task_worker};
+    msg_notifier         = std::make_unique<dummy_e2_pdu_notifier>(nullptr);
+    e2sm_packer          = std::make_unique<dummy_e2sm_handler>();
+    du_metrics           = std::make_unique<dummy_e2_du_metrics>();
+    e2sm_iface           = std::make_unique<e2sm_kpm_impl>(test_logger, *e2sm_packer, *du_metrics);
+    e2_subscription_mngr = std::make_unique<e2_subscription_manager_impl>(*msg_notifier);
+    e2_subscription_mngr->add_e2sm_service("1.3.6.1.4.1.53148.1.2.2.2", std::move(e2sm_iface));
+    e2_subscription_mngr->add_ran_function_oid(1, "1.3.6.1.4.1.53148.1.2.2.2");
+    e2     = create_e2(cfg, factory, *msg_notifier, *e2_subscription_mngr);
+    gw     = std::make_unique<dummy_network_gateway_data_handler>();
+    pcap   = std::make_unique<dummy_e2ap_pcap>();
+    packer = std::make_unique<srsran::e2ap_asn1_packer>(*gw, *e2, *pcap);
+    msg_notifier->attach_handler(&(*packer));
+  }
+
+  void TearDown() override
+  {
+    // flush logger after each test
+    srslog::flush();
+  }
+};
+
+class e2_test_setup : public e2_test_base
+{
+  void SetUp() override
+  {
+    cfg                  = srsran::config_helpers::make_default_e2ap_config();
+    cfg.e2sm_kpm_enabled = true;
+
+    factory              = timer_factory{timers, task_worker};
+    msg_notifier         = std::make_unique<dummy_e2_pdu_notifier>(nullptr);
+    e2sm_packer          = std::make_unique<e2sm_kpm_asn1_packer>();
+    du_metrics           = std::make_unique<dummy_e2_du_metrics>();
+    e2sm_iface           = std::make_unique<e2sm_kpm_impl>(test_logger, *e2sm_packer, *du_metrics);
+    e2_subscription_mngr = std::make_unique<e2_subscription_manager_impl>(*msg_notifier);
+    e2_subscription_mngr->add_e2sm_service("1.3.6.1.4.1.53148.1.2.2.2", std::move(e2sm_iface));
+    e2     = create_e2(cfg, factory, *msg_notifier, *e2_subscription_mngr);
+    gw     = std::make_unique<dummy_network_gateway_data_handler>();
+    pcap   = std::make_unique<dummy_e2ap_pcap>();
+    packer = std::make_unique<srsran::e2ap_asn1_packer>(*gw, *e2, *pcap);
+    msg_notifier->attach_handler(&(*packer));
+  }
+  void TearDown() override
+  {
+    // flush logger after each test
+    srslog::flush();
+  }
 };
 } // namespace srsran

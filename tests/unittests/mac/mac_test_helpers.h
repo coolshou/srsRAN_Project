@@ -23,6 +23,7 @@
 #pragma once
 
 #include "lib/du_manager/converters/mac_config_helpers.h"
+#include "lib/mac/mac_sched/mac_scheduler_adapter.h"
 #include "srsran/du/du_cell_config_helpers.h"
 #include "srsran/mac/config/mac_cell_group_config_factory.h"
 #include "srsran/mac/mac_cell_result.h"
@@ -44,8 +45,8 @@ inline mac_cell_creation_request make_default_mac_cell_config(const cell_config_
   req.pci              = params.pci;
   req.cell_index       = to_du_cell_index(0);
   req.scs_common       = params.scs_common;
-  req.dl_carrier       = config_helpers::make_default_carrier_configuration(params);
-  req.ul_carrier       = config_helpers::make_default_carrier_configuration(params);
+  req.dl_carrier       = config_helpers::make_default_dl_carrier_configuration(params);
+  req.ul_carrier       = config_helpers::make_default_ul_carrier_configuration(params);
   req.ssb_cfg          = config_helpers::make_default_ssb_config(params);
   req.cell_barred      = false;
   req.intra_freq_resel = false;
@@ -59,18 +60,27 @@ inline mac_cell_creation_request make_default_mac_cell_config(const cell_config_
   return req;
 }
 
-inline mac_ue_create_request_message make_default_ue_creation_request()
+class dummy_ue_rlf_notifier : public mac_ue_radio_link_notifier
 {
-  mac_ue_create_request_message msg{};
+public:
+  bool rlf_detected = false;
+
+  void on_rlf_detected() override { rlf_detected = true; }
+};
+
+inline mac_ue_create_request make_default_ue_creation_request()
+{
+  mac_ue_create_request msg{};
 
   msg.ue_index   = to_du_ue_index(0);
   msg.crnti      = to_rnti(0x4601);
   msg.cell_index = to_du_cell_index(0);
 
+  msg.rlf_notifier = nullptr;
+
   msg.mac_cell_group_cfg = config_helpers::make_initial_mac_cell_group_config();
 
   physical_cell_group_config& pcg_cfg = msg.phy_cell_group_cfg;
-  pcg_cfg.p_nr_fr1                    = 10;
   pcg_cfg.pdsch_harq_codebook         = pdsch_harq_ack_codebook::dynamic;
 
   msg.sched_cfg.cells.push_back(config_helpers::create_default_initial_ue_spcell_cell_config());
@@ -81,7 +91,7 @@ inline mac_ue_create_request_message make_default_ue_creation_request()
 class dummy_mac_scheduler : public mac_scheduler
 {
 public:
-  sched_result next_sched_result;
+  sched_result next_sched_result = {};
 
   bool handle_cell_configuration_request(const sched_cell_configuration_request_message& msg) override { return true; }
   void handle_rach_indication(const rach_indication_message& msg) override {}
@@ -93,11 +103,24 @@ public:
   void handle_uci_indication(const uci_indication& uci) override {}
   void handle_dl_mac_ce_indication(const dl_mac_ce_indication& mac_ce) override {}
   void handle_paging_information(const sched_paging_information& pi) override {}
-  const sched_result* slot_indication(slot_point sl_tx, du_cell_index_t cell_index) override
+  const sched_result& slot_indication(slot_point sl_tx, du_cell_index_t cell_index) override
   {
-    return &next_sched_result;
+    return next_sched_result;
   }
   void handle_dl_buffer_state_indication(const dl_buffer_state_indication_message& bs) override {}
+};
+
+class dummy_mac_scheduler_adapter : public mac_scheduler_cell_info_handler
+{
+public:
+  sched_result next_sched_result = {};
+
+  void handle_dl_buffer_state_update(const mac_dl_buffer_state_indication_message& dl_bs) override {}
+
+  const sched_result& slot_indication(slot_point slot_tx, du_cell_index_t cell_idx) override
+  {
+    return next_sched_result;
+  }
 };
 
 class dummy_mac_cell_result_notifier : public mac_cell_result_notifier
@@ -128,10 +151,10 @@ public:
   unsigned    next_bs = 0;
   byte_buffer previous_tx_sdu;
 
-  byte_buffer_slice_chain on_new_tx_sdu(unsigned nof_bytes) override
+  byte_buffer_chain on_new_tx_sdu(unsigned nof_bytes) override
   {
     previous_tx_sdu = test_rgen::random_vector<uint8_t>(nof_bytes);
-    return byte_buffer_slice_chain{previous_tx_sdu.copy()};
+    return byte_buffer_chain{previous_tx_sdu.copy()};
   }
   unsigned on_buffer_state_update() override { return next_bs; }
 };
@@ -147,8 +170,8 @@ struct mac_test_ue {
   rnti_t                                              rnti;
   slotted_array<mac_test_ue_bearer, MAX_NOF_RB_LCIDS> bearers;
 
-  void                          add_bearer(lcid_t lcid);
-  mac_ue_create_request_message make_ue_create_request();
+  void                  add_bearer(lcid_t lcid);
+  mac_ue_create_request make_ue_create_request();
 };
 
 class dummy_mac_pcap : public mac_pcap

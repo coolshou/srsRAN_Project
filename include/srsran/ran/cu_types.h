@@ -24,9 +24,10 @@
 
 #include "five_qi.h"
 #include "nr_cgi.h"
+#include "qos_prio_level.h"
 #include "s_nssai.h"
 #include "srsran/adt/optional.h"
-#include "srsran/pdcp/pdcp_config.h"
+#include "srsran/sdap/sdap_config.h"
 #include "fmt/format.h"
 
 namespace srsran {
@@ -100,7 +101,7 @@ struct packet_error_rate_t {
 };
 
 struct dyn_5qi_descriptor_t {
-  uint8_t               qos_prio_level;
+  qos_prio_level_t      qos_prio_level;
   uint16_t              packet_delay_budget;
   packet_error_rate_t   packet_error_rate;
   optional<five_qi_t>   five_qi;
@@ -110,13 +111,27 @@ struct dyn_5qi_descriptor_t {
 };
 
 struct non_dyn_5qi_descriptor_t {
-  five_qi_t          five_qi;
-  optional<uint8_t>  qos_prio_level;
-  optional<uint16_t> averaging_win;
-  optional<uint16_t> max_data_burst_volume;
+  five_qi_t                  five_qi;
+  optional<qos_prio_level_t> qos_prio_level;
+  optional<uint16_t>         averaging_win;
+  optional<uint16_t>         max_data_burst_volume;
 };
 
 struct qos_characteristics_t {
+  five_qi_t get_five_qi() const
+  {
+    if (non_dyn_5qi.has_value()) {
+      return non_dyn_5qi.value().five_qi;
+    } else if (dyn_5qi.has_value()) {
+      if (dyn_5qi.value().five_qi.has_value()) {
+        return dyn_5qi.value().five_qi.value();
+      }
+    } else {
+      srsran_assertion_failure("Invalid QoS characteristics. Either dynamic or non-dynamic 5QI must be set");
+    }
+    return five_qi_t::invalid;
+  }
+
   optional<dyn_5qi_descriptor_t>     dyn_5qi;
   optional<non_dyn_5qi_descriptor_t> non_dyn_5qi;
 };
@@ -134,16 +149,24 @@ struct supported_plmns_item_t {
 
 struct sdap_config_t {
   pdu_session_id_t           pdu_session = pdu_session_id_t::invalid;
-  std::string                sdap_hdr_dl;
-  std::string                sdap_hdr_ul;
-  bool                       default_drb                 = false;
-  std::vector<qos_flow_id_t> mapped_qos_flows_to_add     = {};
-  std::vector<qos_flow_id_t> mapped_qos_flows_to_release = {};
+  sdap_hdr_dl_cfg            sdap_hdr_dl = sdap_hdr_dl_cfg::absent;
+  sdap_hdr_ul_cfg            sdap_hdr_ul = sdap_hdr_ul_cfg::absent;
+  bool                       default_drb = false;
+  std::vector<qos_flow_id_t> mapped_qos_flows_to_add;
+  std::vector<qos_flow_id_t> mapped_qos_flows_to_release;
 };
 
 struct security_result_t {
   std::string confidentiality_protection_result;
   std::string integrity_protection_result;
+};
+
+enum class integrity_protection_indication_t { required, preferred, not_needed };
+enum class confidentiality_protection_indication_t { required, preferred, not_needed };
+
+struct security_indication_t {
+  integrity_protection_indication_t       integrity_protection_ind;
+  confidentiality_protection_indication_t confidentiality_protection_ind;
 };
 
 enum class activity_notification_level_t : uint8_t { ue = 0, pdu_session = 1, drb = 2, invalid = 3 };
@@ -163,7 +186,94 @@ struct formatter<srsran::pdu_session_id_t> {
   template <typename FormatContext>
   auto format(const srsran::pdu_session_id_t& sid, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
   {
-    return format_to(ctx.out(), "{:#x}", pdu_session_id_to_uint(sid));
+    return format_to(ctx.out(), "{:#}", pdu_session_id_to_uint(sid));
+  }
+};
+
+template <>
+struct formatter<srsran::qos_flow_id_t> {
+  template <typename ParseContext>
+  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(const srsran::qos_flow_id_t& qfi, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  {
+    switch (qfi) {
+      case srsran::qos_flow_id_t::invalid:
+        return format_to(ctx.out(), "invalid QFI");
+      default:
+        return format_to(ctx.out(), "QFI={:#}", qos_flow_id_to_uint(qfi));
+    }
+  }
+};
+
+template <>
+struct formatter<srsran::integrity_protection_indication_t> {
+  template <typename ParseContext>
+  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(const srsran::integrity_protection_indication_t& ind, FormatContext& ctx)
+      -> decltype(std::declval<FormatContext>().out())
+  {
+    switch (ind) {
+      case srsran::integrity_protection_indication_t::not_needed:
+        return format_to(ctx.out(), "not_needed");
+      case srsran::integrity_protection_indication_t::preferred:
+        return format_to(ctx.out(), "preferred");
+      case srsran::integrity_protection_indication_t::required:
+        return format_to(ctx.out(), "required");
+    }
+    return format_to(ctx.out(), "invalid");
+  }
+};
+
+template <>
+struct formatter<srsran::confidentiality_protection_indication_t> {
+  template <typename ParseContext>
+  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(const srsran::confidentiality_protection_indication_t& ind, FormatContext& ctx)
+      -> decltype(std::declval<FormatContext>().out())
+  {
+    switch (ind) {
+      case srsran::confidentiality_protection_indication_t::not_needed:
+        return format_to(ctx.out(), "not_needed");
+      case srsran::confidentiality_protection_indication_t::preferred:
+        return format_to(ctx.out(), "preferred");
+      case srsran::confidentiality_protection_indication_t::required:
+        return format_to(ctx.out(), "required");
+    }
+    return format_to(ctx.out(), "invalid");
+  }
+};
+
+template <>
+struct formatter<srsran::security_indication_t> {
+  template <typename ParseContext>
+  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(const srsran::security_indication_t& security_ind, FormatContext& ctx)
+      -> decltype(std::declval<FormatContext>().out())
+  {
+    return format_to(ctx.out(),
+                     "integrity_ind={} confidentiality_ind={}",
+                     security_ind.integrity_protection_ind,
+                     security_ind.confidentiality_protection_ind);
   }
 };
 

@@ -34,6 +34,12 @@
 
 namespace srsran {
 
+/// \brief Generate a random gnb_cu_cp_ue_e1ap_id
+gnb_cu_cp_ue_e1ap_id_t generate_random_gnb_cu_cp_ue_e1ap_id();
+
+/// \brief Generate a random gnb_cu_up_ue_e1ap_id
+gnb_cu_up_ue_e1ap_id_t generate_random_gnb_cu_up_ue_e1ap_id();
+
 class dummy_e1ap_cu_up_processor_notifier : public srs_cu_cp::e1ap_cu_up_processor_notifier
 {
 public:
@@ -88,7 +94,7 @@ public:
     for (const auto& request_setup_item : msg.pdu_session_res_to_setup_list) {
       e1ap_pdu_session_resource_setup_modification_item response_setup_item;
       response_setup_item.pdu_session_id               = request_setup_item.pdu_session_id;
-      response_setup_item.ng_dl_up_tnl_info.gtp_teid   = int_to_gtp_teid(1);
+      response_setup_item.ng_dl_up_tnl_info.gtp_teid   = int_to_gtpu_teid(1);
       response_setup_item.ng_dl_up_tnl_info.tp_address = transport_layer_address{"127.0.0.1"};
 
       for (const auto& request_drb_item : request_setup_item.drb_to_setup_list_ng_ran) {

@@ -104,8 +104,8 @@ protected:
     if (!cu_cp_paging_notifier.last_msg.paging_origin.has_value()) {
       return false;
     }
-    if (cu_cp_paging_notifier.last_msg.paging_origin.value() != "non-3gpp") {
-      test_logger.error("Paging origin mismatch {} != non-3gpp", cu_cp_paging_notifier.last_msg.paging_origin.value());
+    if (!cu_cp_paging_notifier.last_msg.paging_origin.value()) {
+      test_logger.error("Paging origin mismatch");
       return false;
     }
 
@@ -129,8 +129,8 @@ protected:
       test_logger.error("NR CGI PLMN mismatch {} != 00f110", cell_item.ngran_cgi.plmn_hex);
       return false;
     }
-    if (cell_item.ngran_cgi.nci != 12345678) {
-      test_logger.error("NR CGI NCI mismatch {} != {}", cell_item.ngran_cgi.nci, 12345678);
+    if (cell_item.ngran_cgi.nci != 6576) {
+      test_logger.error("NR CGI NCI mismatch {} != {}", cell_item.ngran_cgi.nci, 6576);
       return false;
     }
     if (cell_item.time_stayed_in_cell.value() != 5) {

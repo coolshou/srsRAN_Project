@@ -22,9 +22,10 @@
 
 #pragma once
 
-#include "../mac_config.h"
 #include "../mac_config_interfaces.h"
+#include "mac_config.h"
 #include "mac_scheduler_configurator.h"
+#include "srsran/mac/mac_config.h"
 #include "srsran/ran/du_types.h"
 #include "srsran/ran/du_ue_list.h"
 
@@ -36,19 +37,15 @@ struct mac_ue_context {
   du_cell_index_t pcell_idx   = MAX_NOF_DU_CELLS;
 };
 
-template <typename T, T SentinelValue>
-class rnti_value_table;
-
-using du_rnti_table = rnti_value_table<du_ue_index_t, du_ue_index_t::INVALID_DU_UE_INDEX>;
+class rnti_manager;
 
 class mac_controller : public mac_ctrl_configurator, public mac_ue_configurator, public mac_cell_manager
 {
 public:
-  mac_controller(mac_common_config_t&        cfg,
+  mac_controller(const mac_control_config&   cfg_,
                  mac_ul_configurator&        ul_unit_,
                  mac_dl_configurator&        dl_unit_,
-                 rach_handler_configurator&  rach_unit_,
-                 du_rnti_table&              rnti_table_,
+                 rnti_manager&               rnti_table_,
                  mac_scheduler_configurator& sched_cfg_);
 
   /// Adds new cell configuration to MAC. The configuration is forwarded to the scheduler.
@@ -60,16 +57,14 @@ public:
   mac_cell_controller& get_cell_controller(du_cell_index_t cell_index) override;
 
   /// Creates UE in MAC and scheduler.
-  async_task<mac_ue_create_response_message>
-  handle_ue_create_request(const mac_ue_create_request_message& msg) override;
+  async_task<mac_ue_create_response> handle_ue_create_request(const mac_ue_create_request& msg) override;
 
   /// Deletes UE from MAC and scheduler.
-  async_task<mac_ue_delete_response_message>
-  handle_ue_delete_request(const mac_ue_delete_request_message& msg) override;
+  async_task<mac_ue_delete_response> handle_ue_delete_request(const mac_ue_delete_request& msg) override;
 
   /// Reconfigures UE in MAC and scheduler.
-  async_task<mac_ue_reconfiguration_response_message>
-  handle_ue_reconfiguration_request(const mac_ue_reconfiguration_request_message& msg) override;
+  async_task<mac_ue_reconfiguration_response>
+  handle_ue_reconfiguration_request(const mac_ue_reconfiguration_request& msg) override;
 
   void handle_ul_ccch_msg(du_ue_index_t ue_index, byte_buffer pdu) override
   {
@@ -82,18 +77,17 @@ public:
 
 private:
   /// Adds UE solely in MAC controller.
-  bool add_ue(du_ue_index_t ue_index, rnti_t crnti, du_cell_index_t pcell_index) override;
+  rnti_t add_ue(du_ue_index_t ue_index, du_cell_index_t pcell_index, rnti_t tc_rnti) override;
 
   /// Interface to MAC controller main class used by MAC controller procedures.
   void remove_ue(du_ue_index_t ue_index) override;
 
   // args
-  mac_common_config_t&        cfg;
+  mac_control_config          cfg;
   srslog::basic_logger&       logger;
   mac_ul_configurator&        ul_unit;
   mac_dl_configurator&        dl_unit;
-  rach_handler_configurator&  rach_unit;
-  du_rnti_table&              rnti_table;
+  rnti_manager&               rnti_table;
   mac_scheduler_configurator& sched_cfg;
 
   // UE database

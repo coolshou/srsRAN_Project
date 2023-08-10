@@ -25,6 +25,7 @@
 #include "../../phy/support/resource_grid_test_doubles.h"
 #include "../../phy/upper/downlink_processor_test_doubles.h"
 #include "../../phy/upper/uplink_request_processor_test_doubles.h"
+#include "srsran/fapi_adaptor/precoding_matrix_table_generator.h"
 #include "srsran/phy/support/resource_grid_pool.h"
 #include "srsran/phy/upper/downlink_processor.h"
 #include "srsran/phy/upper/uplink_processor.h"
@@ -115,16 +116,18 @@ protected:
                                            &ul_pdu_validator,
                                            scs_common,
                                            &prach_cfg,
-                                           &carrier_cfg};
+                                           &carrier_cfg,
+                                           std::move(std::get<1>(generate_precoding_matrix_tables(1)))};
   fapi_to_phy_translator         translator;
 
 public:
-  fapi_to_phy_translator_fixture() : rg_pool(grid), pdu_repo(2), translator(config, srslog::fetch_basic_logger("FAPI"))
+  fapi_to_phy_translator_fixture() :
+    grid(0, 0, 0), rg_pool(grid), pdu_repo(2), translator(std::move(config), srslog::fetch_basic_logger("FAPI"))
   {
   }
 };
 
-TEST_F(fapi_to_phy_translator_fixture, downlink_processor_is_configured_on_new_slot)
+TEST_F(fapi_to_phy_translator_fixture, downlink_processor_is_not_configured_on_new_slot)
 {
   slot_point slot(1, 1, 0);
 
@@ -132,6 +135,26 @@ TEST_F(fapi_to_phy_translator_fixture, downlink_processor_is_configured_on_new_s
   ASSERT_FALSE(grid.has_set_all_zero_method_been_called());
 
   translator.handle_new_slot(slot);
+
+  // Assert that the downlink processor is configured.
+  ASSERT_FALSE(dl_processor_pool.processor(slot).has_configure_resource_grid_method_been_called());
+  ASSERT_FALSE(grid.has_set_all_zero_method_been_called());
+}
+
+TEST_F(fapi_to_phy_translator_fixture, downlink_processor_is_configured_on_new_dl_tti_request)
+{
+  slot_point slot(1, 1, 0);
+
+  ASSERT_FALSE(dl_processor_pool.processor(slot).has_configure_resource_grid_method_been_called());
+  ASSERT_FALSE(grid.has_set_all_zero_method_been_called());
+
+  translator.handle_new_slot(slot);
+
+  fapi::dl_tti_request_message msg;
+  msg.sfn  = slot.sfn();
+  msg.slot = slot.slot_index();
+
+  translator.dl_tti_request(msg);
 
   // Assert that the downlink processor is configured.
   ASSERT_TRUE(dl_processor_pool.processor(slot).has_configure_resource_grid_method_been_called());
@@ -149,6 +172,12 @@ TEST_F(fapi_to_phy_translator_fixture, current_grid_is_sent_on_new_slot)
 
   translator.handle_new_slot(slot);
 
+  fapi::dl_tti_request_message msg;
+  msg.sfn  = slot.sfn();
+  msg.slot = slot.slot_index();
+
+  translator.dl_tti_request(msg);
+
   // Assert that the downlink processor is configured.
   ASSERT_TRUE(dl_processor_pool.processor(slot).has_configure_resource_grid_method_been_called());
   // Assert that the resource grid has NOT been set to zero.
@@ -159,8 +188,6 @@ TEST_F(fapi_to_phy_translator_fixture, current_grid_is_sent_on_new_slot)
 
   // Assert that the finish processing PDUs method of the previous slot downlink_processor has been called.
   ASSERT_TRUE(dl_processor_pool.processor(slot).has_finish_processing_pdus_method_been_called());
-  ASSERT_TRUE(dl_processor_pool.processor(slot2).has_configure_resource_grid_method_been_called());
-  ASSERT_FALSE(dl_processor_pool.processor(slot2).has_finish_processing_pdus_method_been_called());
 }
 
 TEST_F(fapi_to_phy_translator_fixture, dl_ssb_pdu_is_processed)
@@ -172,26 +199,20 @@ TEST_F(fapi_to_phy_translator_fixture, dl_ssb_pdu_is_processed)
   ASSERT_FALSE(grid.has_set_all_zero_method_been_called());
 
   translator.handle_new_slot(slot);
-
-  // Assert that the downlink processor is configured.
-  ASSERT_TRUE(dl_processor_pool.processor(slot).has_configure_resource_grid_method_been_called());
-  ASSERT_FALSE(dl_processor_pool.processor(slot).has_process_ssb_method_been_called());
-  // Assert that the resource grid has NOT been set to zero.
-  ASSERT_FALSE(grid.has_set_all_zero_method_been_called());
-
   // Process SSB PDU.
   translator.dl_tti_request(msg);
 
-  // Assert that the SSB PDU has been processed.
+  // Assert that the downlink processor is configured.
+  ASSERT_TRUE(dl_processor_pool.processor(slot).has_configure_resource_grid_method_been_called());
   ASSERT_TRUE(dl_processor_pool.processor(slot).has_process_ssb_method_been_called());
+  // Assert that the resource grid has NOT been set to zero.
+  ASSERT_FALSE(grid.has_set_all_zero_method_been_called());
 
   slot_point slot2 = slot + 1;
   translator.handle_new_slot(slot2);
 
   // Assert that the finish processing PDUs method of the previous slot downlink_processor has been called.
   ASSERT_TRUE(dl_processor_pool.processor(slot).has_finish_processing_pdus_method_been_called());
-  ASSERT_TRUE(dl_processor_pool.processor(slot2).has_configure_resource_grid_method_been_called());
-  ASSERT_FALSE(dl_processor_pool.processor(slot2).has_finish_processing_pdus_method_been_called());
 }
 
 TEST_F(fapi_to_phy_translator_fixture, calling_dl_tti_request_without_handling_slot_does_nothing)

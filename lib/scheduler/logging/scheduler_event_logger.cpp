@@ -21,6 +21,7 @@
  */
 
 #include "scheduler_event_logger.h"
+#include "srsran/ran/csi_report/csi_report_formatters.h"
 
 using namespace srsran;
 
@@ -110,6 +111,22 @@ void scheduler_event_logger::enqueue_impl(const sr_event& sr)
   }
 }
 
+void scheduler_event_logger::enqueue_impl(const csi_report_event& csi)
+{
+  if (mode == debug) {
+    fmt::format_to(fmtbuf, "\n- CSI: ue={} rnti={:#x}:", csi.ue_index, csi.rnti);
+    if (csi.csi.first_tb_wideband_cqi.has_value()) {
+      fmt::format_to(fmtbuf, " cqi={}", *csi.csi.first_tb_wideband_cqi);
+    }
+    if (csi.csi.ri.has_value()) {
+      fmt::format_to(fmtbuf, " ri={}", csi.csi.ri.value());
+    }
+    if (csi.csi.pmi.has_value()) {
+      fmt::format_to(fmtbuf, " {}", *csi.csi.pmi);
+    }
+  }
+}
+
 void scheduler_event_logger::enqueue_impl(const bsr_event& bsr)
 {
   if (mode == debug) {
@@ -194,6 +211,21 @@ void scheduler_event_logger::enqueue_impl(const dl_buffer_state_indication_messa
 {
   if (mode == debug) {
     fmt::format_to(fmtbuf, "\n- RLC Buffer State: ue={} lcid={} pending_bytes={}", bs.ue_index, bs.lcid, bs.bs);
+  }
+}
+
+void scheduler_event_logger::enqueue_impl(const phr_event& phr_ev)
+{
+  if (mode == debug) {
+    fmt::format_to(fmtbuf,
+                   "\n- PHR: ue={} rnti={:#x} cell={} ph={}dB",
+                   phr_ev.ue_index,
+                   phr_ev.rnti,
+                   phr_ev.cell_index,
+                   phr_ev.ph);
+    if (phr_ev.p_cmax.has_value()) {
+      fmt::format_to(fmtbuf, " p_cmax={}dBm", phr_ev.p_cmax.value());
+    }
   }
 }
 

@@ -29,7 +29,7 @@
 #include "srsran/ngap/ngap_factory.h"
 #include "srsran/support/async/async_test_utils.h"
 #include "srsran/support/executors/manual_task_worker.h"
-#include "srsran/support/io_broker/io_broker_factory.h"
+#include "srsran/support/io/io_broker_factory.h"
 #include "srsran/support/test_utils.h"
 #include "srsran/support/timers.h"
 #include <gtest/gtest.h>
@@ -98,8 +98,12 @@ protected:
     cfg.ran_node_name = "srsgnb01";
     cfg.plmn          = "00101";
     cfg.tac           = 7;
+    s_nssai_t slice_cfg;
+    slice_cfg.sst = 1;
+    cfg.slice_configurations.push_back(slice_cfg);
 
     sctp_network_gateway_config nw_config;
+    nw_config.connection_name   = "AMF";
     nw_config.connect_address   = "10.12.1.105";
     nw_config.connect_port      = 38412;
     nw_config.bind_address      = "10.8.1.10";
@@ -115,8 +119,9 @@ protected:
 
   ngap_configuration                            cfg;
   ue_configuration                              ue_config;
+  up_resource_manager_cfg                       up_config;
   timer_manager                                 timers;
-  ue_manager                                    ue_mng{ue_config};
+  ue_manager                                    ue_mng{ue_config, up_config};
   dummy_ngap_cu_cp_paging_notifier              cu_cp_paging_notifier;
   std::unique_ptr<dummy_ngap_ue_task_scheduler> ngap_ue_task_scheduler;
   std::unique_ptr<ngap_network_adapter>         adapter;
@@ -129,7 +134,7 @@ protected:
 ng_setup_request generate_ng_setup_request(ngap_configuration ngap_cfg)
 {
   ng_setup_request request_msg = {};
-  fill_asn1_ng_setup_request(request_msg.msg, ngap_cfg.gnb_id, ngap_cfg.ran_node_name, ngap_cfg.plmn, ngap_cfg.tac);
+  fill_asn1_ng_setup_request(request_msg.msg, ngap_cfg);
   return request_msg;
 }
 

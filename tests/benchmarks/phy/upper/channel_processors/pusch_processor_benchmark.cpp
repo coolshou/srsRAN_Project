@@ -22,9 +22,12 @@
 
 #include "../../../lib/phy/upper/rx_softbuffer_pool_impl.h"
 #include "../../../lib/scheduler/support/tbs_calculator.h"
+#include "srsran/phy/support/resource_grid_reader.h"
+#include "srsran/phy/support/resource_grid_writer.h"
 #include "srsran/phy/support/support_factories.h"
 #include "srsran/phy/upper/channel_processors/channel_processor_factories.h"
 #include "srsran/support/benchmark_utils.h"
+#include "srsran/support/complex_normal_random.h"
 #include "srsran/support/srsran_test.h"
 #include "srsran/support/unique_thread.h"
 #include <condition_variable>
@@ -204,7 +207,7 @@ static void usage(const char* prog)
 {
   fmt::print("Usage: {} [-m benchmark mode] [-R repetitions] [-B Batch size per thread] [-T number of threads] [-D "
              "LDPC type] [-M rate "
-             "dematcher type] [-P profile] [-s silent]\n",
+             "dematcher type] [-P profile]\n",
              prog);
   fmt::print("\t-m Benchmark mode. [Default {}]\n", to_string(benchmark_mode));
   fmt::print("\t\t {:<20}It does not print any result.\n", to_string(benchmark_modes::silent));
@@ -300,8 +303,8 @@ static std::vector<test_case_type> generate_test_cases(const test_profile& profi
       tbs_config.n_prb                        = nof_prb;
       tbs_config.nof_layers                   = nof_tx_layers;
       tbs_config.nof_symb_sh                  = profile.nof_symbols;
-      tbs_config.nof_dmrs_prb                 = dmrs.nof_dmrs_per_rb() * dmrs_symbol_mask.count();
-      unsigned tbs                            = tbs_calculator_calculate(tbs_config);
+      tbs_config.nof_dmrs_prb = dmrs.nof_dmrs_per_rb() * dmrs_symbol_mask.count() * nof_cdm_groups_without_data;
+      unsigned tbs            = tbs_calculator_calculate(tbs_config);
 
       // Build the PUSCH PDU configuration.
       pusch_processor::pdu_t config = {};
@@ -436,7 +439,7 @@ static std::tuple<std::unique_ptr<pusch_processor>, std::unique_ptr<pusch_pdu_va
   return std::make_tuple(std::move(processor), std::move(validator));
 }
 
-static void thread_process(const pusch_processor::pdu_t& config, unsigned tbs, const resource_grid_reader* grid)
+static void thread_process(const pusch_processor::pdu_t& config, unsigned tbs, const resource_grid_reader& grid)
 {
   std::unique_ptr<pusch_processor> proc(std::get<0>(create_processor()));
 
@@ -450,6 +453,7 @@ static void thread_process(const pusch_processor::pdu_t& config, unsigned tbs, c
   softbuffer_config.max_codeblock_size        = ldpc::MAX_CODEBLOCK_SIZE;
   softbuffer_config.expire_timeout_slots =
       100 * get_nof_slots_per_subframe(to_subcarrier_spacing(config.slot.numerology()));
+  softbuffer_config.external_soft_bits = false;
 
   rx_softbuffer_identifier softbuffer_id = {};
   softbuffer_id.rnti                     = config.rnti;
@@ -487,7 +491,7 @@ static void thread_process(const pusch_processor::pdu_t& config, unsigned tbs, c
 
     // Process PDU.
     pusch_processor_result_notifier_adaptor result_notifier;
-    proc->process(data, softbuffer.get(), result_notifier, *grid, config);
+    proc->process(data, softbuffer.get(), result_notifier, grid, config);
 
     // Notify finish count.
     {
@@ -496,6 +500,17 @@ static void thread_process(const pusch_processor::pdu_t& config, unsigned tbs, c
       cvar_count.notify_all();
     }
   }
+}
+
+// Creates a resource grid.
+static std::unique_ptr<resource_grid> create_resource_grid(unsigned nof_ports, unsigned nof_symbols, unsigned nof_subc)
+{
+  std::shared_ptr<channel_precoder_factory> precoding_factory = create_channel_precoder_factory("generic");
+  TESTASSERT(precoding_factory != nullptr, "Invalid channel precoder factory.");
+  std::shared_ptr<resource_grid_factory> rg_factory = create_resource_grid_factory(precoding_factory);
+  TESTASSERT(rg_factory != nullptr, "Invalid resource grid factory.");
+
+  return rg_factory->create(nof_ports, nof_symbols, nof_subc);
 }
 
 int main(int argc, char** argv)
@@ -535,13 +550,11 @@ int main(int argc, char** argv)
   // Create a vector to hold the randomly generated RE.
   std::vector<cf_t> random_re(nof_grid_re);
 
-  // Normal distribution with zero mean.
-  std::normal_distribution<float> normal_dist(0.0F, M_SQRT1_2);
+  // Standard complex normal distribution with zero mean.
+  complex_normal_distribution<cf_t> c_normal_dist = {};
 
   // Generate random RE.
-  std::generate(random_re.begin(), random_re.end(), [&rgen, &normal_dist]() {
-    return std::complex<float>(normal_dist(rgen), normal_dist(rgen));
-  });
+  std::generate(random_re.begin(), random_re.end(), [&rgen, &c_normal_dist]() { return c_normal_dist(rgen); });
 
   // Generate a RE mask and set all elements to true.
   bounded_bitset<NRE* MAX_RB> re_mask = ~bounded_bitset<NRE * MAX_RB>(grid_nof_subcs);
@@ -550,7 +563,7 @@ int main(int argc, char** argv)
   span<const cf_t> re_view(random_re);
   for (unsigned i_rx_port = 0; i_rx_port != nof_rx_ports; ++i_rx_port) {
     for (unsigned i_symbol = 0; i_symbol != grid_nof_symbols; ++i_symbol) {
-      re_view = grid->put(i_rx_port, i_symbol, 0, re_mask, re_view);
+      re_view = grid->get_writer().put(i_rx_port, i_symbol, 0, re_mask, re_view);
     }
   }
 
@@ -587,7 +600,7 @@ int main(int argc, char** argv)
 
       // Create thread.
       thread = unique_thread("thread_" + std::to_string(thread_id), prio, cpuset, [&config, &tbs, &grid] {
-        thread_process(config, tbs, grid.get());
+        thread_process(config, tbs, grid.get()->get_reader());
       });
     }
 

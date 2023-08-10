@@ -128,6 +128,9 @@ void fapi_to_mac_data_msg_translator::on_crc_indication(const fapi::crc_indicati
     pdu.rnti           = fapi_pdu.rnti;
     pdu.tb_crc_success = fapi_pdu.tb_crc_status_ok;
     pdu.ul_sinr_metric = convert_fapi_to_mac_ul_sinr(fapi_pdu.ul_sinr_metric);
+    if (fapi_pdu.timing_advance_offset_ns != std::numeric_limits<decltype(fapi_pdu.timing_advance_offset_ns)>::min()) {
+      pdu.ta = phy_time_unit::from_seconds(fapi_pdu.timing_advance_offset_ns * 1e-9);
+    }
   }
 
   crc_handler.get().handle_crc(indication);
@@ -322,7 +325,7 @@ void fapi_to_mac_data_msg_translator::on_rach_indication(const fapi::rach_indica
   mac_rach_indication indication;
   indication.slot_rx = slot_point(scs, msg.sfn, msg.slot);
   for (const auto& pdu : msg.pdus) {
-    srsran_assert(pdu.avg_rssi != std::numeric_limits<uint16_t>::max(), "Average RSSI field not set");
+    srsran_assert(pdu.avg_rssi != std::numeric_limits<decltype(pdu.avg_rssi)>::max(), "Average RSSI field not set");
 
     mac_rach_indication::rach_occasion& occas = indication.occasions.emplace_back();
     occas.frequency_index                     = pdu.ra_index;
@@ -330,8 +333,10 @@ void fapi_to_mac_data_msg_translator::on_rach_indication(const fapi::rach_indica
     occas.start_symbol                        = pdu.symbol_index;
     occas.rssi_dB                             = to_prach_rssi_dB(pdu.avg_rssi);
     for (const auto& preamble : pdu.preambles) {
-      srsran_assert(preamble.preamble_pwr != std::numeric_limits<uint32_t>::max(), "Preamble power field not set");
-      srsran_assert(preamble.preamble_snr != std::numeric_limits<uint8_t>::max(), "Preamble SNR field not set");
+      srsran_assert(preamble.preamble_pwr != std::numeric_limits<decltype(preamble.preamble_pwr)>::max(),
+                    "Preamble power field not set");
+      srsran_assert(preamble.preamble_snr != std::numeric_limits<decltype(preamble.preamble_snr)>::max(),
+                    "Preamble SNR field not set");
 
       mac_rach_indication::rach_preamble& mac_pream = occas.preambles.emplace_back();
       mac_pream.index                               = preamble.preamble_index;

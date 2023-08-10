@@ -31,27 +31,18 @@ class baseband_gateway_transmitter_spy : public baseband_gateway_transmitter
 {
 public:
   struct entry_t {
-    unsigned                               stream_id;
     baseband_gateway_transmitter::metadata metadata;
     baseband_gateway_buffer_read_only      data;
   };
 
   // See interface for documentation.
-  unsigned get_buffer_size() const override { return buffer_size; }
-
-  // See interface for documentation.
-  void transmit(baseband_gateway_buffer& data, const baseband_gateway_transmitter::metadata& md) override
+  void transmit(const baseband_gateway_buffer_reader& data, const baseband_gateway_transmitter::metadata& md) override
   {
     entries.emplace_back();
-    entry_t& entry  = entries.back();
-    entry.stream_id = stream_id;
-    entry.metadata  = md;
-    entry.data      = baseband_gateway_buffer_read_only(data);
+    entry_t& entry = entries.back();
+    entry.metadata = md;
+    entry.data     = baseband_gateway_buffer_read_only(data);
   }
-
-  void set_stream_id(unsigned stream_id_) { stream_id = stream_id_; }
-
-  void set_buffer_size(unsigned buffer_size_) { buffer_size = buffer_size_; }
 
   /// Gets all transmit entries.
   const std::vector<entry_t>& get_entries() const { return entries; }
@@ -60,8 +51,6 @@ public:
   void clear() { entries.clear(); }
 
 private:
-  unsigned             buffer_size = 0;
-  unsigned             stream_id   = UINT32_MAX;
   std::vector<entry_t> entries;
 };
 

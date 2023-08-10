@@ -54,7 +54,6 @@ public:
   pdcch_dl_information* alloc_dl_pdcch_ue(cell_slot_resource_allocator& slot_alloc,
                                           rnti_t                        rnti,
                                           const ue_cell_configuration&  user,
-                                          bwp_id_t                      bwp_id,
                                           search_space_id               ss_id,
                                           aggregation_level             aggr_lvl) override
   {
@@ -65,7 +64,6 @@ public:
   pdcch_ul_information* alloc_ul_pdcch_ue(cell_slot_resource_allocator& slot_alloc,
                                           rnti_t                        rnti,
                                           const ue_cell_configuration&  user,
-                                          bwp_id_t                      bwp_id,
                                           search_space_id               ss_id,
                                           aggregation_level             aggr_lvl) override
   {
@@ -115,7 +113,7 @@ public:
                                    rnti_t                       crnti,
                                    const ue_cell_configuration& ue_cell_cfg,
                                    unsigned                     pdsch_time_domain_resource,
-                                   unsigned                     k1) override
+                                   span<const uint8_t>          k1_list) override
   {
     return next_uci_allocation;
   }
@@ -138,6 +136,11 @@ public:
                                     const ue_cell_configuration&  ue_cell_cfg) override
   {
   }
+
+  uint8_t get_scheduled_pdsch_counter_in_ue_uci(cell_slot_resource_allocator& slot_alloc, rnti_t crnti) override
+  {
+    return 0;
+  }
 };
 
 class sched_cfg_dummy_notifier : public sched_configuration_notifier
@@ -146,7 +149,7 @@ public:
   optional<du_ue_index_t> last_ue_index_cfg;
   optional<du_ue_index_t> last_ue_index_deleted;
 
-  void on_ue_config_complete(du_ue_index_t ue_index) override { last_ue_index_cfg = ue_index; }
+  void on_ue_config_complete(du_ue_index_t ue_index, bool ue_creation_result) override { last_ue_index_cfg = ue_index; }
   void on_ue_delete_response(du_ue_index_t ue_index) override { last_ue_index_deleted = ue_index; }
 };
 
@@ -154,6 +157,14 @@ class scheduler_ue_metrics_dummy_notifier : public scheduler_ue_metrics_notifier
 {
 public:
   void report_metrics(span<const scheduler_ue_metrics> ue_metrics) override {}
+};
+
+class scheduler_harq_timeout_dummy_handler : public harq_timeout_handler
+{
+public:
+  du_ue_index_t last_ue_idx = INVALID_DU_UE_INDEX;
+
+  void handle_harq_timeout(du_ue_index_t ue_index, bool is_dl) override { last_ue_idx = ue_index; }
 };
 
 } // namespace srsran

@@ -22,25 +22,24 @@
 
 #include "ue_reconfiguration_procedure.h"
 #include "../../ran/gnb_format.h"
-#include "../mac_config.h"
+#include "mac_config.h"
 #include "mac_scheduler_configurator.h"
 
 using namespace srsran;
 
-mac_ue_reconfiguration_procedure::mac_ue_reconfiguration_procedure(const mac_ue_reconfiguration_request_message& req_,
-                                                                   mac_common_config_t&                          cfg_,
-                                                                   mac_ul_configurator&        mac_ul_,
-                                                                   mac_dl_configurator&        mac_dl_,
-                                                                   mac_scheduler_configurator& sched_cfg_) :
+mac_ue_reconfiguration_procedure::mac_ue_reconfiguration_procedure(const mac_ue_reconfiguration_request& req_,
+                                                                   mac_control_config&                   cfg_,
+                                                                   mac_ul_configurator&                  mac_ul_,
+                                                                   mac_dl_configurator&                  mac_dl_,
+                                                                   mac_scheduler_configurator&           sched_cfg_) :
   req(req_), cfg(cfg_), logger(cfg.logger), ul_unit(mac_ul_), dl_unit(mac_dl_), sched_cfg(sched_cfg_)
 {
 }
 
-void mac_ue_reconfiguration_procedure::operator()(
-    coro_context<async_task<mac_ue_reconfiguration_response_message>>& ctx)
+void mac_ue_reconfiguration_procedure::operator()(coro_context<async_task<mac_ue_reconfiguration_response>>& ctx)
 {
   CORO_BEGIN(ctx);
-  log_proc_started(logger, req.ue_index, req.crnti, "UE Create Request");
+  log_proc_started(logger, req.ue_index, req.crnti, "UE Reconfiguration Request");
 
   // If there are bearers to add or modify.
   if (not req.bearers_to_addmod.empty()) {
@@ -81,7 +80,7 @@ void mac_ue_reconfiguration_procedure::operator()(
   CORO_RETURN(handle_result(add_ue_result));
 }
 
-mac_ue_reconfiguration_response_message mac_ue_reconfiguration_procedure::handle_result(bool result)
+mac_ue_reconfiguration_response mac_ue_reconfiguration_procedure::handle_result(bool result)
 {
   if (result) {
     log_proc_completed(logger, req.ue_index, req.crnti, name());
@@ -90,7 +89,7 @@ mac_ue_reconfiguration_response_message mac_ue_reconfiguration_procedure::handle
   }
 
   // Respond back to DU manager with result
-  mac_ue_reconfiguration_response_message resp{};
+  mac_ue_reconfiguration_response resp{};
   resp.ue_index = req.ue_index;
   resp.result   = result;
   return resp;

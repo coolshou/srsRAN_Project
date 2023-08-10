@@ -22,9 +22,8 @@
 
 #pragma once
 
-#include "srsran/cu_cp/cu_cp.h"
+#include "srsran/cu_cp/cell_meas_manager.h"
 #include "srsran/cu_cp/cu_cp_types.h"
-#include "srsran/rrc/rrc_du.h"
 #include "srsran/support/async/async_task_loop.h"
 
 namespace srsran {
@@ -35,9 +34,14 @@ class dummy_rrc_pdu_notifier : public rrc_pdu_notifier
 public:
   dummy_rrc_pdu_notifier() = default;
 
-  void on_new_pdu(const rrc_pdu_message& msg) override { last_pdu = byte_buffer_slice{msg.pdu}; }
+  void on_new_pdu(const rrc_pdu_message& msg, ue_index_t old_ue_index) override
+  {
+    last_pdu      = byte_buffer_slice{msg.pdu};
+    last_ue_index = old_ue_index;
+  }
 
   byte_buffer_slice last_pdu;
+  ue_index_t        last_ue_index;
 };
 
 class dummy_rrc_tx_security_notifier : public rrc_tx_security_notifier
@@ -90,16 +94,28 @@ public:
     last_srb_creation_message = std::move(msg);
   }
 
-  void on_ue_context_release_command(const cu_cp_ue_context_release_command& msg) override
+  void on_ue_context_release_command(const rrc_ue_context_release_command& msg) override
   {
     logger.info("Received UE Context Release Command");
-    last_cu_cp_ue_context_release_command = msg;
+    last_rrc_ue_context_release_command.ue_index        = msg.ue_index;
+    last_rrc_ue_context_release_command.cause           = msg.cause;
+    last_rrc_ue_context_release_command.rrc_release_pdu = msg.rrc_release_pdu.copy();
   }
 
-  srb_creation_message             last_srb_creation_message;
-  bool                             srb1_created = false;
-  bool                             srb2_created = false;
-  cu_cp_ue_context_release_command last_cu_cp_ue_context_release_command;
+  async_task<bool> on_rrc_reestablishment_context_modification_required(ue_index_t ue_index) override
+  {
+    logger.info("Received Reestablishment Context Modification Required for ue={}", ue_index);
+
+    return launch_async([](coro_context<async_task<bool>>& ctx) mutable {
+      CORO_BEGIN(ctx);
+      CORO_RETURN(true);
+    });
+  }
+
+  srb_creation_message           last_srb_creation_message;
+  bool                           srb1_created = false;
+  bool                           srb2_created = false;
+  rrc_ue_context_release_command last_rrc_ue_context_release_command;
 
 private:
   srslog::basic_logger& logger = srslog::fetch_basic_logger("TEST");
@@ -119,10 +135,62 @@ public:
     logger.info("Received UL NAS Transport message");
   }
 
+  void on_ue_context_release_request(const cu_cp_ue_context_release_request& msg) override
+  {
+    logger.info("Received UE Context Release Request");
+  }
+
   bool initial_ue_msg_received = false;
 
 private:
   srslog::basic_logger& logger = srslog::fetch_basic_logger("TEST");
+};
+
+class dummy_rrc_ue_cu_cp_adapter : public rrc_ue_reestablishment_notifier
+{
+public:
+  void add_ue_context(rrc_reestablishment_ue_context_t context) { reest_context = context; }
+
+  rrc_reestablishment_ue_context_t
+  on_rrc_reestablishment_request(pci_t old_pci, rnti_t old_c_rnti, ue_index_t ue_index) override
+  {
+    logger.info("Received RRC Reestablishment Request from ue={} with old_pci={} and old_c_rnti={}",
+                ue_index,
+                old_pci,
+                old_c_rnti);
+
+    return reest_context;
+  }
+
+  void on_ue_transfer_required(ue_index_t ue_index, ue_index_t old_ue_index) override
+  {
+    logger.info("Requested a UE context transfer from ue={} with old_ue={}.", ue_index, old_ue_index);
+  }
+
+private:
+  rrc_reestablishment_ue_context_t reest_context = {};
+  srslog::basic_logger&            logger        = srslog::fetch_basic_logger("TEST");
+};
+
+class dummy_cell_meas_manager : public cell_meas_manager
+{
+public:
+  optional<rrc_meas_cfg> get_measurement_config(nr_cell_id_t nci) override
+  {
+    optional<rrc_meas_cfg> meas_cfg;
+    return meas_cfg;
+  }
+  optional<cell_meas_config> get_cell_config(nr_cell_id_t nci) override
+  {
+    optional<cell_meas_config> meas_cfg;
+    return meas_cfg;
+  }
+  void update_cell_config(nr_cell_id_t                           nci,
+                          const serving_cell_meas_config&        serv_cell_cfg_,
+                          std::vector<neighbor_cell_meas_config> ncells_ = {}) override
+  {
+  }
+  void report_measurement(const ue_index_t ue_index, const rrc_meas_results& meas_results) override {}
 };
 
 struct dummy_ue_task_scheduler : public rrc_ue_task_scheduler {

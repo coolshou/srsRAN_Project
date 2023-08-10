@@ -1,0 +1,64 @@
+#
+# Copyright 2021-2023 Software Radio Systems Limited
+#
+# This file is part of srsRAN
+#
+# srsRAN is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of
+# the License, or (at your option) any later version.
+#
+# srsRAN is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# A copy of the GNU Affero General Public License can be found in
+# the LICENSE file in the top-level directory of this distribution
+# and at http://www.gnu.org/licenses/.
+#
+
+- name: amarisoft-ue
+  type: ue
+  image: ${RETINA_REGISTRY_PREFIX}/amarisoftue:${AMARISOFT_VERSION}_${AGENT_VERSION}
+  count: 4
+  requirements:
+    cpu: 8
+    memory: 8G
+    ephemeral-storage: "3G"
+  taints: ["ci-amd64-onprem"]
+  mode: grpc
+  resources:
+    - type: zmq
+    - type: license
+      model: amarisoft-5g
+  shared_files:
+    - local_path: ../../build_trx_srsran/libtrx_srsran.so
+      remote_path: /opt/lteue/trx_srsran.so
+      is_executable: true
+
+- name: srs-gnb
+  type: gnb
+  image: ${RETINA_REGISTRY_PREFIX}/srsgnb:${AGENT_VERSION}
+  requirements:
+    cpu: 8
+    memory: 8G
+    ephemeral-storage: "3G"
+  taints: ["ci-amd64-onprem"]
+  mode: grpc
+  resources:
+    - type: zmq
+  shared_files:
+    - local_path: ../../build/apps/gnb/gnb
+      remote_path: /usr/local/bin
+      is_executable: true
+
+- name: open5gs
+  type: 5gc
+  requirements:
+    cpu: 4
+    memory: 4G
+    ephemeral-storage: "3G"
+  image: ${RETINA_REGISTRY_PREFIX}/open5gs:${OPEN5GS_VERSION}_${AGENT_VERSION}
+  taints: ["ci-amd64-onprem"]
+  mode: grpc

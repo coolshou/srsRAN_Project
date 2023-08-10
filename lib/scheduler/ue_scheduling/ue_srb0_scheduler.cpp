@@ -21,12 +21,11 @@
  */
 
 #include "ue_srb0_scheduler.h"
-#include "../support/config_helpers.h"
+#include "../support/dci_builder.h"
 #include "../support/dmrs_helpers.h"
+#include "../support/pdsch/pdsch_resource_allocation.h"
 #include "../support/prbs_calculator.h"
 #include "../support/tbs_calculator.h"
-#include "ue_dci_builder.h"
-#include "ue_sch_pdu_builder.h"
 
 using namespace srsran;
 
@@ -41,12 +40,11 @@ ue_srb0_scheduler::ue_srb0_scheduler(const scheduler_ue_expert_config& expert_cf
   pucch_alloc(pucch_alloc_),
   ues(ues_),
   initial_active_dl_bwp(cell_cfg.dl_cfg_common.init_dl_bwp.generic_params),
+  ss_cfg(cell_cfg.dl_cfg_common.init_dl_bwp.pdcch_common
+             .search_spaces[cell_cfg.dl_cfg_common.init_dl_bwp.pdcch_common.ra_search_space_id]),
+  cs_cfg(cell_cfg.get_common_coreset(ss_cfg.get_coreset_id())),
   logger(srslog::fetch_basic_logger("SCHED"))
 {
-  if (cell_cfg.dl_cfg_common.init_dl_bwp.pdcch_common.coreset0.has_value()) {
-    // See 38.212, clause 7.3.1.2.1 - N^{DL,BWP}_RB is the size of CORESET 0 for TC-RNTI.
-    initial_active_dl_bwp.crbs = get_coreset0_crbs(cell_cfg.dl_cfg_common.init_dl_bwp.pdcch_common);
-  }
 }
 
 void ue_srb0_scheduler::run_slot(cell_resource_allocator& res_alloc)
@@ -56,7 +54,7 @@ void ue_srb0_scheduler::run_slot(cell_resource_allocator& res_alloc)
   }
 
   const cell_slot_resource_allocator& pdcch_alloc = res_alloc[0];
-  if (not cell_cfg.is_fully_dl_enabled(pdcch_alloc.slot)) {
+  if (not cell_cfg.is_dl_enabled(pdcch_alloc.slot)) {
     return;
   }
   // Note: Unable at the moment to multiplex CSI and PDSCH.
@@ -89,15 +87,8 @@ void ue_srb0_scheduler::handle_dl_buffer_state_indication(du_ue_index_t ue_index
 
 bool ue_srb0_scheduler::schedule_srb0(cell_resource_allocator& res_alloc, ue& u)
 {
-  // Search valid PDSCH time domain resource.
   const auto& bwp_cfg_common = cell_cfg.dl_cfg_common.init_dl_bwp;
-  // See 3GPP TS 38.213, clause 10.1,
-  // A UE monitors PDCCH candidates in one or more of the following search spaces sets
-  //  - a Type1-PDCCH CSS set configured by ra-SearchSpace in PDCCH-ConfigCommon for a DCI format with
-  //    CRC scrambled by a RA-RNTI, a MsgB-RNTI, or a TC-RNTI on the primary cell.
-  const search_space_configuration& ss =
-      cell_cfg.dl_cfg_common.init_dl_bwp.pdcch_common
-          .search_spaces[cell_cfg.dl_cfg_common.init_dl_bwp.pdcch_common.ra_search_space_id];
+  // Search valid PDSCH time domain resource.
   for (unsigned time_res_idx = 0; time_res_idx != bwp_cfg_common.pdsch_common.pdsch_td_alloc_list.size();
        ++time_res_idx) {
     const pdsch_time_domain_resource_allocation& pdsch_td_cfg = get_pdsch_td_cfg(time_res_idx);
@@ -105,11 +96,21 @@ bool ue_srb0_scheduler::schedule_srb0(cell_resource_allocator& res_alloc, ue& u)
     // Fetch PDSCH resource grid allocators.
     const cell_slot_resource_allocator& pdsch_alloc = res_alloc[pdsch_td_cfg.k0];
 
-    if (not cell_cfg.is_fully_dl_enabled(pdsch_alloc.slot)) {
+    if (not cell_cfg.is_dl_enabled(pdsch_alloc.slot)) {
       continue;
     }
 
-    if (schedule_srb0(u, res_alloc, time_res_idx, ss)) {
+    // Check whether PDSCH time domain resource does not overlap with CORESET.
+    if (pdsch_td_cfg.symbols.start() < ss_cfg.get_first_symbol_index() + cs_cfg.duration) {
+      continue;
+    }
+
+    // Check whether PDSCH time domain resource fits in DL symbols of the slot.
+    if (pdsch_td_cfg.symbols.stop() > cell_cfg.get_nof_dl_symbol_per_slot(pdsch_alloc.slot)) {
+      continue;
+    }
+
+    if (schedule_srb0(u, res_alloc, time_res_idx)) {
       return true;
     }
   }
@@ -119,10 +120,7 @@ bool ue_srb0_scheduler::schedule_srb0(cell_resource_allocator& res_alloc, ue& u)
   return false;
 }
 
-bool ue_srb0_scheduler::schedule_srb0(ue&                               u,
-                                      cell_resource_allocator&          res_alloc,
-                                      unsigned                          pdsch_time_res,
-                                      const search_space_configuration& ss_cfg)
+bool ue_srb0_scheduler::schedule_srb0(ue& u, cell_resource_allocator& res_alloc, unsigned pdsch_time_res)
 {
   ue_cell&                                     ue_pcell     = u.get_pcell();
   const subcarrier_spacing                     scs          = cell_cfg.dl_cfg_common.init_dl_bwp.generic_params.scs;
@@ -146,11 +144,14 @@ bool ue_srb0_scheduler::schedule_srb0(ue&                               u,
   // Find available symbol x RB resources.
   const unsigned pending_bytes = u.pending_dl_srb0_newtx_bytes();
 
-  pdsch_config_params pdsch_cfg = get_pdsch_config_f1_0_tc_rnti(cell_cfg, pdsch_time_res);
+  pdsch_config_params pdsch_cfg = get_pdsch_config_f1_0_tc_rnti(cell_cfg, pdsch_td_cfg);
 
-  prb_bitmap     used_crbs        = pdsch_alloc.dl_res_grid.used_crbs(initial_active_dl_bwp, pdsch_cfg.symbols);
+  prb_bitmap used_crbs = pdsch_alloc.dl_res_grid.used_crbs(
+      initial_active_dl_bwp.scs,
+      pdsch_helper::get_ra_crb_limits_common(cell_cfg.dl_cfg_common.init_dl_bwp, ss_cfg.get_id()),
+      pdsch_cfg.symbols);
   const unsigned starting_crb_idx = 0;
-  crb_interval   unused_crbs      = find_next_empty_interval(used_crbs, starting_crb_idx, used_crbs.size());
+  crb_interval   unused_crbs      = rb_helper::find_next_empty_interval(used_crbs, starting_crb_idx, used_crbs.size());
   // Try to find least MCS to fit SRB0 message.
   // See 38.214, table 5.1.3.1-1: MCS index table 1 for PDSCH.
   sch_mcs_index mcs_idx = 0;
@@ -161,8 +162,8 @@ bool ue_srb0_scheduler::schedule_srb0(ue&                               u,
   while (mcs_idx <= expert_cfg.max_msg4_mcs) {
     // See 38.214, clause 5.1.3.1 - the UE shall use I_MCS and Table 5.1.3.1-1 to determine the modulation order (Qm)
     // and Target code rate (R) used in the physical downlink shared channel.
-    sch_mcs_description mcs_config = pdsch_mcs_get_config(pdsch_cfg.mcs_table, mcs_idx);
-    prbs_tbs                       = get_nof_prbs(prbs_calculator_sch_config{pending_bytes,
+    const sch_mcs_description mcs_config = pdsch_mcs_get_config(pdsch_mcs_table::qam64, mcs_idx);
+    prbs_tbs                             = get_nof_prbs(prbs_calculator_sch_config{pending_bytes,
                                                        static_cast<unsigned>(pdsch_cfg.symbols.length()),
                                                        calculate_nof_dmrs_per_rb(pdsch_cfg.dmrs),
                                                        pdsch_cfg.nof_oh_prb,
@@ -188,18 +189,18 @@ bool ue_srb0_scheduler::schedule_srb0(ue&                               u,
     return false;
   }
 
-  crb_interval ue_grant_crbs = find_empty_interval_of_length(used_crbs, prbs_tbs.nof_prbs, 0);
-  prb_interval ue_grant_prbs = crb_to_prb(initial_active_dl_bwp, ue_grant_crbs);
-  if (ue_grant_prbs.length() < prbs_tbs.nof_prbs) {
+  crb_interval ue_grant_crbs = rb_helper::find_empty_interval_of_length(used_crbs, prbs_tbs.nof_prbs, 0);
+  if (ue_grant_crbs.length() < prbs_tbs.nof_prbs) {
     logger.debug("rnti={:#x}: Postponed SRB0 PDU scheduling. Cause: Not enough PRBs ({} < {})",
                  u.crnti,
-                 ue_grant_prbs.length(),
+                 ue_grant_crbs.length(),
                  prbs_tbs.nof_prbs);
     return false;
   }
 
   // Allocate PDCCH resources.
-  pdcch_dl_information* pdcch = pdcch_sch.alloc_pdcch_common(pdcch_alloc, u.crnti, ss_cfg.id, aggregation_level::n4);
+  pdcch_dl_information* pdcch =
+      pdcch_sch.alloc_pdcch_common(pdcch_alloc, u.crnti, ss_cfg.get_id(), aggregation_level::n4);
   if (pdcch == nullptr) {
     logger.debug("Failed to allocate PDSCH for SRB0. Cause: No space in PDCCH.");
     return false;
@@ -208,7 +209,9 @@ bool ue_srb0_scheduler::schedule_srb0(ue&                               u,
   // Allocate PUCCH resources.
   unsigned             k1          = 4;
   pucch_harq_ack_grant pucch_grant = {};
-  for (const auto k1_candidate : ue_pcell.cfg().get_k1_candidates()) {
+  // Minimum k1 value supported is 4.
+  static const std::array<uint8_t, 5> dci_1_0_k1_values = {4, 5, 6, 7, 8};
+  for (const auto k1_candidate : dci_1_0_k1_values) {
     pucch_grant = pucch_alloc.alloc_common_pucch_harq_ack_ue(res_alloc, u.crnti, pdsch_time_res, k1_candidate, *pdcch);
     if (pucch_grant.pucch_pdu != nullptr) {
       k1 = k1_candidate;
@@ -233,7 +236,7 @@ bool ue_srb0_scheduler::schedule_srb0(ue&                               u,
                   pdsch_time_res,
                   k1,
                   mcs_idx,
-                  ue_grant_prbs,
+                  ue_grant_crbs,
                   pdsch_cfg,
                   prbs_tbs.tbs_bytes);
 
@@ -249,7 +252,7 @@ void ue_srb0_scheduler::fill_srb0_grant(ue&                        u,
                                         unsigned                   pdsch_time_res,
                                         unsigned                   k1,
                                         sch_mcs_index              mcs_idx,
-                                        const prb_interval&        ue_grant_prbs,
+                                        const crb_interval&        ue_grant_crbs,
                                         const pdsch_config_params& pdsch_params,
                                         unsigned                   tbs_bytes)
 {
@@ -258,21 +261,24 @@ void ue_srb0_scheduler::fill_srb0_grant(ue&                        u,
   h_dl.new_tx(pdsch_slot, k1, expert_cfg.max_nof_harq_retxs, srb0_dai);
 
   // Fill DL PDCCH DCI.
+  static const uint8_t msg4_rv = 0;
   build_dci_f1_0_tc_rnti(pdcch.dci,
                          cell_cfg.dl_cfg_common.init_dl_bwp,
-                         ue_grant_prbs,
+                         ue_grant_crbs,
                          pdsch_time_res,
                          k1,
                          pucch.pucch_res_indicator,
                          mcs_idx,
+                         msg4_rv,
                          h_dl);
 
   // Fill PDSCH PDU.
-  msg.context.ue_index = u.ue_index;
-  msg.context.k1       = k1;
-  msg.context.ss_id    = pdcch.ctx.context.ss_id;
+  msg.context.ue_index  = u.ue_index;
+  msg.context.k1        = k1;
+  msg.context.ss_id     = pdcch.ctx.context.ss_id;
+  msg.context.nof_retxs = h_dl.tb(0).nof_retxs;
   build_pdsch_f1_0_tc_rnti(
-      msg.pdsch_cfg, pdsch_params, tbs_bytes, u.crnti, cell_cfg, pdcch.dci.tc_rnti_f1_0, ue_grant_prbs, true);
+      msg.pdsch_cfg, pdsch_params, tbs_bytes, u.crnti, cell_cfg, pdcch.dci.tc_rnti_f1_0, ue_grant_crbs, true);
 
   // Set MAC logical channels to schedule in this PDU.
   u.build_dl_srb0_transport_block_info(msg.tb_list.emplace_back(), msg.pdsch_cfg.codewords[0].tb_size_bytes);

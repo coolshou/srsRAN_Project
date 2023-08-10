@@ -25,15 +25,13 @@
 #include "du_cell_config.h"
 #include "srsran/du/du_qos_config.h"
 #include "srsran/ran/band_helper.h"
-#include "srsran/ran/bs_channel_bandwidth.h"
 #include "srsran/ran/five_qi.h"
 #include "srsran/ran/nr_cgi_helpers.h"
 #include "srsran/ran/pdcch/pdcch_type0_css_coreset_config.h"
-#include "srsran/ran/tdd_ul_dl_config.h"
+#include "srsran/ran/tdd/tdd_ul_dl_config.h"
 #include "srsran/scheduler/config/cell_config_builder_params.h"
 #include "srsran/scheduler/config/scheduler_expert_config.h"
 #include "srsran/scheduler/config/serving_cell_config_factory.h"
-#include "srsran/support/error_handling.h"
 #include <map>
 
 // TODO: This file is temporary. Eventually we will receive cell configurations from the DU config file.
@@ -60,11 +58,12 @@ inline scheduler_expert_config make_default_scheduler_expert_config()
 
   cfg.ue.dl_mcs             = {0, 28};
   cfg.ue.initial_cqi        = 3;
+  cfg.ue.pdsch_rv_sequence  = {0};
   cfg.ue.ul_mcs             = {0, 28};
+  cfg.ue.pusch_rv_sequence  = {0};
   cfg.ue.max_nof_harq_retxs = 4;
   // Note: A MCS index of 7 can handle Msg4 of size 458 bytes.
   cfg.ue.max_msg4_mcs                     = 7;
-  cfg.ue.max_consecutive_pusch_kos        = 128;
   cfg.ue.initial_ul_sinr                  = 5;
   cfg.ue.enable_csi_rs_pdsch_multiplexing = true;
 
@@ -83,9 +82,8 @@ inline du_cell_config make_default_du_cell_config(const cell_config_builder_para
   cfg.nr_cgi.plmn = "00101";
   cfg.nr_cgi.nci  = config_helpers::make_nr_cell_identity(411, 32, 1);
 
-  cfg.dl_carrier       = make_default_carrier_configuration(params);
-  cfg.ul_carrier       = make_default_carrier_configuration(params);
-  cfg.ul_carrier.arfcn = band_helper::get_ul_arfcn_from_dl_arfcn(cfg.dl_carrier.arfcn, params.band);
+  cfg.dl_carrier       = make_default_dl_carrier_configuration(params);
+  cfg.ul_carrier       = make_default_ul_carrier_configuration(params);
   cfg.coreset0_idx     = params.coreset0_index;
   cfg.searchspace0_idx = 0U;
   cfg.dl_cfg_common    = make_default_dl_config_common(params);
@@ -106,7 +104,7 @@ inline du_cell_config make_default_du_cell_config(const cell_config_builder_para
 }
 
 /// Generates default QoS configuration used by gNB DU. The default configuration should be valid.
-/// Dependencies between timers should be considered:
+/// Dependencies between RLC timers should be considered:
 ///   * t-Reassembly: How long it takes for the RLC to detect a lost PDU. If larger than the MAC SR, we may drop a
 ///                   PDU prematurely in the case UM, or we may send NACKs prematurely for the case of AM.
 ///
@@ -119,31 +117,45 @@ inline du_cell_config make_default_du_cell_config(const cell_config_builder_para
 ///
 /// Note: These three timers will have implications in picking the PDCP's t-Reordering. See the generation of
 ///       t-Reordering default configuration for details.
+///
+/// Dependencies between F1-U timers should be considered:
+///   * t-Notify: This value determines the maximum backoff time to aggregate notifications (towards CU_UP) of which
+///               PDCP SDUs have been transmitted (RLC UM/AM) or delivered (RLC AM). Small values increase the number of
+///               F1-U messages. Large values may trigger unnecessary discard notifications due to expiration of the
+///               PDCP discard timer.
 inline std::map<five_qi_t, du_qos_config> make_default_du_qos_config_list()
 {
   std::map<five_qi_t, du_qos_config> qos_list = {};
   {
     // 5QI=7
     du_qos_config cfg{};
+    // RLC
     cfg.rlc.mode                  = rlc_mode::um_bidir;
     cfg.rlc.um.tx.sn_field_length = rlc_um_sn_size::size12bits;
     cfg.rlc.um.rx.sn_field_length = rlc_um_sn_size::size12bits;
     cfg.rlc.um.rx.t_reassembly    = 90;
-    qos_list[uint_to_five_qi(7)]  = cfg;
+    // F1-U
+    cfg.f1u.t_notify = 10;
+
+    qos_list[uint_to_five_qi(7)] = cfg;
   }
   {
     // 5QI=9
     du_qos_config cfg{};
+    // RLC
     cfg.rlc.mode                    = rlc_mode::am;
-    cfg.rlc.am.tx.sn_field_length   = rlc_am_sn_size::size12bits;
+    cfg.rlc.am.tx.sn_field_length   = rlc_am_sn_size::size18bits;
     cfg.rlc.am.tx.t_poll_retx       = 110;
     cfg.rlc.am.tx.poll_pdu          = 16;
     cfg.rlc.am.tx.poll_byte         = 6500;
-    cfg.rlc.am.tx.max_retx_thresh   = 8;
-    cfg.rlc.am.rx.sn_field_length   = rlc_am_sn_size::size12bits;
+    cfg.rlc.am.tx.max_retx_thresh   = 16;
+    cfg.rlc.am.rx.sn_field_length   = rlc_am_sn_size::size18bits;
     cfg.rlc.am.rx.t_reassembly      = 90;
     cfg.rlc.am.rx.t_status_prohibit = 100;
-    qos_list[uint_to_five_qi(9)]    = cfg;
+    // F1-U
+    cfg.f1u.t_notify = 10;
+
+    qos_list[uint_to_five_qi(9)] = cfg;
   }
   return qos_list;
 }

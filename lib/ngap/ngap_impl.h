@@ -22,12 +22,12 @@
 
 #pragma once
 
+#include "ngap_context.h"
 #include "procedures/ngap_transaction_manager.h"
 #include "srsran/asn1/ngap/ngap.h"
 #include "srsran/cu_cp/ue_manager.h"
 #include "srsran/ngap/ngap.h"
 #include "srsran/ngap/ngap_configuration.h"
-#include "srsran/pcap/pcap.h"
 #include "srsran/support/executors/task_executor.h"
 #include <memory>
 
@@ -40,12 +40,12 @@ class ngap_event_manager;
 class ngap_impl final : public ngap_interface
 {
 public:
-  ngap_impl(ngap_configuration&         ngap_cfg_,
-            ngap_cu_cp_paging_notifier& cu_cp_paging_notifier_,
-            ngap_ue_task_scheduler&     task_sched_,
-            ngap_ue_manager&            ue_manager_,
-            ngap_message_notifier&      ngap_notifier_,
-            task_executor&              ctrl_exec_);
+  ngap_impl(ngap_configuration&                ngap_cfg_,
+            ngap_cu_cp_du_repository_notifier& cu_cp_du_repository_notifier_,
+            ngap_ue_task_scheduler&            task_sched_,
+            ngap_ue_manager&                   ue_manager_,
+            ngap_message_notifier&             ngap_notifier_,
+            task_executor&                     ctrl_exec_);
   ~ngap_impl();
 
   // ngap ue control manager functions
@@ -67,6 +67,8 @@ public:
 
   // ngap control message handler functions
   void handle_ue_context_release_request(const cu_cp_ue_context_release_request& msg) override;
+  async_task<ngap_handover_preparation_response>
+  handle_handover_preparation_request(const ngap_handover_preparation_request& msg) override;
 
   // ngap_statistic_interface
   size_t get_nof_ues() const override;
@@ -96,6 +98,10 @@ private:
   /// \param[in] msg The received PDU Session Resource Setup Request.
   void handle_pdu_session_resource_setup_request(const asn1::ngap::pdu_session_res_setup_request_s& request);
 
+  /// \brief Notify about the reception of an PDU Session Resource Modify Request.
+  /// \param[in] msg The received PDU Session Resource Modify Request.
+  void handle_pdu_session_resource_modify_request(const asn1::ngap::pdu_session_res_modify_request_s& request);
+
   /// \brief Notify about the reception of an PDU Session Resource Release Command.
   /// \param[in] msg The received PDU Session Resource Release Command.
   void handle_pdu_session_resource_release_command(const asn1::ngap::pdu_session_res_release_cmd_s& command);
@@ -107,6 +113,10 @@ private:
   /// \brief Notify about the reception of a Paging message.
   /// \param[in] msg The received Paging message.
   void handle_paging(const asn1::ngap::paging_s& msg);
+
+  /// \brief Notify about the reception of an Handover request message.
+  /// \param[in] msg The received handover request message.
+  void handle_ho_request(const asn1::ngap::ho_request_s& msg);
 
   /// \brief Notify about the reception of a Error Indication message.
   /// \param[in] msg The received Error Indication message.
@@ -120,13 +130,14 @@ private:
   /// \param[in] outcome The unsuccessful outcome message.
   void handle_unsuccessful_outcome(const asn1::ngap::unsuccessful_outcome_s& outcome);
 
-  srslog::basic_logger&       logger;
-  ngap_configuration&         ngap_cfg;
-  ngap_cu_cp_paging_notifier& cu_cp_paging_notifier;
-  ngap_ue_task_scheduler&     task_sched;
-  ngap_ue_manager&            ue_manager;
-  ngap_message_notifier&      ngap_notifier;
-  task_executor&              ctrl_exec;
+  ngap_context_t context;
+
+  srslog::basic_logger&              logger;
+  ngap_cu_cp_du_repository_notifier& cu_cp_du_repository_notifier;
+  ngap_ue_task_scheduler&            task_sched;
+  ngap_ue_manager&                   ue_manager;
+  ngap_message_notifier&             ngap_notifier;
+  task_executor&                     ctrl_exec;
 
   ngap_transaction_manager ev_mng;
 };

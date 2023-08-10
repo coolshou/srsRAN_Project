@@ -118,10 +118,12 @@ private:
   /// \param res_alloc Cell Resource Allocator.
   /// \param rar pending RAR with an associated RA-RNTI that is going to be scheduled.
   /// \param rar_crbs CRBs of the RAR to be scheduled.
+  /// \param pdsch_time_res_index Index of PDSCH time domain resource.
   /// \param msg3_candidates List of Msg3s with respective resource information (e.g. RBs and symbols) to allocate.
   void fill_rar_grant(cell_resource_allocator&         res_alloc,
                       const pending_rar_t&             pending_rar,
                       crb_interval                     rar_crbs,
+                      unsigned                         pdsch_time_res_index,
                       span<const msg3_alloc_candidate> msg3_candidates);
 
   /// Schedule retransmission of Msg3.
@@ -138,9 +140,9 @@ private:
   // derived from args
   srslog::basic_logger& logger = srslog::fetch_basic_logger("SCHED");
   /// RA window size in number of slots.
-  const unsigned    ra_win_nof_slots;
-  bwp_configuration initial_active_dl_bwp;
-  const bool        prach_format_is_long;
+  const unsigned ra_win_nof_slots;
+  crb_interval   ra_crb_lims;
+  const bool     prach_format_is_long;
 
   /// Pre-cached information related to RAR for a given PDSCH time resource.
   struct rar_param_cached_data {

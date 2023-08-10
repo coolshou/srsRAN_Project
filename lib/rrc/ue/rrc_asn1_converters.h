@@ -22,10 +22,11 @@
 
 #pragma once
 
-#include "srsran/adt/byte_buffer.h"
-#include "srsran/adt/optional.h"
-#include "srsran/asn1/rrc_nr/rrc_nr.h"
-#include "srsran/cu_cp/cu_cp_types.h"
+#include "srsran/asn1/asn1_utils.h"
+#include "srsran/asn1/rrc_nr/msg_common.h"
+#include "srsran/pdcp/pdcp_config.h"
+#include "srsran/ran/cu_types.h"
+#include "srsran/security/security.h"
 #include <string>
 #include <vector>
 
@@ -130,6 +131,32 @@ inline asn1::rrc_nr::pdcp_cfg_s pdcp_config_to_rrc_nr_asn1(pdcp_config pdcp_cfg)
   return rrc_pdcp_cfg;
 }
 
+inline asn1::rrc_nr::sdap_cfg_s::sdap_hdr_ul_opts::options sdap_hdr_ul_cfg_to_rrc_asn1(sdap_hdr_ul_cfg hdr_cfg)
+{
+  asn1::rrc_nr::sdap_cfg_s::sdap_hdr_ul_opts::options asn1_hdr_ul_opts;
+
+  if (hdr_cfg == sdap_hdr_ul_cfg::absent) {
+    asn1_hdr_ul_opts = asn1::rrc_nr::sdap_cfg_s::sdap_hdr_ul_opts::options::absent;
+  } else {
+    asn1_hdr_ul_opts = asn1::rrc_nr::sdap_cfg_s::sdap_hdr_ul_opts::options::present;
+  }
+
+  return asn1_hdr_ul_opts;
+}
+
+inline asn1::rrc_nr::sdap_cfg_s::sdap_hdr_dl_opts::options sdap_hdr_dl_cfg_to_rrc_asn1(sdap_hdr_dl_cfg hdr_cfg)
+{
+  asn1::rrc_nr::sdap_cfg_s::sdap_hdr_dl_opts::options asn1_hdr_dl_opts;
+
+  if (hdr_cfg == sdap_hdr_dl_cfg::absent) {
+    asn1_hdr_dl_opts = asn1::rrc_nr::sdap_cfg_s::sdap_hdr_dl_opts::options::absent;
+  } else {
+    asn1_hdr_dl_opts = asn1::rrc_nr::sdap_cfg_s::sdap_hdr_dl_opts::options::present;
+  }
+
+  return asn1_hdr_dl_opts;
+}
+
 /// \brief Converts type \c sdap_config to an RRC NR ASN.1 type.
 /// \param sdap_cfg sdap config object.
 /// \return The RRC NR ASN.1 object where the result of the conversion is stored.
@@ -141,10 +168,10 @@ inline asn1::rrc_nr::sdap_cfg_s sdap_config_to_rrc_asn1(sdap_config_t sdap_cfg)
   asn1_sdap_cfg.pdu_session = pdu_session_id_to_uint(sdap_cfg.pdu_session);
 
   // sdap hdr dl
-  asn1::string_to_enum(asn1_sdap_cfg.sdap_hdr_dl, sdap_cfg.sdap_hdr_dl);
+  asn1_sdap_cfg.sdap_hdr_dl = sdap_hdr_dl_cfg_to_rrc_asn1(sdap_cfg.sdap_hdr_dl);
 
   // sdap hdr ul
-  asn1::string_to_enum(asn1_sdap_cfg.sdap_hdr_ul, sdap_cfg.sdap_hdr_ul);
+  asn1_sdap_cfg.sdap_hdr_ul = sdap_hdr_ul_cfg_to_rrc_asn1(sdap_cfg.sdap_hdr_ul);
 
   // default drb
   asn1_sdap_cfg.default_drb = sdap_cfg.default_drb;
@@ -160,6 +187,58 @@ inline asn1::rrc_nr::sdap_cfg_s sdap_config_to_rrc_asn1(sdap_config_t sdap_cfg)
   }
 
   return asn1_sdap_cfg;
+}
+
+inline asn1::rrc_nr::ciphering_algorithm_e
+ciphering_algorithm_to_rrc_asn1(const security::ciphering_algorithm& ciphering_algo)
+{
+  asn1::rrc_nr::ciphering_algorithm_e asn1_ciphering_algo;
+
+  switch (ciphering_algo) {
+    case srsran::security::ciphering_algorithm::nea0:
+      asn1_ciphering_algo = asn1::rrc_nr::ciphering_algorithm_opts::options::nea0;
+      break;
+    case srsran::security::ciphering_algorithm::nea1:
+      asn1_ciphering_algo = asn1::rrc_nr::ciphering_algorithm_opts::options::nea1;
+      break;
+    case srsran::security::ciphering_algorithm::nea2:
+      asn1_ciphering_algo = asn1::rrc_nr::ciphering_algorithm_opts::options::nea2;
+      break;
+    case srsran::security::ciphering_algorithm::nea3:
+      asn1_ciphering_algo = asn1::rrc_nr::ciphering_algorithm_opts::options::nea3;
+      break;
+    default:
+      // error
+      report_fatal_error("Cannot convert ciphering algorithm {} to ASN.1 type", ciphering_algo);
+  }
+
+  return asn1_ciphering_algo;
+}
+
+inline asn1::rrc_nr::integrity_prot_algorithm_e
+integrity_prot_algorithm_to_rrc_asn1(const security::integrity_algorithm& integrity_prot_algo)
+{
+  asn1::rrc_nr::integrity_prot_algorithm_e asn1_integrity_prot_algo;
+
+  switch (integrity_prot_algo) {
+    case srsran::security::integrity_algorithm::nia0:
+      asn1_integrity_prot_algo = asn1::rrc_nr::integrity_prot_algorithm_opts::options::nia0;
+      break;
+    case srsran::security::integrity_algorithm::nia1:
+      asn1_integrity_prot_algo = asn1::rrc_nr::integrity_prot_algorithm_opts::options::nia1;
+      break;
+    case srsran::security::integrity_algorithm::nia2:
+      asn1_integrity_prot_algo = asn1::rrc_nr::integrity_prot_algorithm_opts::options::nia2;
+      break;
+    case srsran::security::integrity_algorithm::nia3:
+      asn1_integrity_prot_algo = asn1::rrc_nr::integrity_prot_algorithm_opts::options::nia3;
+      break;
+    default:
+      // error
+      report_fatal_error("Cannot convert integrity_prot algorithm {} to ASN.1 type", integrity_prot_algo);
+  }
+
+  return asn1_integrity_prot_algo;
 }
 
 } // namespace srs_cu_cp

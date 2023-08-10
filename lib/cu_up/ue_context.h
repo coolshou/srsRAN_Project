@@ -27,6 +27,7 @@
 #include "srsran/cu_up/cu_up_types.h"
 #include "srsran/e1ap/cu_up/e1ap_cu_up.h"
 #include "srsran/f1u/cu_up/f1u_gateway.h"
+#include "srsran/gtpu/gtpu_teid_pool.h"
 #include <map>
 
 namespace srsran {
@@ -49,6 +50,7 @@ public:
              srslog::basic_logger&                logger_,
              timer_factory                        timers_,
              f1u_cu_up_gateway&                   f1u_gw_,
+             gtpu_teid_pool&                      f1u_teid_allocator_,
              gtpu_tunnel_tx_upper_layer_notifier& gtpu_tx_notifier_,
              gtpu_demux_ctrl&                     gtpu_rx_demux_) :
     index(index_),
@@ -60,6 +62,7 @@ public:
                         ue_inactivity_timer,
                         timers_,
                         f1u_gw_,
+                        f1u_teid_allocator_,
                         gtpu_tx_notifier_,
                         gtpu_rx_demux_),
     timers(timers_)
@@ -82,9 +85,10 @@ public:
   {
     return pdu_session_manager.setup_pdu_session(session);
   }
-  pdu_session_modification_result modify_pdu_session(const e1ap_pdu_session_res_to_modify_item& session) override
+  pdu_session_modification_result modify_pdu_session(const e1ap_pdu_session_res_to_modify_item& session,
+                                                     bool new_ul_tnl_info_required) override
   {
-    return pdu_session_manager.modify_pdu_session(session);
+    return pdu_session_manager.modify_pdu_session(session, new_ul_tnl_info_required);
   }
   void remove_pdu_session(pdu_session_id_t pdu_session_id) override
   {

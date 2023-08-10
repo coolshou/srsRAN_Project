@@ -22,6 +22,7 @@
 
 #include "scheduler_time_rr.h"
 #include "../support/config_helpers.h"
+#include "../support/rb_helper.h"
 
 using namespace srsran;
 
@@ -62,40 +63,6 @@ du_ue_index_t round_robin_apply(const ue_repository&     ue_db,
   return next_ue_index;
 }
 
-/// \brief Gets SearchSpace configurations prioritized based on nof. candidates for a given aggregation level in a UE
-/// cell.
-/// \param[in] ue_cc UE's cell context.
-/// \param[in] agg_lvl Aggregation level.
-/// \return List of SearchSpace configuration.
-static static_vector<const search_space_configuration*, MAX_NOF_SEARCH_SPACE_PER_BWP>
-get_ue_cell_prioritized_ss_for_agg_lvl(const ue_cell& ue_cc, aggregation_level agg_lvl)
-{
-  auto search_spaces = ue_cc.cfg().get_search_spaces(ue_cc.active_bwp_id());
-  std::sort(search_spaces.begin(),
-            search_spaces.end(),
-            [agg_lvl](const search_space_configuration* lhs, const search_space_configuration* rhs) -> bool {
-              if (lhs->nof_candidates[to_aggregation_level_index(agg_lvl)] ==
-                  rhs->nof_candidates[to_aggregation_level_index(agg_lvl)]) {
-                // In case nof. candidates are equal, choose the SS with higher CORESET Id (i.e. try to use CORESET#0 as
-                // little as possible).
-                return lhs->cs_id > rhs->cs_id;
-              }
-              return lhs->nof_candidates[to_aggregation_level_index(agg_lvl)] >
-                     rhs->nof_candidates[to_aggregation_level_index(agg_lvl)];
-            });
-  return search_spaces;
-}
-
-/// \brief Gets SearchSpace configuration of Type-1 PDCCH CSS for a UE.
-/// \param[in] ue_cc UE's cell context.
-/// \return List containing Type-1 PDCCH CSS configuration.
-static static_vector<const search_space_configuration*, MAX_NOF_SEARCH_SPACE_PER_BWP>
-get_type1_pdcch_css(const ue_cell& ue_cc)
-{
-  return {ue_cc.cfg().find_search_space(
-      ue_cc.cfg().cell_cfg_common.dl_cfg_common.init_dl_bwp.pdcch_common.ra_search_space_id)};
-}
-
 /// Allocate UE PDSCH grant.
 static bool alloc_dl_ue(const ue&                    u,
                         const ue_resource_grid_view& res_grid,
@@ -106,78 +73,48 @@ static bool alloc_dl_ue(const ue&                    u,
   if (not is_retx and not u.has_pending_dl_newtx_bytes()) {
     return false;
   }
-  // TODO: Set aggregation level based on link quality.
-  const aggregation_level agg_lvl    = srsran::aggregation_level::n4;
-  const slot_point        pdcch_slot = res_grid.get_pdcch_slot();
+  const slot_point pdcch_slot = res_grid.get_pdcch_slot();
 
   // Prioritize PCell over SCells.
   for (unsigned i = 0; i != u.nof_cells(); ++i) {
     const ue_cell& ue_cc = u.get_cell(to_ue_cell_index(i));
 
-    if (not res_grid.get_cell_cfg_common(ue_cc.cell_index).is_dl_enabled(pdcch_slot)) {
-      // DL needs to be active for PDCCH in this slot.
-      continue;
-    }
-
     // Search available HARQ.
     const dl_harq_process* h = is_retx ? ue_cc.harqs.find_pending_dl_retx() : ue_cc.harqs.find_empty_dl_harq();
     if (h == nullptr) {
       if (not is_retx) {
-        logger.debug(
-            "ue={} rnti={:#x} PDSCH allocation skipped. Cause: No available HARQs", ue_cc.ue_index, ue_cc.rnti());
+        logger.warning(
+            "ue={} rnti={:#x} PDSCH allocation skipped. Cause: No available HARQs. Check if any HARQ-ACK went missing"
+            " or is arriving to the scheduler too late.",
+            ue_cc.ue_index,
+            ue_cc.rnti());
       }
       continue;
     }
 
     // Search for available symbolxRB resources in different SearchSpaces.
-    const cell_configuration& cell_cfg_cmn = ue_cc.cfg().cell_cfg_common;
-    static_vector<const search_space_configuration*, MAX_NOF_SEARCH_SPACE_PER_BWP> search_spaces;
-    // See 3GPP TS 38.213, clause 10.1,
-    // A UE monitors PDCCH candidates in one or more of the following search spaces sets
-    //  - a Type1-PDCCH CSS set configured by ra-SearchSpace in PDCCH-ConfigCommon for a DCI format with
-    //    CRC scrambled by a RA-RNTI, a MsgB-RNTI, or a TC-RNTI on the primary cell.
-    if (is_retx && h->last_alloc_params().dci_cfg_type == srsran::dci_dl_rnti_config_type::tc_rnti_f1_0) {
-      search_spaces = get_type1_pdcch_css(ue_cc);
-    } else {
-      search_spaces = get_ue_cell_prioritized_ss_for_agg_lvl(ue_cc, agg_lvl);
+    optional<dci_dl_rnti_config_type> preferred_dci_rnti_type;
+    if (is_retx) {
+      preferred_dci_rnti_type = h->last_alloc_params().dci_cfg_type;
     }
-
-    for (const search_space_configuration* ss_cfg : search_spaces) {
-      if (ss_cfg->id == 0) {
+    static_vector<const search_space_info*, MAX_NOF_SEARCH_SPACE_PER_BWP> search_spaces =
+        ue_cc.get_active_dl_search_spaces(preferred_dci_rnti_type);
+    for (const search_space_info* ss : search_spaces) {
+      if (ss->cfg->is_search_space0()) {
         continue;
       }
 
-      // The existence of the Coreset has been verified by the validator.
-      const coreset_configuration& cs_cfg = ue_cc.cfg().coreset(ss_cfg->cs_id);
-
-      // Ensure there are enough symbols where to allocate the PDCCH.
-      if (ss_cfg->get_first_symbol_index() + cs_cfg.duration >
-          res_grid.get_cell_cfg_common(ue_cc.cell_index).get_nof_dl_symbol_per_slot(pdcch_slot)) {
-        continue;
-      }
-
-      const span<const pdsch_time_domain_resource_allocation> pdsch_list =
-          ue_cc.cfg().get_pdsch_time_domain_list(ss_cfg->id);
-
-      bwp_configuration bwp_cfg = ue_cc.cfg().dl_bwp_common(ue_cc.active_bwp_id()).generic_params;
-      if (ss_cfg->type == search_space_configuration::type_t::common) {
-        // See TS 38.214, 5.1.2.2.2, Downlink resource allocation type 1.
-        bwp_cfg = ue_cc.cfg().dl_bwp_common(to_bwp_id(0)).generic_params;
-        if (cell_cfg_cmn.dl_cfg_common.init_dl_bwp.pdcch_common.coreset0.has_value()) {
-          bwp_cfg.crbs = get_coreset0_crbs(cell_cfg_cmn.dl_cfg_common.init_dl_bwp.pdcch_common);
-        }
-        // See TS 38.211, 7.3.1.6 Mapping from virtual to physical resource blocks.
-        if (ss_cfg->cs_id != to_coreset_id(0)) {
-          bwp_cfg.crbs = {get_coreset_crbs(cs_cfg).start(), bwp_cfg.crbs.stop()};
-        }
-      }
-
-      for (unsigned time_res = 0; time_res != pdsch_list.size(); ++time_res) {
-        const pdsch_time_domain_resource_allocation& pdsch = pdsch_list[time_res];
+      for (unsigned time_res = 0; time_res != ss->pdsch_time_domain_list.size(); ++time_res) {
+        const pdsch_time_domain_resource_allocation& pdsch = ss->pdsch_time_domain_list[time_res];
         if (not res_grid.get_cell_cfg_common(ue_cc.cell_index).is_dl_enabled(pdcch_slot + pdsch.k0)) {
           // DL needs to be active for PDSCH in this slot.
           continue;
         }
+        // Check whether PDSCH time domain resource does not overlap with CORESET.
+        if (pdsch.symbols.start() < ss->cfg->get_first_symbol_index() + ss->coreset->duration) {
+          continue;
+        }
+        // Check whether PDSCH time domain resource fits in DL symbols of the slot.
         if (pdsch.symbols.stop() >
             res_grid.get_cell_cfg_common(ue_cc.cell_index).get_nof_dl_symbol_per_slot(pdcch_slot + pdsch.k0)) {
           // DL needs to be active for PDSCH in this slot.
@@ -189,34 +126,41 @@ static bool alloc_dl_ue(const ue&                    u,
           continue;
         }
 
-        const cell_slot_resource_grid& grid      = res_grid.get_pdsch_grid(ue_cc.cell_index, pdsch.k0);
-        const prb_bitmap               used_crbs = grid.used_crbs(bwp_cfg, pdsch.symbols);
+        const cell_slot_resource_grid& grid = res_grid.get_pdsch_grid(ue_cc.cell_index, pdsch.k0);
+        const crb_bitmap               used_crbs =
+            grid.used_crbs(ss->bwp->dl_common->generic_params.scs, ss->dl_crb_lims, pdsch.symbols);
 
-        // TODO verify the there is at least 1 TB.
-        const grant_prbs_mcs mcs_prbs = is_retx ? grant_prbs_mcs{h->last_alloc_params().tb.front().value().mcs,
-                                                                 h->last_alloc_params().prbs.prbs().length()}
-                                                : ue_cc.required_dl_prbs(time_res, u.pending_dl_newtx_bytes());
+        grant_prbs_mcs mcs_prbs = is_retx ? grant_prbs_mcs{h->last_alloc_params().tb.front().value().mcs,
+                                                           h->last_alloc_params().rbs.type1().length()}
+                                          : ue_cc.required_dl_prbs(pdsch, *ss, u.pending_dl_newtx_bytes());
 
         if (mcs_prbs.n_prbs == 0) {
           logger.debug("ue={} rnti={:#x} PDSCH allocation skipped. Cause: UE's CQI=0 ", ue_cc.ue_index, ue_cc.rnti());
           return false;
         }
 
-        const crb_interval ue_grant_crbs  = find_empty_interval_of_length(used_crbs, mcs_prbs.n_prbs, 0);
+        // [Implementation-defined] In case of partial slots and nof. PRBs allocated equals to 1 probability of KO is
+        // high due to code not being able to cope with interference. So the solution is to increase the PRB allocation
+        // to greater than 1 PRB.
+        const auto& cell_cfg = res_grid.get_cell_cfg_common(ue_cc.cell_index);
+        if (not cell_cfg.is_fully_dl_enabled(pdcch_slot + pdsch.k0) and mcs_prbs.n_prbs == 1) {
+          mcs_prbs.n_prbs = 2;
+        }
+
+        const crb_interval ue_grant_crbs  = rb_helper::find_empty_interval_of_length(used_crbs, mcs_prbs.n_prbs, 0);
         bool               are_crbs_valid = not ue_grant_crbs.empty(); // Cannot be empty.
         if (is_retx) {
           // In case of Retx, the #CRBs need to stay the same.
-          are_crbs_valid = ue_grant_crbs.length() == h->last_alloc_params().prbs.prbs().length();
+          are_crbs_valid = ue_grant_crbs.length() == h->last_alloc_params().rbs.type1().length();
         }
         if (are_crbs_valid) {
           const bool res_allocated = pdsch_alloc.allocate_dl_grant(ue_pdsch_grant{&u,
                                                                                   ue_cc.cell_index,
                                                                                   h->id,
-                                                                                  ss_cfg->id,
+                                                                                  ss->cfg->get_id(),
                                                                                   time_res,
                                                                                   ue_grant_crbs,
-                                                                                  dci_dl_format::f1_0,
-                                                                                  agg_lvl,
+                                                                                  ue_cc.get_aggregation_level(),
                                                                                   mcs_prbs.mcs});
           if (res_allocated) {
             return true;
@@ -242,93 +186,89 @@ static bool alloc_ul_ue(const ue&                    u,
       return false;
     }
   }
-  // TODO: Set aggregation level based on link quality.
-  const aggregation_level agg_lvl    = srsran::aggregation_level::n4;
-  const slot_point        pdcch_slot = res_grid.get_pdcch_slot();
+  const slot_point pdcch_slot = res_grid.get_pdcch_slot();
 
   // Prioritize PCell over SCells.
   for (unsigned i = 0; i != u.nof_cells(); ++i) {
     const ue_cell&            ue_cc           = u.get_cell(to_ue_cell_index(i));
     const cell_configuration& cell_cfg_common = res_grid.get_cell_cfg_common(ue_cc.cell_index);
-    if (not cell_cfg_common.is_dl_enabled(res_grid.get_pdcch_slot())) {
-      // DL needs to be active for PDCCH in this slot.
-      continue;
-    }
-
-    const ul_harq_process* h = nullptr;
-    h                        = is_retx ? ue_cc.harqs.find_pending_ul_retx() : ue_cc.harqs.find_empty_ul_harq();
+    const ul_harq_process*    h = is_retx ? ue_cc.harqs.find_pending_ul_retx() : ue_cc.harqs.find_empty_ul_harq();
     if (h == nullptr) {
       // No HARQs available.
       if (not is_retx) {
-        logger.debug(
-            "ue={} rnti={:#x} PUSCH allocation skipped. Cause: No available HARQs", ue_cc.ue_index, ue_cc.rnti());
+        logger.warning("ue={} rnti={:#x} PUSCH allocation skipped. Cause: No available HARQs. Check if any CRC PDU "
+                       "went missing or is arriving to the scheduler too late.",
+                       ue_cc.ue_index,
+                       ue_cc.rnti());
       }
       continue;
     }
 
-    for (const search_space_configuration* ss_cfg : get_ue_cell_prioritized_ss_for_agg_lvl(ue_cc, agg_lvl)) {
-      if (ss_cfg->id == to_search_space_id(0)) {
+    optional<dci_ul_rnti_config_type> preferred_dci_rnti_type;
+    if (is_retx) {
+      preferred_dci_rnti_type = h->last_tx_params().dci_cfg_type;
+    }
+    static_vector<const search_space_info*, MAX_NOF_SEARCH_SPACE_PER_BWP> search_spaces =
+        ue_cc.get_active_ul_search_spaces(preferred_dci_rnti_type);
+    for (const search_space_info* ss : search_spaces) {
+      if (ss->cfg->is_search_space0()) {
         continue;
       }
 
-      // The existence of the Coreset has been verified by the validator.
-      const coreset_configuration& cs_cfg = ue_cc.cfg().coreset(ss_cfg->cs_id);
-      // Ensure the symbols where the PDCCH gets allocated are all DL.
-      if (ss_cfg->get_first_symbol_index() + cs_cfg.duration >
-          cell_cfg_common.get_nof_dl_symbol_per_slot(res_grid.get_pdcch_slot())) {
+      // - [Implementation-defined] k2 value which is less than or equal to minimum value of k1(s) is used.
+      const unsigned                               time_res   = 0;
+      const pusch_time_domain_resource_allocation& pusch_td   = ss->pusch_time_domain_list[time_res];
+      const slot_point                             pusch_slot = pdcch_slot + pusch_td.k2;
+      const unsigned                               start_ul_symbols =
+          NOF_OFDM_SYM_PER_SLOT_NORMAL_CP - cell_cfg_common.get_nof_ul_symbol_per_slot(pusch_slot);
+      // If it is a retx, we need to ensure we use a time_domain_resource with the same number of symbols as used for
+      // the first transmission.
+      const bool sym_length_match_prev_grant_for_retx =
+          is_retx ? pusch_td.symbols.length() != h->last_tx_params().nof_symbols : true;
+      if (not cell_cfg_common.is_ul_enabled(pusch_slot) or pusch_td.symbols.start() < start_ul_symbols or
+          !sym_length_match_prev_grant_for_retx) {
+        // UL needs to be active for PUSCH in this slot.
         continue;
       }
 
-      const span<const pusch_time_domain_resource_allocation> pusch_list =
-          ue_cc.cfg().get_pusch_time_domain_list(ss_cfg->id);
-      const bwp_configuration bwp_lims = ue_cc.alloc_type1_bwp_limits(dci_ul_format::f0_0, ss_cfg->type);
-
-      // Search minimum k2 that corresponds to a UL slot.
-      unsigned time_res = 0;
-      for (; time_res != pusch_list.size(); ++time_res) {
-        const slot_point pusch_slot = pdcch_slot + pusch_list[time_res].k2;
-        const unsigned   start_ul_symbols =
-            NOF_OFDM_SYM_PER_SLOT_NORMAL_CP - cell_cfg_common.get_nof_ul_symbol_per_slot(pusch_slot);
-        // If it is a retx, we need to ensure we use a time_domain_resource with the same number of symbols as used for
-        // the first transmission.
-        const bool sym_length_match_prev_grant_for_rext =
-            is_retx ? pusch_list[time_res].symbols.length() != h->last_tx_params().nof_symbols : true;
-        if (cell_cfg_common.is_ul_enabled(pusch_slot) and pusch_list[time_res].symbols.start() >= start_ul_symbols and
-            sym_length_match_prev_grant_for_rext) {
-          // UL needs to be active for PUSCH in this slot.
-          break;
-        }
-      }
-      if (time_res == pusch_list.size()) {
-        // no valid k2 found.
-        continue;
-      }
-
-      const unsigned                 k2   = pusch_list[time_res].k2;
-      const cell_slot_resource_grid& grid = res_grid.get_pusch_grid(ue_cc.cell_index, k2);
-      if (res_grid.has_ue_ul_grant(ue_cc.cell_index, ue_cc.rnti(), k2)) {
+      const cell_slot_resource_grid& grid = res_grid.get_pusch_grid(ue_cc.cell_index, pusch_td.k2);
+      if (res_grid.has_ue_ul_grant(ue_cc.cell_index, ue_cc.rnti(), pusch_td.k2)) {
         // only one PUSCH per UE per slot.
         continue;
       }
-      // TODO: Get correct DCI format.
-      const dci_ul_rnti_config_type dci_type      = dci_ul_rnti_config_type::c_rnti_f0_0;
-      const ofdm_symbol_range       pusch_symbols = pusch_list[time_res].symbols;
-      const prb_bitmap              used_crbs     = grid.used_crbs(bwp_lims, pusch_symbols);
+      const prb_bitmap used_crbs =
+          grid.used_crbs(ss->bwp->ul_common->generic_params.scs, ss->ul_crb_lims, pusch_td.symbols);
 
       // Compute the MCS and the number of PRBs, depending on the pending bytes to transmit.
       const grant_prbs_mcs mcs_prbs =
-          is_retx ? grant_prbs_mcs{h->last_tx_params().mcs, h->last_tx_params().prbs.prbs().length()}
-                  : ue_cc.required_ul_prbs(time_res, pending_newtx_bytes, dci_type);
+          is_retx ? grant_prbs_mcs{h->last_tx_params().mcs, h->last_tx_params().rbs.type1().length()}
+                  : ue_cc.required_ul_prbs(pusch_td, pending_newtx_bytes, ss->get_crnti_ul_dci_format());
 
-      const crb_interval ue_grant_crbs  = find_empty_interval_of_length(used_crbs, mcs_prbs.n_prbs, 0);
+      // NOTE: this should never happen, but it's safe not to proceed if we get n_prbs == 0.
+      if (mcs_prbs.n_prbs == 0) {
+        logger.debug("ue={} rnti={:#x} PUSCH allocation skipped. Cause: MCS and PRBs computation resulted in no PRBs "
+                     "allocated to this UE",
+                     ue_cc.ue_index,
+                     ue_cc.rnti());
+        return false;
+      }
+
+      const crb_interval ue_grant_crbs  = rb_helper::find_empty_interval_of_length(used_crbs, mcs_prbs.n_prbs, 0);
       bool               are_crbs_valid = not ue_grant_crbs.empty(); // Cannot be empty.
       if (is_retx) {
         // In case of Retx, the #CRBs need to stay the same.
-        are_crbs_valid = ue_grant_crbs.length() == h->last_tx_params().prbs.prbs().length();
+        are_crbs_valid = ue_grant_crbs.length() == h->last_tx_params().rbs.type1().length();
       }
       if (are_crbs_valid) {
-        const bool res_allocated = pusch_alloc.allocate_ul_grant(ue_pusch_grant{
-            &u, ue_cc.cell_index, h->id, ue_grant_crbs, pusch_symbols, time_res, ss_cfg->id, agg_lvl, mcs_prbs.mcs});
+        const bool res_allocated = pusch_alloc.allocate_ul_grant(ue_pusch_grant{&u,
+                                                                                ue_cc.cell_index,
+                                                                                h->id,
+                                                                                ue_grant_crbs,
+                                                                                pusch_td.symbols,
+                                                                                time_res,
+                                                                                ss->cfg->get_id(),
+                                                                                ue_cc.get_aggregation_level(),
+                                                                                mcs_prbs.mcs});
         if (res_allocated) {
           return true;
         }

@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "../support/rb_helper.h"
 #include "srsran/adt/expected.h"
 #include "srsran/scheduler/scheduler_configurator.h"
 
@@ -48,16 +49,19 @@ public:
   const optional<tdd_ul_dl_config_common> tdd_cfg_common;
 
   /// Imported from mac_cell_configuration.
-  /// For dl_carrier, only arfcn is currently used.
   carrier_configuration   dl_carrier;
   const ssb_configuration ssb_cfg;
   dmrs_typeA_position     dmrs_typeA_pos;
+  carrier_configuration   ul_carrier;
 
-  /// List of PUCCH guardbands;
+  /// List of PUCCH guardbands.
   const std::vector<sched_grid_resource> pucch_guardbands;
 
-  /// CSI-RS scheduling parameters.
-  optional<csi_meas_config> csi_meas_cfg;
+  /// List of zp-CSI-RS resources.
+  std::vector<zp_csi_rs_resource> zp_csi_rs_list;
+
+  /// List of nzp-CSI-RS resources.
+  std::vector<nzp_csi_rs_resource> nzp_csi_rs_list;
 
   // Derived Parameters.
   ssb_pattern_case ssb_case;
@@ -79,8 +83,7 @@ public:
       sl = set_slot_numerology(sl, to_numerology_value(tdd_cfg_common->ref_scs));
     }
     return dl_symbols_per_slot_lst[sl.to_uint() % dl_symbols_per_slot_lst.size()] ==
-           (dl_cfg_common.init_dl_bwp.generic_params.cp_extended ? NOF_OFDM_SYM_PER_SLOT_EXTENDED_CP
-                                                                 : NOF_OFDM_SYM_PER_SLOT_NORMAL_CP);
+           get_nsymb_per_slot(dl_cfg_common.init_dl_bwp.generic_params.cp);
   }
   bool is_fully_ul_enabled(slot_point sl) const
   {
@@ -93,8 +96,7 @@ public:
       sl = set_slot_numerology(sl, to_numerology_value(tdd_cfg_common->ref_scs));
     }
     return ul_symbols_per_slot_lst[sl.to_uint() % ul_symbols_per_slot_lst.size()] ==
-           (ul_cfg_common.init_ul_bwp.generic_params.cp_extended ? NOF_OFDM_SYM_PER_SLOT_EXTENDED_CP
-                                                                 : NOF_OFDM_SYM_PER_SLOT_NORMAL_CP);
+           get_nsymb_per_slot(ul_cfg_common.init_ul_bwp.generic_params.cp);
   }
 
   bool is_dl_enabled(slot_point sl) const
@@ -125,8 +127,7 @@ public:
   {
     if (dl_symbols_per_slot_lst.empty()) {
       // Note: dl_enabled_slot_lst is empty in the FDD case.
-      return dl_cfg_common.init_dl_bwp.generic_params.cp_extended ? NOF_OFDM_SYM_PER_SLOT_EXTENDED_CP
-                                                                  : NOF_OFDM_SYM_PER_SLOT_NORMAL_CP;
+      return get_nsymb_per_slot(dl_cfg_common.init_dl_bwp.generic_params.cp);
     }
     if (sl.numerology() != to_numerology_value(tdd_cfg_common->ref_scs)) {
       // Convert slot into equivalent reference SCS.
@@ -138,8 +139,7 @@ public:
   {
     if (ul_symbols_per_slot_lst.empty()) {
       // Note: ul_enabled_slot_lst is empty in the FDD case.
-      return ul_cfg_common.init_ul_bwp.generic_params.cp_extended ? NOF_OFDM_SYM_PER_SLOT_EXTENDED_CP
-                                                                  : NOF_OFDM_SYM_PER_SLOT_NORMAL_CP;
+      return get_nsymb_per_slot(ul_cfg_common.init_ul_bwp.generic_params.cp);
     }
     if (sl.numerology() != to_numerology_value(tdd_cfg_common->ref_scs)) {
       // Convert slot into equivalent reference SCS.

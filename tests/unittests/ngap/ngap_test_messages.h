@@ -24,6 +24,7 @@
 
 #include "srsran/cu_cp/cu_cp_types.h"
 #include "srsran/ngap/ngap.h"
+#include "srsran/ngap/ngap_types.h"
 
 namespace srsran {
 namespace srs_cu_cp {
@@ -103,7 +104,8 @@ const uint32_t nas_pdu_len = 4; // Dummy length used for testing (content is not
 ngap_initial_ue_message generate_initial_ue_message(ue_index_t ue_index);
 
 /// \brief Generate a dummy DL NAS Transport Message.
-ngap_message generate_downlink_nas_transport_message(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id);
+ngap_message
+generate_downlink_nas_transport_message(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id, byte_buffer nas_pdu = {});
 
 /// \brief Generate a dummy UL NAS Transport Message.
 ngap_ul_nas_transport_message generate_ul_nas_transport_message(ue_index_t ue_index);
@@ -117,8 +119,23 @@ ngap_message generate_initial_context_setup_request_base(amf_ue_id_t amf_ue_id, 
 /// \brief Generate a valid dummy Initial Context Setup Request Message.
 ngap_message generate_valid_initial_context_setup_request_message(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id);
 
+/// \brief Generate a valid dummy Initial Context Setup Request Message with a PDUSessionResourceSetupListCxtReq.
+ngap_message generate_valid_initial_context_setup_request_message_with_pdu_session(amf_ue_id_t amf_ue_id,
+                                                                                   ran_ue_id_t ran_ue_id);
+
 /// \brief Generate an invalid dummy Initial Context Setup Request Message.
 ngap_message generate_invalid_initial_context_setup_request_message(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id);
+
+/// \brief Generate an ivalid dummy Initial Context Setup Request Message with a PDUSessionResourceSetupListCxtReq.
+ngap_message generate_invalid_initial_context_setup_request_message_with_pdu_session(amf_ue_id_t amf_ue_id,
+                                                                                     ran_ue_id_t ran_ue_id);
+
+/// \brief Generate an valid dummy UE Context Release Command Message with AMF UE NGAP ID.
+ngap_message generate_valid_ue_context_release_command_with_amf_ue_ngap_id(amf_ue_id_t amf_ue_id);
+
+/// \brief Generate an valid dummy UE Context Release Command Message with UE NGAP ID pair.
+ngap_message generate_valid_ue_context_release_command_with_ue_ngap_id_pair(amf_ue_id_t amf_ue_id,
+                                                                            ran_ue_id_t ran_ue_id);
 
 /// \brief Generate a dummy PDU Session Resource Setup Request base.
 ngap_message generate_pdu_session_resource_setup_request_base(amf_ue_id_t amf_ue_id, ran_ue_id_t ran_ue_id);

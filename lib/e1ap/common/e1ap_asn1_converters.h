@@ -30,6 +30,7 @@
 #include "srsran/e1ap/cu_cp/e1ap_cu_cp.h"
 #include "srsran/e1ap/cu_cp/e1ap_cu_cp_bearer_context_update.h"
 #include "srsran/ran/bcd_helpers.h"
+#include "srsran/ran/qos_prio_level.h"
 #include <string>
 #include <vector>
 
@@ -177,6 +178,32 @@ inline srsran::s_nssai_t e1ap_asn1_to_snssai(asn1::e1ap::snssai_s asn1_snssai)
   return snssai;
 }
 
+inline asn1::e1ap::sdap_hdr_ul_opts::options sdap_hdr_ul_cfg_to_e1ap_asn1(sdap_hdr_ul_cfg hdr_cfg)
+{
+  asn1::e1ap::sdap_hdr_ul_opts::options asn1_hdr_ul_opts;
+
+  if (hdr_cfg == sdap_hdr_ul_cfg::absent) {
+    asn1_hdr_ul_opts = asn1::e1ap::sdap_hdr_ul_opts::absent;
+  } else {
+    asn1_hdr_ul_opts = asn1::e1ap::sdap_hdr_ul_opts::present;
+  }
+
+  return asn1_hdr_ul_opts;
+}
+
+inline asn1::e1ap::sdap_hdr_dl_opts::options sdap_hdr_dl_cfg_to_e1ap_asn1(sdap_hdr_dl_cfg hdr_cfg)
+{
+  asn1::e1ap::sdap_hdr_dl_opts::options asn1_hdr_dl_opts;
+
+  if (hdr_cfg == sdap_hdr_dl_cfg::absent) {
+    asn1_hdr_dl_opts = asn1::e1ap::sdap_hdr_dl_opts::absent;
+  } else {
+    asn1_hdr_dl_opts = asn1::e1ap::sdap_hdr_dl_opts::present;
+  }
+
+  return asn1_hdr_dl_opts;
+}
+
 /// \brief Converts type \c sdap_config to an E1AP ASN.1 type.
 /// \param sdap_cfg sdap config object.
 /// \return The E1AP ASN.1 object where the result of the conversion is stored.
@@ -190,10 +217,48 @@ inline asn1::e1ap::sdap_cfg_s sdap_config_to_e1ap_asn1(sdap_config_t sdap_cfg)
     asn1_sdap_cfg.default_drb = asn1::e1ap::default_drb_opts::options::false_value;
   }
 
-  asn1::string_to_enum(asn1_sdap_cfg.sdap_hdr_dl, sdap_cfg.sdap_hdr_dl);
-  asn1::string_to_enum(asn1_sdap_cfg.sdap_hdr_ul, sdap_cfg.sdap_hdr_ul);
+  asn1_sdap_cfg.sdap_hdr_ul.value = sdap_hdr_ul_cfg_to_e1ap_asn1(sdap_cfg.sdap_hdr_ul);
+  asn1_sdap_cfg.sdap_hdr_dl.value = sdap_hdr_dl_cfg_to_e1ap_asn1(sdap_cfg.sdap_hdr_dl);
 
   return asn1_sdap_cfg;
+}
+
+inline sdap_hdr_ul_cfg e1ap_asn1_to_sdap_hdr_ul_cfg(asn1::e1ap::sdap_hdr_ul_opts::options asn1_hdr_ul_opts)
+{
+  sdap_hdr_ul_cfg hdr_cfg;
+
+  switch (asn1_hdr_ul_opts) {
+    case asn1::e1ap::sdap_hdr_ul_opts::absent:
+      hdr_cfg = sdap_hdr_ul_cfg::absent;
+      break;
+    case asn1::e1ap::sdap_hdr_ul_opts::present:
+      hdr_cfg = sdap_hdr_ul_cfg::present;
+      break;
+    default:
+      srsran_assertion_failure("Invalid SDAP-Header-UL option ({})", asn1_hdr_ul_opts);
+      hdr_cfg = {};
+  }
+
+  return hdr_cfg;
+}
+
+inline sdap_hdr_dl_cfg e1ap_asn1_to_sdap_hdr_dl_cfg(asn1::e1ap::sdap_hdr_dl_opts::options asn1_hdr_dl_opts)
+{
+  sdap_hdr_dl_cfg hdr_cfg;
+
+  switch (asn1_hdr_dl_opts) {
+    case asn1::e1ap::sdap_hdr_dl_opts::absent:
+      hdr_cfg = sdap_hdr_dl_cfg::absent;
+      break;
+    case asn1::e1ap::sdap_hdr_dl_opts::present:
+      hdr_cfg = sdap_hdr_dl_cfg::present;
+      break;
+    default:
+      srsran_assertion_failure("Invalid SDAP-Header-DL option ({})", asn1_hdr_dl_opts);
+      hdr_cfg = {};
+  }
+
+  return hdr_cfg;
 }
 
 /// \brief Converts E1AP ASN.1 type to \c sdap_config to type.
@@ -209,8 +274,8 @@ inline sdap_config_t e1ap_asn1_to_sdap_config(asn1::e1ap::sdap_cfg_s asn1_sdap_c
     sdap_cfg.default_drb = false;
   }
 
-  sdap_cfg.sdap_hdr_dl = asn1_sdap_cfg.sdap_hdr_dl.to_string();
-  sdap_cfg.sdap_hdr_ul = asn1_sdap_cfg.sdap_hdr_ul.to_string();
+  sdap_cfg.sdap_hdr_dl = e1ap_asn1_to_sdap_hdr_dl_cfg(asn1_sdap_cfg.sdap_hdr_dl);
+  sdap_cfg.sdap_hdr_ul = e1ap_asn1_to_sdap_hdr_ul_cfg(asn1_sdap_cfg.sdap_hdr_ul);
 
   return sdap_cfg;
 }
@@ -1050,7 +1115,7 @@ inline void e1ap_asn1_to_flow_map_info(slotted_id_vector<qos_flow_id_t, e1ap_qos
       auto& asn1_dyn_5qi = asn1_flow_map_item.qos_flow_level_qos_params.qos_characteristics.dyn_5qi();
 
       dyn_5qi_descriptor_t dyn_5qi;
-      dyn_5qi.qos_prio_level                 = asn1_dyn_5qi.qos_prio_level;
+      dyn_5qi.qos_prio_level                 = uint_to_qos_prio_level(asn1_dyn_5qi.qos_prio_level);
       dyn_5qi.packet_delay_budget            = asn1_dyn_5qi.packet_delay_budget;
       dyn_5qi.packet_error_rate.per_exponent = asn1_dyn_5qi.packet_error_rate.per_exponent;
       dyn_5qi.packet_error_rate.per_scalar   = asn1_dyn_5qi.packet_error_rate.per_scalar;
@@ -1075,7 +1140,7 @@ inline void e1ap_asn1_to_flow_map_info(slotted_id_vector<qos_flow_id_t, e1ap_qos
       non_dyn_5qi_descriptor_t non_dyn_5qi;
       non_dyn_5qi.five_qi = uint_to_five_qi(asn1_non_dyn_5qi.five_qi);
       if (asn1_non_dyn_5qi.qos_prio_level_present) {
-        non_dyn_5qi.qos_prio_level = asn1_non_dyn_5qi.qos_prio_level;
+        non_dyn_5qi.qos_prio_level = uint_to_qos_prio_level(asn1_non_dyn_5qi.qos_prio_level);
       }
       if (asn1_non_dyn_5qi.averaging_win_present) {
         non_dyn_5qi.averaging_win = asn1_non_dyn_5qi.averaging_win;
@@ -1120,13 +1185,13 @@ inline void e1ap_asn1_to_flow_map_info(slotted_id_vector<qos_flow_id_t, e1ap_qos
     // Add reflective qos attribute
     if (asn1_flow_map_item.qos_flow_level_qos_params.reflective_qos_attribute_present) {
       flow_map_item.qos_flow_level_qos_params.reflective_qos_attribute =
-          asn1_flow_map_item.qos_flow_level_qos_params.reflective_qos_attribute.to_string();
+          asn1::enum_to_bool(asn1_flow_map_item.qos_flow_level_qos_params.reflective_qos_attribute);
     }
 
     // Add add qos info
     if (asn1_flow_map_item.qos_flow_level_qos_params.add_qos_info_present) {
       flow_map_item.qos_flow_level_qos_params.add_qos_info =
-          asn1_flow_map_item.qos_flow_level_qos_params.add_qos_info.to_string();
+          asn1::enum_to_bool(asn1_flow_map_item.qos_flow_level_qos_params.add_qos_info);
     }
 
     // Add paging policy ind
@@ -1138,7 +1203,7 @@ inline void e1ap_asn1_to_flow_map_info(slotted_id_vector<qos_flow_id_t, e1ap_qos
     // Add reflective qos ind
     if (asn1_flow_map_item.qos_flow_level_qos_params.reflective_qos_ind_present) {
       flow_map_item.qos_flow_level_qos_params.reflective_qos_ind =
-          asn1_flow_map_item.qos_flow_level_qos_params.reflective_qos_ind.to_string();
+          asn1::enum_to_bool(asn1_flow_map_item.qos_flow_level_qos_params.reflective_qos_ind);
     }
 
     // Add qos flow map ind
@@ -1281,6 +1346,63 @@ asn1_to_activity_notification_level(const asn1::e1ap::activity_notif_level_e& as
   }
 
   return activity_notification_level;
+}
+
+/// \brief Converts type \c security_indication to an ASN.1 type.
+/// \param asn1obj ASN.1 object where the result of the conversion is stored.
+/// \param security_indication Security Indication IE contents.
+inline void security_indication_to_asn1(asn1::e1ap::security_ind_s& asn1obj, const security_indication_t& security_ind)
+{
+  switch (security_ind.integrity_protection_ind) {
+    case integrity_protection_indication_t::not_needed:
+    case integrity_protection_indication_t::preferred:
+    case integrity_protection_indication_t::required:
+      asn1obj.integrity_protection_ind.value =
+          static_cast<asn1::e1ap::integrity_protection_ind_opts::options>(security_ind.integrity_protection_ind);
+      break;
+    default:
+      report_fatal_error("Cannot convert security indication to E1AP type");
+  }
+
+  switch (security_ind.confidentiality_protection_ind) {
+    case confidentiality_protection_indication_t::not_needed:
+    case confidentiality_protection_indication_t::preferred:
+    case confidentiality_protection_indication_t::required:
+      asn1obj.confidentiality_protection_ind.value =
+          static_cast<asn1::e1ap::confidentiality_protection_ind_opts::options>(
+              security_ind.confidentiality_protection_ind);
+      break;
+    default:
+      report_fatal_error("Cannot convert security indication to E1AP type");
+  }
+}
+
+/// \brief Converts type \c security_indication to an ASN.1 type.
+/// \param asn1obj ASN.1 object where the result of the conversion is stored.
+/// \param security_indication Security Indication IE contents.
+inline void asn1_to_security_indication(security_indication_t& security_ind, const asn1::e1ap::security_ind_s& asn1obj)
+{
+  switch (asn1obj.integrity_protection_ind) {
+    case asn1::e1ap::integrity_protection_ind_opts::not_needed:
+    case asn1::e1ap::integrity_protection_ind_opts::preferred:
+    case asn1::e1ap::integrity_protection_ind_opts::required:
+      security_ind.integrity_protection_ind =
+          static_cast<integrity_protection_indication_t>(asn1obj.integrity_protection_ind.value);
+      break;
+    default:
+      srslog::fetch_basic_logger("E1AP").error("Cannot convert security indication to E1AP type");
+  }
+
+  switch (asn1obj.confidentiality_protection_ind) {
+    case asn1::e1ap::confidentiality_protection_ind_opts::not_needed:
+    case asn1::e1ap::confidentiality_protection_ind_opts::preferred:
+    case asn1::e1ap::confidentiality_protection_ind_opts::required:
+      security_ind.confidentiality_protection_ind =
+          static_cast<confidentiality_protection_indication_t>(asn1obj.confidentiality_protection_ind.value);
+      break;
+    default:
+      srslog::fetch_basic_logger("E1AP").error("Cannot convert security indication to E1AP type");
+  }
 }
 
 } // namespace srsran

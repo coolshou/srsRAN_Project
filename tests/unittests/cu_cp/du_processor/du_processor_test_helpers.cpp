@@ -21,6 +21,7 @@
  */
 
 #include "du_processor_test_helpers.h"
+#include "srsran/cu_cp/cell_meas_manager.h"
 #include "srsran/support/async/async_test_utils.h"
 
 using namespace srsran;
@@ -32,6 +33,7 @@ du_processor_test::du_processor_test()
   cu_cp_logger.set_level(srslog::basic_levels::debug);
   srslog::init();
 
+  // create ue task scheduler
   ue_task_sched = std::make_unique<dummy_du_processor_ue_task_scheduler>(timers, ctrl_worker);
 
   // create and start DU processor
@@ -46,8 +48,10 @@ du_processor_test::du_processor_test()
                                          ngap_ctrl_notifier,
                                          rrc_ue_ngap_notifier,
                                          rrc_ue_ngap_notifier,
+                                         rrc_ue_cu_cp_notifier,
                                          *ue_task_sched,
                                          ue_mng,
+                                         cell_meas_mng,
                                          ctrl_worker);
 }
 
@@ -60,12 +64,14 @@ du_processor_test::~du_processor_test()
 void du_processor_test::attach_ue()
 {
   // Generate valid F1SetupRequest
-  f1_setup_request_message f1_setup_request_msg = generate_valid_f1_setup_request();
+  f1ap_f1_setup_request f1_setup_request_msg;
+  generate_valid_f1_setup_request(f1_setup_request_msg);
   // Pass message to DU processor
   du_processor_obj->handle_f1_setup_request(f1_setup_request_msg);
 
   // Generate ue_creation message
-  ue_creation_message ue_creation_msg = generate_ue_creation_message(MIN_CRNTI, 12345678);
+  ue_index_t                ue_index        = ue_index_t::min;
+  cu_cp_ue_creation_message ue_creation_msg = generate_ue_creation_message(ue_index, MIN_CRNTI, 6576);
   // Pass message to DU processor
   du_processor_obj->handle_ue_creation_request(ue_creation_msg);
 }

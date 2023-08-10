@@ -20,7 +20,7 @@
 
 set_directory_properties(PROPERTIES LABELS "support")
 
-add_subdirectory(io_broker)
+add_subdirectory(network)
 
 add_executable(task_worker_test task_worker_test.cpp)
 target_link_libraries(task_worker_test srslog srsran_support gtest gtest_main)
@@ -98,3 +98,7 @@ add_test(validator_helpers_test validator_helpers_test)
 add_executable(event_tracer_test event_tracer_test.cpp)
 target_link_libraries(event_tracer_test srsran_support gtest gtest_main)
 add_test(event_tracer_test event_tracer_test)
+
+add_executable(complex_normal_random_test complex_normal_random_test.cpp)
+target_link_libraries(complex_normal_random_test srslog gtest gtest_main)
+add_test(complex_normal_random_test complex_normal_random_test)

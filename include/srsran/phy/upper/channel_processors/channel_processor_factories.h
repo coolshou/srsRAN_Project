@@ -54,6 +54,7 @@ namespace srsran {
 class prach_generator_factory;
 class ulsch_demultiplex_factory;
 class uci_decoder_factory;
+class task_executor;
 
 class pbch_encoder_factory
 {
@@ -154,6 +155,24 @@ create_pdsch_processor_factory_sw(std::shared_ptr<pdsch_encoder_factory>        
                                   std::shared_ptr<pdsch_modulator_factory>      modulator_factory,
                                   std::shared_ptr<dmrs_pdsch_processor_factory> dmrs_factory);
 
+std::shared_ptr<pdsch_processor_factory>
+create_pdsch_concurrent_processor_factory_sw(std::shared_ptr<ldpc_segmenter_tx_factory>       segmenter_factory,
+                                             std::shared_ptr<ldpc_encoder_factory>            ldpc_enc_factory,
+                                             std::shared_ptr<ldpc_rate_matcher_factory>       ldpc_rm_factory,
+                                             std::shared_ptr<pseudo_random_generator_factory> prg_factory,
+                                             std::shared_ptr<channel_modulation_factory>      modulator_factory,
+                                             std::shared_ptr<dmrs_pdsch_processor_factory>    dmrs_factory,
+                                             task_executor&                                   executor,
+                                             unsigned                                         nof_concurrent_threads);
+
+std::shared_ptr<pdsch_processor_factory>
+create_pdsch_lite_processor_factory_sw(std::shared_ptr<ldpc_segmenter_tx_factory>       segmenter_factory,
+                                       std::shared_ptr<ldpc_encoder_factory>            encoder_factory,
+                                       std::shared_ptr<ldpc_rate_matcher_factory>       rate_matcher_factory,
+                                       std::shared_ptr<pseudo_random_generator_factory> scrambler_factory,
+                                       std::shared_ptr<channel_modulation_factory>      modulator_factory,
+                                       std::shared_ptr<dmrs_pdsch_processor_factory>    dmrs_factory);
+
 class prach_detector_factory
 {
 public:
@@ -163,10 +182,16 @@ public:
   std::unique_ptr<prach_detector>                   create(srslog::basic_logger& logger, bool log_all_opportunities);
 };
 
+struct prach_detector_factory_sw_configuration {
+  unsigned idft_long_size  = 1024;
+  unsigned idft_short_size = 256;
+  bool     combine_symbols = true;
+};
+
 std::shared_ptr<prach_detector_factory>
-create_prach_detector_factory_simple(std::shared_ptr<dft_processor_factory>   dft_factory,
-                                     std::shared_ptr<prach_generator_factory> prach_gen_factory,
-                                     unsigned                                 dft_size_detector);
+create_prach_detector_factory_sw(std::shared_ptr<dft_processor_factory>         dft_factory,
+                                 std::shared_ptr<prach_generator_factory>       prach_gen_factory,
+                                 const prach_detector_factory_sw_configuration& config = {});
 
 class prach_generator_factory
 {

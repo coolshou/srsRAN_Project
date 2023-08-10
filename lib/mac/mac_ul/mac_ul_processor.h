@@ -22,31 +22,38 @@
 
 #pragma once
 
-#include "../../ran/gnb_format.h"
-#include "../mac_config.h"
 #include "../mac_config_interfaces.h"
 #include "mac_ul_ue_manager.h"
 #include "pdu_rx_handler.h"
-#include "srsran/du_high/du_high_ue_executor_mapper.h"
+#include "srsran/du_high/du_high_executor_mapper.h"
 #include "srsran/mac/mac.h"
+#include "srsran/mac/mac_config.h"
 #include "srsran/scheduler/scheduler_feedback_handler.h"
 #include "srsran/support/async/execute_on.h"
 
 namespace srsran {
 
+struct mac_ul_config {
+  task_executor&                 ctrl_exec;
+  du_high_ue_executor_mapper&    ue_exec_mapper;
+  mac_ul_ccch_notifier&          ul_ccch_notifier;
+  mac_scheduler_ce_info_handler& sched;
+  du_rnti_table&                 rnti_table;
+  mac_pcap&                      pcap;
+};
+
 class mac_ul_processor final : public mac_ul_configurator, public mac_pdu_handler
 {
 public:
-  mac_ul_processor(mac_common_config_t& cfg_, scheduler_feedback_handler& sched_, du_rnti_table& rnti_table_) :
+  mac_ul_processor(const mac_ul_config& cfg_) :
     cfg(cfg_),
-    logger(cfg.logger),
-    rnti_table(rnti_table_),
-    ue_manager(rnti_table),
-    pdu_handler(cfg.event_notifier, cfg.ue_exec_mapper, sched_, ue_manager, rnti_table, cfg.pcap)
+    logger(srslog::fetch_basic_logger("MAC")),
+    ue_manager(cfg.rnti_table),
+    pdu_handler(cfg.ul_ccch_notifier, cfg.ue_exec_mapper, cfg.sched, ue_manager, cfg.rnti_table, cfg.pcap)
   {
   }
 
-  async_task<bool> add_ue(const mac_ue_create_request_message& request) override
+  async_task<bool> add_ue(const mac_ue_create_request& request) override
   {
     // Update UE executor to match new PCell.
     task_executor& ul_exec = cfg.ue_exec_mapper.rebind_executor(request.ue_index, request.cell_index);
@@ -73,7 +80,7 @@ public:
         });
   }
 
-  async_task<void> remove_ue(const mac_ue_delete_request_message& msg) override
+  async_task<void> remove_ue(const mac_ue_delete_request& msg) override
   {
     return dispatch_and_resume_on(cfg.ue_exec_mapper.executor(msg.ue_index),
                                   cfg.ctrl_exec,
@@ -98,7 +105,7 @@ public:
       // > Convert C-RNTI to DU-specific UE index.
       // Note: for Msg3, the UE context is not yet created, and ue_index will be an invalid index. This situation is
       // handled inside the pdu_handler.
-      du_ue_index_t ue_index = rnti_table[pdu.rnti];
+      du_ue_index_t ue_index = cfg.rnti_table[pdu.rnti];
 
       // > Fork each PDU handling to different executors based on the PDU RNTI.
       if (not cfg.ue_exec_mapper.executor(ue_index).execute(
@@ -113,9 +120,8 @@ public:
   }
 
 private:
-  mac_common_config_t&  cfg;
+  const mac_ul_config   cfg;
   srslog::basic_logger& logger;
-  du_rnti_table&        rnti_table;
 
   mac_ul_ue_manager ue_manager;
 

@@ -51,6 +51,8 @@ const char* to_string(alloc_type a)
 
 using cell_bw = bs_channel_bandwidth_fr1;
 
+namespace pdcch_test {
+
 class base_pdcch_resource_allocator_tester
 {
 protected:
@@ -92,6 +94,7 @@ protected:
   {
     sched_ue_creation_request_message ue_creation_req = test_helpers::create_default_sched_ue_creation_request();
     ue_creation_req.crnti                             = rnti;
+    ue_creation_req.starts_in_fallback                = false;
     ue_creation_req.cfg.cells[0].serv_cell_cfg        = default_ue_cfg.cfg_dedicated();
     return ue_creation_req;
   }
@@ -99,22 +102,18 @@ protected:
   void verify_pdcch_context(const dci_context_information& pdcch_ctx, const test_ue& u, search_space_id ss_id) const
   {
     ASSERT_EQ(pdcch_ctx.rnti, u.rnti);
-    const search_space_configuration& ss_cfg = u.cfg->search_space(ss_id);
-    const coreset_configuration&      cs_cfg = u.cfg->coreset(ss_cfg.cs_id);
+    const search_space_configuration& ss_cfg = *u.cfg->search_space(ss_id).cfg;
+    const coreset_configuration&      cs_cfg = u.cfg->coreset(ss_cfg.get_coreset_id());
     ASSERT_EQ(pdcch_ctx.coreset_cfg, &cs_cfg);
     ASSERT_EQ(pdcch_ctx.n_id_pdcch_dmrs,
               cs_cfg.pdcch_dmrs_scrambling_id.has_value() ? *cs_cfg.pdcch_dmrs_scrambling_id : cell_cfg.pci)
         << "Invalid N_{ID} (see TS38.211, 7.4.1.3.1)";
     ASSERT_EQ(pdcch_ctx.n_rnti_pdcch_data,
-              cs_cfg.pdcch_dmrs_scrambling_id.has_value() and
-                      ss_cfg.type == search_space_configuration::type_t::ue_dedicated
-                  ? u.rnti
-                  : 0)
+              cs_cfg.pdcch_dmrs_scrambling_id.has_value() and (not ss_cfg.is_common_search_space()) ? u.rnti : 0)
         << "Invalid n_{RNTI} (see TS38.211, 7.3.2.3)";
-    unsigned expected_n_id =
-        cs_cfg.pdcch_dmrs_scrambling_id.has_value() and ss_cfg.type == search_space_configuration::type_t::ue_dedicated
-            ? *cs_cfg.pdcch_dmrs_scrambling_id
-            : cell_cfg.pci;
+    unsigned expected_n_id = cs_cfg.pdcch_dmrs_scrambling_id.has_value() and (not ss_cfg.is_common_search_space())
+                                 ? *cs_cfg.pdcch_dmrs_scrambling_id
+                                 : cell_cfg.pci;
     ASSERT_EQ(pdcch_ctx.n_id_pdcch_data, expected_n_id) << "Invalid n_{ID} (see TS38.211, 7.3.2.3)";
 
     auto ncce_candidates =
@@ -129,7 +128,7 @@ protected:
                                                    aggregation_level                 aggr_lvl) const
   {
     return pdcch_candidates_common_ss_get_lowest_cce(pdcch_candidates_common_ss_configuration{
-        aggr_lvl, ss_cfg.nof_candidates[to_aggregation_level_index(aggr_lvl)], cs_cfg.get_nof_cces()});
+        aggr_lvl, ss_cfg.get_nof_candidates()[to_aggregation_level_index(aggr_lvl)], cs_cfg.get_nof_cces()});
   }
 
   pdcch_candidate_list get_ue_pdcch_candidates(unsigned                          slot_index,
@@ -138,12 +137,12 @@ protected:
                                                const search_space_configuration& ss_cfg,
                                                aggregation_level                 aggr_lvl) const
   {
-    if (ss_cfg.type == search_space_configuration::type_t::common) {
+    if (ss_cfg.is_common_search_space()) {
       return get_common_pdcch_candidates(cs_cfg, ss_cfg, aggr_lvl);
     }
     return pdcch_candidates_ue_ss_get_lowest_cce(
         pdcch_candidates_ue_ss_configuration{aggr_lvl,
-                                             ss_cfg.nof_candidates[to_aggregation_level_index(aggr_lvl)],
+                                             ss_cfg.get_nof_candidates()[to_aggregation_level_index(aggr_lvl)],
                                              cs_cfg.get_nof_cces(),
                                              cs_cfg.id,
                                              rnti,
@@ -215,15 +214,17 @@ protected:
     fmt::format_to(fmtbuf, "\n- CORESET#0: RBs={}, duration={}", cs0_cfg.coreset0_crbs(), cs0_cfg.duration);
     const auto& cs1_cfg = default_ue_cfg.coreset(to_coreset_id(1));
     fmt::format_to(fmtbuf, "\n- CORESET#1: RBs={}, duration={}", get_coreset_crbs(cs1_cfg), cs1_cfg.duration);
-    fmt::format_to(fmtbuf,
-                   "\n- SearchSpace#0: nof_candidates={}",
-                   fmt::join(cell_cfg.dl_cfg_common.init_dl_bwp.pdcch_common.search_spaces[0].nof_candidates, ", "));
-    fmt::format_to(fmtbuf,
-                   "\n- SearchSpace#1: nof_candidates={}",
-                   fmt::join(cell_cfg.dl_cfg_common.init_dl_bwp.pdcch_common.search_spaces[1].nof_candidates, ", "));
+    fmt::format_to(
+        fmtbuf,
+        "\n- SearchSpace#0: nof_candidates={}",
+        fmt::join(cell_cfg.dl_cfg_common.init_dl_bwp.pdcch_common.search_spaces[0].get_nof_candidates(), ", "));
+    fmt::format_to(
+        fmtbuf,
+        "\n- SearchSpace#1: nof_candidates={}",
+        fmt::join(cell_cfg.dl_cfg_common.init_dl_bwp.pdcch_common.search_spaces[1].get_nof_candidates(), ", "));
     fmt::format_to(fmtbuf,
                    "\n- SearchSpace#2: nof_candidates={}",
-                   fmt::join(default_ue_cfg.search_space(to_search_space_id(2)).nof_candidates, ", "));
+                   fmt::join(default_ue_cfg.search_space(to_search_space_id(2)).cfg->get_nof_candidates(), ", "));
     test_logger.info("{}", to_string(fmtbuf));
   }
 
@@ -244,6 +245,22 @@ protected:
 class common_pdcch_allocator_tester : public base_pdcch_resource_allocator_tester, public ::testing::Test
 {};
 
+struct test_scrambling_params {
+  search_space_id                    ss_id;
+  search_space_configuration::type_t ss2_type;
+  optional<unsigned>                 cs1_pdcch_dmrs_scrambling_id;
+};
+
+// Dummy function overload of template <typename T> void testing::internal::PrintTo(const T& value, ::std::ostream* os).
+// This prevents valgrind from complaining about uninitialized variables.
+void PrintTo(const test_scrambling_params& value, ::std::ostream* os)
+{
+  return;
+}
+} // namespace pdcch_test
+
+using namespace pdcch_test;
+
 TEST_F(common_pdcch_allocator_tester, no_pdcch_allocation)
 {
   ASSERT_TRUE(res_grid[0].result.dl.dl_pdcchs.empty());
@@ -252,6 +269,13 @@ TEST_F(common_pdcch_allocator_tester, no_pdcch_allocation)
 
 TEST_F(common_pdcch_allocator_tester, single_pdcch_sib1_allocation)
 {
+  // Run until PDCCH monitoring occasion for SIB1 is active (i.e. every 20ms)
+  while (not is_pdcch_monitoring_active(next_slot, cell_cfg.dl_cfg_common.init_dl_bwp.pdcch_common.search_spaces[0])) {
+    run_slot();
+  }
+  // Since we schedule SIB1 on (n0 + 1)th slot we need to run once more.
+  run_slot();
+
   pdcch_dl_information* pdcch =
       pdcch_sch.alloc_pdcch_common(res_grid[0], SI_RNTI, to_search_space_id(0), aggregation_level::n4);
 
@@ -304,12 +328,6 @@ TEST_F(common_pdcch_allocator_tester, when_no_pdcch_space_for_rar_then_allocatio
   ASSERT_EQ(pdcch2, nullptr);
 }
 
-struct test_scrambling_params {
-  search_space_id                    ss_id;
-  search_space_configuration::type_t ss2_type;
-  optional<unsigned>                 cs1_pdcch_dmrs_scrambling_id;
-};
-
 class ue_pdcch_resource_allocator_scrambling_tester : public base_pdcch_resource_allocator_tester,
                                                       public ::testing::TestWithParam<test_scrambling_params>
 {
@@ -324,7 +342,15 @@ protected:
     auto ue_creation_req = base_pdcch_resource_allocator_tester::create_ue_cfg(rnti);
     ue_creation_req.cfg.cells[0].serv_cell_cfg.init_dl_bwp.pdcch_cfg->coresets[0].pdcch_dmrs_scrambling_id =
         cs1_n_id_dmrs;
-    ue_creation_req.cfg.cells[0].serv_cell_cfg.init_dl_bwp.pdcch_cfg->search_spaces[0].type = ss2_type;
+    if (ss2_type == srsran::search_space_type::common) {
+      ue_creation_req.cfg.cells[0]
+          .serv_cell_cfg.init_dl_bwp.pdcch_cfg->search_spaces[0]
+          .set_non_ss0_monitored_dci_formats(search_space_configuration::common_dci_format{.f0_0_and_f1_0 = true});
+    } else {
+      ue_creation_req.cfg.cells[0]
+          .serv_cell_cfg.init_dl_bwp.pdcch_cfg->search_spaces[0]
+          .set_non_ss0_monitored_dci_formats(search_space_configuration::ue_specific_dci_format::f0_1_and_1_1);
+    }
     return ue_creation_req;
   }
 
@@ -337,7 +363,7 @@ TEST_P(ue_pdcch_resource_allocator_scrambling_tester, single_crnti_dl_pdcch_allo
   test_ue* u    = this->add_ue(create_ue_cfg(rnti, params.ss2_type, params.cs1_pdcch_dmrs_scrambling_id));
 
   pdcch_dl_information* pdcch =
-      pdcch_sch.alloc_dl_pdcch_ue(res_grid[0], rnti, *u->cfg, to_bwp_id(0), params.ss_id, aggregation_level::n4);
+      pdcch_sch.alloc_dl_pdcch_ue(res_grid[0], rnti, *u->cfg, params.ss_id, aggregation_level::n4);
 
   ASSERT_TRUE(res_grid[0].result.dl.ul_pdcchs.empty());
   ASSERT_EQ(res_grid[0].result.dl.dl_pdcchs.size(), 1);
@@ -354,7 +380,7 @@ TEST_P(ue_pdcch_resource_allocator_scrambling_tester, single_crnti_ul_pdcch_allo
   test_ue* u    = this->add_ue(create_ue_cfg(rnti, params.ss2_type, params.cs1_pdcch_dmrs_scrambling_id));
 
   pdcch_ul_information* pdcch =
-      pdcch_sch.alloc_ul_pdcch_ue(res_grid[0], rnti, *u->cfg, to_bwp_id(0), params.ss_id, aggregation_level::n4);
+      pdcch_sch.alloc_ul_pdcch_ue(res_grid[0], rnti, *u->cfg, params.ss_id, aggregation_level::n4);
 
   ASSERT_TRUE(res_grid[0].result.dl.dl_pdcchs.empty());
   ASSERT_EQ(res_grid[0].result.dl.ul_pdcchs.size(), 1);
@@ -375,9 +401,10 @@ TEST(pdcch_resource_allocator_test, monitoring_period)
         unsigned first_sl = (((randint / period) * period) + offset + 10239) % 10240;
 
         sched_cell_configuration_request_message msg = test_helpers::make_default_sched_cell_configuration_request();
-        msg.dl_cfg_common.init_dl_bwp.pdcch_common.search_spaces[1].monitoring_slot_period = period;
-        msg.dl_cfg_common.init_dl_bwp.pdcch_common.search_spaces[1].monitoring_slot_offset = offset;
-        msg.dl_cfg_common.init_dl_bwp.pdcch_common.search_spaces[1].duration               = duration;
+        msg.dl_cfg_common.init_dl_bwp.pdcch_common.search_spaces[1].set_non_ss0_monitoring_slot_periodicity(period);
+        msg.dl_cfg_common.init_dl_bwp.pdcch_common.search_spaces[1].set_non_ss0_monitoring_slot_offset(offset,
+                                                                                                       msg.scs_common);
+        msg.dl_cfg_common.init_dl_bwp.pdcch_common.search_spaces[1].set_non_ss0_duration(duration);
 
         cell_configuration      cfg{msg};
         cell_resource_allocator res_grid{cfg};
@@ -454,6 +481,13 @@ struct fmt::formatter<multi_alloc_test_params> {
   }
 };
 
+// Dummy function overload of template <typename T> void testing::internal::PrintTo(const T& value, ::std::ostream* os).
+// This prevents valgrind from complaining about uninitialized variables.
+void PrintTo(const multi_alloc_test_params& value, ::std::ostream* os)
+{
+  return;
+}
+
 class multi_alloc_pdcch_resource_allocator_tester : public base_pdcch_resource_allocator_tester,
                                                     public ::testing::TestWithParam<multi_alloc_test_params>
 {
@@ -471,7 +505,8 @@ protected:
           cell_config_dedicated ue_cell = test_helpers::create_test_initial_ue_spcell_cell_config(
               cell_config_builder_params{.channel_bw_mhz = params.cell_bw});
           if (params.ss2_nof_candidates.has_value()) {
-            ue_cell.serv_cell_cfg.init_dl_bwp.pdcch_cfg->search_spaces[0].nof_candidates = *params.ss2_nof_candidates;
+            ue_cell.serv_cell_cfg.init_dl_bwp.pdcch_cfg->search_spaces[0].set_non_ss0_nof_candidates(
+                *params.ss2_nof_candidates);
           }
           return ue_cell;
         }()),
@@ -482,8 +517,9 @@ protected:
   sched_ue_creation_request_message create_ue_cfg(rnti_t rnti)
   {
     auto ue_creation_req = super_type::create_ue_cfg(rnti);
-    ue_creation_req.cfg.cells[0].serv_cell_cfg.init_dl_bwp.pdcch_cfg->search_spaces[0].type =
-        search_space_configuration::type_t::ue_dedicated;
+    ue_creation_req.cfg.cells[0]
+        .serv_cell_cfg.init_dl_bwp.pdcch_cfg->search_spaces[0]
+        .set_non_ss0_monitored_dci_formats(search_space_configuration::ue_specific_dci_format::f0_1_and_1_1);
     cell_config_builder_params builder_params{};
     builder_params.channel_bw_mhz = params.cell_bw;
     ue_creation_req.cfg.cells[0].serv_cell_cfg.init_dl_bwp.pdcch_cfg->coresets[0] =
@@ -504,6 +540,13 @@ protected:
 
     switch (alloc.type) {
       case alloc_type::si_rnti: {
+        // Run until PDCCH monitoring occasion for SIB1 is active (i.e. every 20ms)
+        while (not is_pdcch_monitoring_active(next_slot,
+                                              cell_cfg.dl_cfg_common.init_dl_bwp.pdcch_common.search_spaces[0])) {
+          run_slot();
+        }
+        // Since we schedule SIB1 on (n0 + 1)th slot we need to run once more.
+        run_slot();
         pdcch_dl_information* sib_pdcch =
             pdcch_sch.alloc_pdcch_common(res_grid[0], SI_RNTI, to_search_space_id(0), alloc.aggr_lvl);
         return sib_pdcch != nullptr ? &sib_pdcch->ctx : nullptr;
@@ -516,13 +559,13 @@ protected:
       } break;
       case alloc_type::dl_crnti: {
         pdcch_dl_information* dl_pdcch =
-            pdcch_sch.alloc_dl_pdcch_ue(res_grid[0], alloc.rnti, *u->cfg, to_bwp_id(0), alloc.ss_id, alloc.aggr_lvl);
+            pdcch_sch.alloc_dl_pdcch_ue(res_grid[0], alloc.rnti, *u->cfg, alloc.ss_id, alloc.aggr_lvl);
         return dl_pdcch != nullptr ? &dl_pdcch->ctx : nullptr;
 
       } break;
       case alloc_type::ul_crnti: {
         pdcch_ul_information* ul_pdcch =
-            pdcch_sch.alloc_ul_pdcch_ue(res_grid[0], alloc.rnti, *u->cfg, to_bwp_id(0), alloc.ss_id, alloc.aggr_lvl);
+            pdcch_sch.alloc_ul_pdcch_ue(res_grid[0], alloc.rnti, *u->cfg, alloc.ss_id, alloc.aggr_lvl);
         return ul_pdcch != nullptr ? &ul_pdcch->ctx : nullptr;
 
       } break;
@@ -607,7 +650,7 @@ INSTANTIATE_TEST_SUITE_P(
      {alloc_type::ul_crnti, to_rnti(0x4601), aggregation_level::n4, to_search_space_id(1), nullopt}}},
   multi_alloc_test_params{cell_bw::MHz10, nullopt,
     {{alloc_type::si_rnti,  SI_RNTI,         aggregation_level::n4, to_search_space_id(0), 0},
-     {alloc_type::ul_crnti, to_rnti(0x4601), aggregation_level::n4, to_search_space_id(2), 0}}},
+     {alloc_type::ul_crnti, to_rnti(0x4601), aggregation_level::n4, to_search_space_id(2), 4}}},
   multi_alloc_test_params{cell_bw::MHz20, nullopt,
     {{alloc_type::si_rnti,  SI_RNTI,         aggregation_level::n4, to_search_space_id(0), 0},
      {alloc_type::ul_crnti, to_rnti(0x4601), aggregation_level::n4, to_search_space_id(2), 8}}},

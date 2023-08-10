@@ -36,7 +36,7 @@
 #include "srsran/ran/sr_configuration.h"
 #include "srsran/ran/ssb_configuration.h"
 #include "srsran/ran/subcarrier_spacing.h"
-#include "srsran/ran/tdd_ul_dl_config.h"
+#include "srsran/ran/tdd/tdd_ul_dl_config.h"
 #include "srsran/scheduler/config/bwp_configuration.h"
 #include "srsran/scheduler/config/dmrs.h"
 #include "srsran/scheduler/config/logical_channel_config.h"
@@ -62,9 +62,7 @@ struct sched_grid_resource {
 struct sched_cell_configuration_request_message {
   du_cell_index_t       cell_index;
   du_cell_group_index_t cell_group_index;
-  uint8_t               nof_beams;     // (0..64)
-  uint8_t               nof_layers;    // (0..8)
-  uint8_t               nof_ant_ports; // (0..64)
+  uint8_t               nof_beams; // (0..64)
   pci_t                 pci;
 
   dl_config_common dl_cfg_common;
@@ -87,11 +85,14 @@ struct sched_cell_configuration_request_message {
   /// Payload size is in bytes.
   unsigned sib1_payload_size;
 
-  /// List of PUCCH guardbands;
+  /// List of PUCCH guardbands.
   std::vector<sched_grid_resource> pucch_guardbands;
 
-  /// CSI-RS scheduling parameters.
-  optional<csi_meas_config> csi_meas_cfg;
+  /// List of zp-CSI-RS resources common to all UEs.
+  std::vector<zp_csi_rs_resource> zp_csi_rs_list;
+
+  /// List of nzp-CSI-RS resources common to all UEs.
+  std::vector<nzp_csi_rs_resource> nzp_csi_rs_res_list;
 };
 
 /// Request for a new UE configuration provided to the scheduler during UE creation or reconfiguration.
@@ -104,10 +105,13 @@ struct sched_ue_config_request {
   std::vector<cell_config_dedicated> cells;
 };
 
-/// UE Creation Request.
+/// Request to create a new UE in scheduler.
 struct sched_ue_creation_request_message {
-  du_ue_index_t           ue_index;
-  rnti_t                  crnti;
+  du_ue_index_t ue_index;
+  rnti_t        crnti;
+  /// Whether the UE starts in fallback mode, i.e. without using its dedicated configuration.
+  bool starts_in_fallback;
+  /// Configuration to be applied to the new UE.
   sched_ue_config_request cfg;
 };
 
@@ -167,9 +171,9 @@ public:
 class sched_configuration_notifier
 {
 public:
-  virtual ~sched_configuration_notifier()                    = default;
-  virtual void on_ue_config_complete(du_ue_index_t ue_index) = 0;
-  virtual void on_ue_delete_response(du_ue_index_t ue_index) = 0;
+  virtual ~sched_configuration_notifier()                                             = default;
+  virtual void on_ue_config_complete(du_ue_index_t ue_index, bool ue_creation_result) = 0;
+  virtual void on_ue_delete_response(du_ue_index_t ue_index)                          = 0;
 };
 
 } // namespace srsran

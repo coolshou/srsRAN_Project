@@ -40,7 +40,7 @@ public:
   bool handle_cell_configuration_request(const sched_cell_configuration_request_message& msg) override;
 
   /// Obtain scheduling result for a given slot and cell.
-  const sched_result* slot_indication(slot_point sl_tx, du_cell_index_t cell_index) override;
+  const sched_result& slot_indication(slot_point sl_tx, du_cell_index_t cell_index) override;
 
   // DU manager events.
   void handle_ue_creation_request(const sched_ue_creation_request_message& ue_request) override;
@@ -56,6 +56,7 @@ public:
   // MAC events.
   void handle_dl_mac_ce_indication(const dl_mac_ce_indication& mac_ce) override;
   void handle_ul_bsr_indication(const ul_bsr_indication_message& bsr) override;
+  void handle_ul_phr_indication(const ul_phr_indication_message& phr_ind) override;
 
   // PHY events.
   void handle_rach_indication(const rach_indication_message& msg) override;

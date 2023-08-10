@@ -50,7 +50,7 @@ static constexpr size_t MAX_PAGING_RECORDS_PER_PAGING_PDU = 32;
 static constexpr size_t MAX_PAGING_PDUS_PER_SLOT = 1;
 
 /// [Implementation defined] Maximum number of CSI-RS PDUs scheduler per slot.
-static constexpr size_t MAX_CSI_RS_PDUS_PER_SLOT = 2;
+static constexpr size_t MAX_CSI_RS_PDUS_PER_SLOT = 16;
 
 /// [Implementation defined] This corresponds to maximum number of PDCCH PDUs that can be scheduled per slot.
 static constexpr size_t MAX_DL_PDCCH_PDUS_PER_SLOT =
@@ -96,5 +96,8 @@ static constexpr size_t MAX_UCI_PDUS_PER_UCI_IND = 8;
 
 /// [Implementation defined] Maximum number of HARQ VALUES per HARQ PDU.
 static constexpr size_t MAX_HARQ_VALUES_PER_HARQ_PDU = 8;
+
+/// [Implementation defined] Maximum number of logical antenna ports (parallel streams) per beamforming PDU.
+static constexpr size_t MAX_LOGICAL_ANTENNA_PORTS_PER_BEAMFORMING_PDU = 4;
 
 } // namespace srsran

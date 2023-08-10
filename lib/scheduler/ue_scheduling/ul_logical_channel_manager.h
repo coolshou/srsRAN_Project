@@ -35,10 +35,14 @@ class ul_logical_channel_manager
 public:
   ul_logical_channel_manager();
 
-  void set_status(lcg_id_t lcg_id, bool active) { groups[lcg_id].active = true; }
+  /// Set the status of a logical channel group.
+  void set_status(lcg_id_t lcg_id, bool active) { groups[lcg_id].active = active; }
 
   /// \brief Update the configurations of the provided lists of bearers.
   void configure(span<const logical_channel_config> log_channels_configs);
+
+  /// Deactivate all logical channel groups, handling of SRs to prepare for UE removal.
+  void deactivate();
 
   /// \brief Verifies if logical channel group is activated for UL.
   bool is_active(lcg_id_t lcg_id) const { return groups[lcg_id].active; }
@@ -69,7 +73,7 @@ public:
   }
 
   /// \brief Checks whether a SR indication handling is pending.
-  bool has_pending_sr() const { return sr_pending; }
+  bool has_pending_sr() const { return sr_pending.load(std::memory_order_relaxed); }
 
   /// \brief Update UL BSR for a given LCG-ID.
   void handle_bsr_indication(const ul_bsr_indication_message& msg)
@@ -82,11 +86,11 @@ public:
   /// \brief Indicate that the UE requested an UL grant.
   void handle_sr_indication()
   {
-    sr_pending = true;
+    sr_pending.store(true, std::memory_order::memory_order_relaxed);
     // TODO: handle SR indication content.
   }
 
-  void reset_sr_indication() { sr_pending = false; }
+  void reset_sr_indication() { sr_pending.store(false, std::memory_order::memory_order_relaxed); }
 
 private:
   struct channel_group_context {
@@ -108,7 +112,9 @@ private:
     return payload_bytes + RLC_HEADER_SIZE_ESTIMATE;
   }
 
-  bool sr_pending = false;
+  // This state variable tells whether there is a pending SR. Note: It is an atomic variable because SR indications
+  // can be received from different cells (in different threads).
+  std::atomic<bool> sr_pending{false};
 
   std::array<channel_group_context, MAX_NOF_LCGS> groups;
 };

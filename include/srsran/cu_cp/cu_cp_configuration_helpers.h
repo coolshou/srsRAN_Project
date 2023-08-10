@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "cell_meas_manager_config.h"
 #include "cu_cp_configuration.h"
 #include "srsran/ngap/ngap_configuration_helpers.h"
 
@@ -56,12 +57,12 @@ inline std::map<five_qi_t, srs_cu_cp::cu_cp_qos_config> make_default_cu_cp_qos_c
     pdcp_cfg.integrity_protection_required = false;
 
     // > Tx
-    pdcp_cfg.tx.sn_size                = pdcp_sn_size::size12bits;
+    pdcp_cfg.tx.sn_size                = pdcp_sn_size::size18bits;
     pdcp_cfg.tx.discard_timer          = pdcp_discard_timer::infinity;
     pdcp_cfg.tx.status_report_required = false;
 
     // > Rx
-    pdcp_cfg.rx.sn_size               = pdcp_sn_size::size12bits;
+    pdcp_cfg.rx.sn_size               = pdcp_sn_size::size18bits;
     pdcp_cfg.rx.out_of_order_delivery = false;
     pdcp_cfg.rx.t_reordering          = pdcp_t_reordering::ms100;
 
@@ -79,12 +80,12 @@ inline std::map<five_qi_t, srs_cu_cp::cu_cp_qos_config> make_default_cu_cp_qos_c
     pdcp_cfg.integrity_protection_required = false;
 
     // > Tx
-    pdcp_cfg.tx.sn_size                = pdcp_sn_size::size12bits;
+    pdcp_cfg.tx.sn_size                = pdcp_sn_size::size18bits;
     pdcp_cfg.tx.discard_timer          = pdcp_discard_timer::infinity;
     pdcp_cfg.tx.status_report_required = false;
 
     // > Rx
-    pdcp_cfg.rx.sn_size               = pdcp_sn_size::size12bits;
+    pdcp_cfg.rx.sn_size               = pdcp_sn_size::size18bits;
     pdcp_cfg.rx.out_of_order_delivery = false;
     pdcp_cfg.rx.t_reordering          = pdcp_t_reordering::ms220;
 
@@ -94,12 +95,34 @@ inline std::map<five_qi_t, srs_cu_cp::cu_cp_qos_config> make_default_cu_cp_qos_c
   return qos_list;
 }
 
+inline srs_cu_cp::mobility_configuration make_default_mobility_config()
+{
+  srs_cu_cp::mobility_configuration cfg{};
+
+  return cfg;
+}
+
+inline bool is_valid_configuration(const srs_cu_cp::mobility_configuration& config)
+{
+  if (!is_valid_configuration(config.meas_manager_config)) {
+    fmt::print("Invalid meas manager configuration.\n");
+    return false;
+  }
+
+  return true;
+}
+
 /// Returns true if the given CU-CP configuration is valid, otherwise false.
 inline bool is_valid_configuration(const srs_cu_cp::cu_cp_configuration& config)
 {
   // Notifiers aren't checked here.
   if (!is_valid_configuration(config.ngap_config)) {
     fmt::print("Invalid NGAP configuration.\n");
+    return false;
+  }
+
+  if (!is_valid_configuration(config.mobility_config)) {
+    fmt::print("Invalid mobility configuration.\n");
     return false;
   }
 

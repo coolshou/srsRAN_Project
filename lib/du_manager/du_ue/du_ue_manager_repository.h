@@ -23,6 +23,7 @@
 #pragma once
 
 #include "du_ue.h"
+#include "srsran/gtpu/gtpu_teid_pool.h"
 
 namespace srsran {
 namespace srs_du {
@@ -39,11 +40,20 @@ public:
   /// \brief removes an existing ue context from the du ue manager repository.
   virtual void remove_ue(du_ue_index_t ue_index) = 0;
 
+  /// \brief Update the CRNTI of an existing UE context.
+  virtual void update_crnti(du_ue_index_t ue_index, rnti_t crnti) = 0;
+
   /// \brief Find UE context based on DU UE index.
   virtual du_ue* find_ue(du_ue_index_t ue_index) = 0;
 
   /// \brief Find UE context based on UE RNTI.
   virtual du_ue* find_rnti(rnti_t rnti) = 0;
+
+  /// \brief Handle detected Radio Link Failures.
+  virtual void handle_radio_link_failure(du_ue_index_t ue_index, rlf_cause cause) = 0;
+
+  /// \brief Access to the TEID pool that can be used to allocate/deallocate unique TEIDs for F1-U bearers.
+  virtual gtpu_teid_pool& get_f1u_teid_pool() = 0;
 };
 
 } // namespace srs_du

@@ -49,6 +49,12 @@ void ue_configuration_procedure::operator()(coro_context<async_task<f1ap_ue_cont
 
   proc_logger.log_proc_started();
 
+  if (request.drbs_to_setup.empty() and request.srbs_to_setup.empty() and request.drbs_to_rem.empty() and
+      request.scells_to_setup.empty() and request.scells_to_rem.empty()) {
+    proc_logger.log_proc_failure("No SCells, DRBs or SRBs to setup or release");
+    CORO_EARLY_RETURN(make_ue_config_failure());
+  }
+
   prev_cell_group = ue->resources.value();
   if (ue->resources.update(ue->pcell_index, request).release_required) {
     proc_logger.log_proc_failure("Failed to allocate DU UE resources");
@@ -59,36 +65,44 @@ void ue_configuration_procedure::operator()(coro_context<async_task<f1ap_ue_cont
   update_ue_context();
 
   // > Update MAC bearers.
-  CORO_AWAIT(update_mac_mux_and_demux());
+  CORO_AWAIT_VALUE(mac_ue_reconfiguration_response mac_res, update_mac_mux_and_demux());
 
   // > Destroy old DU UE bearers that are now detached from remaining layers.
   clear_old_ue_context();
 
   proc_logger.log_proc_completed();
 
-  CORO_RETURN(make_ue_config_response());
+  CORO_RETURN(mac_res.result ? make_ue_config_response() : make_ue_config_failure());
 }
 
 void ue_configuration_procedure::update_ue_context()
 {
   // > Create DU UE SRB objects.
   for (srb_id_t srbid : request.srbs_to_setup) {
+    if (ue->bearers.srbs().contains(srbid)) {
+      // >> In case the SRB already exists, we ignore the request for its configuration.
+      continue;
+    }
+    srbs_added.push_back(srbid);
+
     lcid_t lcid = srb_id_to_lcid(srbid);
     auto   it   = std::find_if(ue->resources->rlc_bearers.begin(),
                            ue->resources->rlc_bearers.end(),
                            [lcid](const rlc_bearer_config& e) { return e.lcid == lcid; });
     srsran_assert(it != ue->resources->rlc_bearers.end(), "SRB should have been allocated at this point");
+
+    // >> Create SRB bearer.
     du_ue_srb& srb = ue->bearers.add_srb(srbid, it->rlc_cfg);
 
     // >> Create RLC SRB entity.
-    srb.rlc_bearer =
-        create_rlc_entity(make_rlc_entity_creation_message(ue->ue_index, ue->pcell_index, srb, du_params.services));
+    srb.rlc_bearer = create_rlc_entity(make_rlc_entity_creation_message(
+        ue->ue_index, ue->pcell_index, srb, du_params.services, *ue->rlc_rlf_notifier));
   }
 
   // > Create F1-C bearers.
   f1ap_ue_configuration_request req{};
   req.ue_index = ue->ue_index;
-  for (srb_id_t srb_id : request.srbs_to_setup) {
+  for (const srb_id_t srb_id : srbs_added) {
     du_ue_srb& bearer = ue->bearers.srbs()[srb_id];
     req.f1c_bearers_to_add.emplace_back();
     req.f1c_bearers_to_add.back().srb_id          = srb_id;
@@ -106,10 +120,15 @@ void ue_configuration_procedure::update_ue_context()
   // > Move DU UE DRBs to be removed out of the UE bearer manager.
   // Note: This DRB pointer will remain valid and accessible from other layers until we update the latter.
   for (const drb_id_t& drb_to_rem : request.drbs_to_rem) {
-    srsran_assert(std::any_of(ue->resources->rlc_bearers.begin(),
-                              ue->resources->rlc_bearers.end(),
+    if (ue->bearers.drbs().count(drb_to_rem) == 0) {
+      logger.warning(
+          "ue={}: Failed to release DRB-Id={}. Cause: DRB with provided ID does not exist.", ue->ue_index, drb_to_rem);
+      continue;
+    }
+    srsran_assert(std::any_of(prev_cell_group.rlc_bearers.begin(),
+                              prev_cell_group.rlc_bearers.end(),
                               [&drb_to_rem](const rlc_bearer_config& e) { return e.drb_id == drb_to_rem; }),
-                  "The bearer config should be created at this point");
+                  "The bearer to be deleted must already exist");
 
     drbs_to_rem.push_back(ue->bearers.remove_drb(drb_to_rem));
   }
@@ -131,9 +150,21 @@ void ue_configuration_procedure::update_ue_context()
                            [&drbtoadd](const rlc_bearer_config& e) { return e.drb_id == drbtoadd.drb_id; });
     srsran_assert(it != ue->resources->rlc_bearers.end(), "The bearer config should be created at this point");
 
+    // Find the F1-U configuration for this DRB.
+    auto f1u_cfg_it = du_params.ran.qos.find(drbtoadd.five_qi);
+    srsran_assert(f1u_cfg_it != du_params.ran.qos.end(), "Undefined F1-U bearer config for 5QI={}", drbtoadd.five_qi);
+
     // Create DU DRB instance.
-    std::unique_ptr<du_ue_drb> drb = create_drb(
-        ue->ue_index, ue->pcell_index, drbtoadd.drb_id, it->lcid, it->rlc_cfg, drbtoadd.uluptnl_info_list, du_params);
+    std::unique_ptr<du_ue_drb> drb = create_drb(ue->ue_index,
+                                                ue->pcell_index,
+                                                drbtoadd.drb_id,
+                                                it->lcid,
+                                                it->rlc_cfg,
+                                                f1u_cfg_it->second.f1u,
+                                                drbtoadd.uluptnl_info_list,
+                                                ue_mng.get_f1u_teid_pool(),
+                                                du_params,
+                                                *ue->rlc_rlf_notifier);
     if (drb == nullptr) {
       logger.warning("Failed to create DRB-Id={}.", drbtoadd.drb_id);
       continue;
@@ -147,17 +178,17 @@ void ue_configuration_procedure::clear_old_ue_context()
   drbs_to_rem.clear();
 }
 
-async_task<mac_ue_reconfiguration_response_message> ue_configuration_procedure::update_mac_mux_and_demux()
+async_task<mac_ue_reconfiguration_response> ue_configuration_procedure::update_mac_mux_and_demux()
 {
   // Create Request to MAC to reconfigure existing UE.
-  mac_ue_reconfiguration_request_message mac_ue_reconf_req;
+  mac_ue_reconfiguration_request mac_ue_reconf_req;
   mac_ue_reconf_req.ue_index           = request.ue_index;
   mac_ue_reconf_req.crnti              = ue->rnti;
   mac_ue_reconf_req.pcell_index        = ue->pcell_index;
   mac_ue_reconf_req.mac_cell_group_cfg = ue->resources->mcg_cfg;
   mac_ue_reconf_req.phy_cell_group_cfg = ue->resources->pcg_cfg;
 
-  for (srb_id_t srbid : request.srbs_to_setup) {
+  for (const srb_id_t srbid : srbs_added) {
     du_ue_srb& bearer = ue->bearers.srbs()[srbid];
     mac_ue_reconf_req.bearers_to_addmod.emplace_back();
     auto& lc_ch     = mac_ue_reconf_req.bearers_to_addmod.back();
@@ -210,7 +241,26 @@ f1ap_ue_context_update_response ue_configuration_procedure::make_ue_config_respo
 
   // > Calculate ASN.1 CellGroupConfig to be sent in DU-to-CU container.
   asn1::rrc_nr::cell_group_cfg_s asn1_cell_group;
-  calculate_cell_group_config_diff(asn1_cell_group, prev_cell_group, *ue->resources);
+  if (ue->reestablishment_pending) {
+    // In case of reestablishment, we send the full configuration to the UE but without an SRB1 and with SRB2 and DRBs
+    // set to "RLCReestablish".
+    ue->reestablishment_pending = false;
+
+    calculate_cell_group_config_diff(asn1_cell_group, cell_group_config{}, *ue->resources);
+    auto it = std::find_if(asn1_cell_group.rlc_bearer_to_add_mod_list.begin(),
+                           asn1_cell_group.rlc_bearer_to_add_mod_list.end(),
+                           [](const auto& b) { return b.lc_ch_id == LCID_SRB1; });
+    if (it != asn1_cell_group.rlc_bearer_to_add_mod_list.end()) {
+      asn1_cell_group.rlc_bearer_to_add_mod_list.erase(it);
+    }
+    for (auto& b : asn1_cell_group.rlc_bearer_to_add_mod_list) {
+      b.rlc_cfg_present         = false;
+      b.mac_lc_ch_cfg_present   = false;
+      b.reestablish_rlc_present = true;
+    }
+  } else {
+    calculate_cell_group_config_diff(asn1_cell_group, prev_cell_group, *ue->resources);
+  }
   {
     asn1::bit_ref     bref{resp.du_to_cu_rrc_container};
     asn1::SRSASN_CODE code = asn1_cell_group.pack(bref);

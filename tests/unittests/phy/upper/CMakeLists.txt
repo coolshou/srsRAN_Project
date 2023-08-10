@@ -35,8 +35,8 @@ target_link_libraries(downlink_processor_pool_test srsran_upper_phy srslog)
 add_test(downlink_processor_pool_test downlink_processor_pool_test)
 
 add_executable(downlink_processor_test downlink_processor_test.cpp)
-target_link_libraries(downlink_processor_test srsran_downlink_processor srslog srsran_support)
-add_test(downlink_processor_test downlink_processor_test)
+target_link_libraries(downlink_processor_test srsran_downlink_processor srslog gtest gtest_main)
+gtest_discover_tests(downlink_processor_test)
 
 add_executable(hard_decision_test hard_decision_test.cpp)
 target_link_libraries(hard_decision_test log_likelihood_ratio srslog gtest gtest_main)
@@ -45,10 +45,6 @@ gtest_discover_tests(hard_decision_test)
 add_executable(log_likelihood_ratio_test log_likelihood_ratio_test.cpp)
 target_link_libraries(log_likelihood_ratio_test log_likelihood_ratio srslog)
 add_test(log_likelihood_ratio_test log_likelihood_ratio_test)
-
-add_executable(re_pattern_test re_pattern_test.cpp)
-target_link_libraries(re_pattern_test srsran_upper_phy_support srslog)
-add_test(re_pattern_test re_pattern_test)
 
 add_executable(rx_softbuffer_pool_test rx_softbuffer_pool_test.cpp)
 target_link_libraries(rx_softbuffer_pool_test srsran_upper_phy_support srslog)

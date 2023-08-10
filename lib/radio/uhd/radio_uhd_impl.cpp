@@ -174,7 +174,7 @@ bool radio_session_uhd_impl::set_rx_freq(unsigned port_idx, radio_configuration:
   return true;
 }
 
-bool radio_session_uhd_impl::start_rx_stream()
+bool radio_session_uhd_impl::start_rx_stream(baseband_gateway_timestamp init_time)
 {
   // Prevent multiple threads from starting streams simultaneously.
   std::unique_lock<std::mutex> lock(stream_start_mutex);
@@ -187,19 +187,11 @@ bool radio_session_uhd_impl::start_rx_stream()
   stream_start_required = false;
 
   // Immediate start of the stream.
-  uhd::time_spec_t time_spec = {};
-
-  // Get current USRP time as timestamp.
-  if (!device.get_time_now(time_spec)) {
-    fmt::print("Error: getting time to start stream. {}.\n", device.get_error_message());
-    return false;
-  }
-  // Add delay to current time.
-  time_spec += START_STREAM_DELAY_S;
+  uhd::time_spec_t time_spec = uhd::time_spec_t::from_ticks(init_time, actual_sampling_rate_Hz);
 
   // Issue all streams to start.
-  for (auto& stream : rx_streams) {
-    if (!stream->start(time_spec)) {
+  for (auto& bb_gateway : bb_gateways) {
+    if (!bb_gateway->get_rx_stream().start(time_spec)) {
       return false;
     }
   }
@@ -210,7 +202,7 @@ bool radio_session_uhd_impl::start_rx_stream()
 radio_session_uhd_impl::radio_session_uhd_impl(const radio_configuration::radio& radio_config,
                                                task_executor&                    async_executor_,
                                                radio_notification_handler&       notifier_) :
-  sampling_rate_hz(radio_config.sampling_rate_hz), async_executor(async_executor_), notifier(notifier_)
+  actual_sampling_rate_Hz(0.0), async_executor(async_executor_), notifier(notifier_)
 {
   // Disable fast-path (U/L/O) messages.
   setenv("UHD_LOG_FASTPATH_DISABLE", "1", 0);
@@ -305,15 +297,24 @@ radio_session_uhd_impl::radio_session_uhd_impl(const radio_configuration::radio&
     }
   }
 
-  // Set default Tx/Rx rates.
-  if (!device.set_tx_rate(radio_config.sampling_rate_hz)) {
+  // Set Tx rate.
+  double actual_tx_rate_Hz = 0.0;
+  if (!device.set_tx_rate(actual_tx_rate_Hz, radio_config.sampling_rate_hz)) {
     fmt::print("Error: setting Tx sampling rate. {}\n", device.get_error_message());
     return;
   }
-  if (!device.set_rx_rate(radio_config.sampling_rate_hz)) {
+  srsran_assert(std::isnormal(actual_tx_rate_Hz), "Actual transmit sampling rate is invalid.");
+
+  // Set Rx rate.
+  double actual_rx_rate_Hz = 0.0;
+  if (!device.set_rx_rate(actual_rx_rate_Hz, radio_config.sampling_rate_hz)) {
     fmt::print("Error: setting Rx sampling rate. {}\n", device.get_error_message());
     return;
   }
+  srsran_assert(std::isnormal(actual_rx_rate_Hz), "Actual receive sampling rate is invalid.");
+
+  // Overwrite actual.
+  actual_sampling_rate_Hz = actual_rx_rate_Hz;
 
   // Reset timestamps.
   if ((total_rx_channel_count > 1 || total_tx_channel_count > 1) &&
@@ -329,7 +330,7 @@ radio_session_uhd_impl::radio_session_uhd_impl(const radio_configuration::radio&
   radio_configuration::over_the_wire_format otw_format = radio_config.otw_format;
   if ((otw_format == radio_configuration::over_the_wire_format::DEFAULT) &&
       (device.get_type() == radio_uhd_device_type::types::B2xx) &&
-      (radio_config.rx_streams.size() * sampling_rate_hz > 30.72e6)) {
+      (radio_config.rx_streams.size() * actual_sampling_rate_Hz > 30.72e6)) {
     otw_format = radio_configuration::over_the_wire_format::SC12;
   }
 
@@ -342,7 +343,7 @@ radio_session_uhd_impl::radio_session_uhd_impl(const radio_configuration::radio&
     radio_uhd_tx_stream::stream_description stream_description = {};
     stream_description.id                                      = stream_idx;
     stream_description.otw_format                              = otw_format;
-    stream_description.srate_hz                                = radio_config.sampling_rate_hz;
+    stream_description.srate_hz                                = actual_tx_rate_Hz;
     stream_description.args                                    = stream.args;
 
     // Setup ports.
@@ -392,7 +393,7 @@ radio_session_uhd_impl::radio_session_uhd_impl(const radio_configuration::radio&
     radio_uhd_rx_stream::stream_description stream_description = {};
     stream_description.id                                      = stream_idx;
     stream_description.otw_format                              = otw_format;
-    stream_description.srate_Hz                                = radio_config.sampling_rate_hz;
+    stream_description.srate_Hz                                = actual_rx_rate_Hz;
     stream_description.args                                    = stream.args;
 
     // Setup ports.
@@ -435,18 +436,13 @@ radio_session_uhd_impl::radio_session_uhd_impl(const radio_configuration::radio&
     rx_stream_description_list.emplace_back(stream_description);
   }
 
-  // Create transmit streams.
-  for (unsigned tx_stream_idx = 0; tx_stream_idx != radio_config.tx_streams.size(); ++tx_stream_idx) {
-    if (tx_streams.emplace_back(
-            device.create_tx_stream(async_executor, notifier, tx_stream_description_list[tx_stream_idx])) == nullptr) {
-      return;
-    }
-  }
+  // Create baseband gateways.
+  for (unsigned i_stream = 0; i_stream != radio_config.tx_streams.size(); ++i_stream) {
+    bb_gateways.emplace_back(std::make_unique<radio_uhd_baseband_gateway>(
+        device, async_executor, notifier, tx_stream_description_list[i_stream], rx_stream_description_list[i_stream]));
 
-  // Create receive streams.
-  for (unsigned rx_stream_idx = 0; rx_stream_idx != radio_config.tx_streams.size(); ++rx_stream_idx) {
-    if (rx_streams.emplace_back(device.create_rx_stream(notifier, rx_stream_description_list[rx_stream_idx])) ==
-        nullptr) {
+    // Early return if the gateway was not successfully created.
+    if (!bb_gateways.back()->is_successful()) {
       return;
     }
   }
@@ -467,49 +463,36 @@ void radio_session_uhd_impl::stop()
   state = states::STOP;
 
   // Signal stop for each transmit stream.
-  for (auto& stream : tx_streams) {
-    stream->stop();
+  for (auto& gateway : bb_gateways) {
+    gateway->get_tx_stream().stop();
   }
 
   // Signal stop for each receive stream.
-  for (auto& stream : rx_streams) {
-    stream->stop();
+  for (auto& gateway : bb_gateways) {
+    gateway->get_rx_stream().stop();
   }
 
-  // Wait for transmitter streams to join.
-  for (auto& stream : tx_streams) {
-    stream->wait_stop();
-  }
-
-  // Wait for receiver streams to join.
-  for (auto& stream : rx_streams) {
-    stream->wait_stop();
+  // Wait for streams to join.
+  for (auto& gateway : bb_gateways) {
+    gateway->get_tx_stream().wait_stop();
+    gateway->get_rx_stream().wait_stop();
   }
 }
 
-void radio_session_uhd_impl::start()
+void radio_session_uhd_impl::start(baseband_gateway_timestamp init_time)
 {
-  if (!start_rx_stream()) {
+  if (!start_rx_stream(init_time)) {
     fmt::print("Failed to start Rx streams.\n");
   }
 }
 
-baseband_gateway_transmitter& radio_session_uhd_impl::get_transmitter(unsigned stream_id)
+baseband_gateway_timestamp radio_session_uhd_impl::read_current_time()
 {
-  srsran_assert(stream_id < tx_streams.size(),
-                "Stream identifier ({}) exceeds the number of transmit streams  ({}).",
-                stream_id,
-                (int)rx_streams.size());
-  return *tx_streams[stream_id];
-}
-
-baseband_gateway_receiver& radio_session_uhd_impl::get_receiver(unsigned stream_id)
-{
-  srsran_assert(stream_id < rx_streams.size(),
-                "Stream identifier ({}) exceeds the number of receive streams  ({}).",
-                stream_id,
-                (int)rx_streams.size());
-  return *rx_streams[stream_id];
+  uhd::time_spec_t time;
+  if (!device.get_time_now(time)) {
+    fmt::print("Error retrieving time.\n");
+  }
+  return time.to_ticks(actual_sampling_rate_Hz);
 }
 
 std::unique_ptr<radio_session> radio_factory_uhd_impl::create(const radio_configuration::radio& config,

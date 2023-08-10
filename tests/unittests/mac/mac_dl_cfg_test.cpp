@@ -22,8 +22,11 @@
 
 #include "lib/du_manager/converters/mac_config_helpers.h"
 #include "lib/mac/mac_dl/mac_dl_processor.h"
+#include "lib/mac/mac_sched/srsran_scheduler_adapter.h"
+#include "lib/mac/rnti_manager.h"
 #include "mac_ctrl_test_dummies.h"
 #include "mac_test_helpers.h"
+#include "tests/test_doubles/mac/dummy_scheduler_ue_metric_notifier.h"
 #include "srsran/support/async/eager_async_task.h"
 #include "srsran/support/executors/blocking_task_worker.h"
 #include "srsran/support/executors/manual_task_worker.h"
@@ -38,6 +41,7 @@ class dummy_sched : public mac_scheduler
 public:
   srslog::basic_logger&         logger = srslog::fetch_basic_logger("TEST");
   sched_configuration_notifier& notifier;
+  sched_result                  sched_res = {};
 
   explicit dummy_sched(sched_configuration_notifier& notifier_) : notifier(notifier_) {}
 
@@ -46,12 +50,12 @@ public:
   void handle_ue_creation_request(const sched_ue_creation_request_message& ue_request) override
   {
     logger.info("ueId={} Creation", ue_request.ue_index);
-    notifier.on_ue_config_complete(ue_request.ue_index);
+    notifier.on_ue_config_complete(ue_request.ue_index, true);
   }
   void handle_ue_reconfiguration_request(const sched_ue_reconfiguration_message& ue_request) override
   {
     logger.info("ueId={} Reconfiguration", ue_request.ue_index);
-    notifier.on_ue_config_complete(ue_request.ue_index);
+    notifier.on_ue_config_complete(ue_request.ue_index, true);
   }
   void handle_ue_removal_request(du_ue_index_t ue_index) override
   {
@@ -59,7 +63,7 @@ public:
     notifier.on_ue_delete_response(ue_index);
   }
 
-  const sched_result* slot_indication(slot_point sl_tx, du_cell_index_t cell_index) override { return nullptr; }
+  const sched_result& slot_indication(slot_point sl_tx, du_cell_index_t cell_index) override { return sched_res; }
   void                handle_ul_bsr_indication(const ul_bsr_indication_message& bsr) override {}
   void                handle_dl_buffer_state_indication(const dl_buffer_state_indication_message& bs) override {}
   void                handle_crc_indication(const ul_crc_indication& crc) override {}
@@ -77,9 +81,9 @@ struct add_reconf_delete_ue_test_task {
   std::thread::id                        tid;
   mac_dl_processor&                      mac_dl;
   unique_function<void(test_task_event)> event_test;
-  mac_ue_create_request_message          create_msg{};
-  mac_ue_reconfiguration_request_message reconf_msg{};
-  mac_ue_delete_request_message          delete_msg{};
+  mac_ue_create_request                  create_msg{};
+  mac_ue_reconfiguration_request         reconf_msg{};
+  mac_ue_delete_request                  delete_msg{};
 
   add_reconf_delete_ue_test_task(mac_dl_processor& mac_dl_, unique_function<void(test_task_event)> event_callback_) :
     mac_dl(mac_dl_), event_test(std::move(event_callback_))
@@ -132,22 +136,31 @@ void test_dl_ue_procedure_execution_contexts()
 {
   test_delimit_logger delimiter{"Test UE procedures execution contexts"};
 
-  auto&                        logger = srslog::fetch_basic_logger("TEST");
-  manual_task_worker           ctrl_worker{128};
-  manual_task_worker           dl_worker{128};
-  std::vector<task_executor*>  dl_execs = {&dl_worker};
-  dummy_ue_executor_mapper     ul_exec_mapper{ctrl_worker};
-  dummy_dl_executor_mapper     dl_exec_mapper{dl_execs[0]};
-  dummy_mac_event_indicator    du_mng_notifier;
-  dummy_mac_result_notifier    phy_notifier;
-  test_helpers::dummy_mac_pcap pcap;
-  mac_common_config_t          cfg{du_mng_notifier, ul_exec_mapper, dl_exec_mapper, ctrl_worker, phy_notifier, pcap};
-  du_rnti_table                rnti_table;
+  auto&                               logger = srslog::fetch_basic_logger("TEST");
+  manual_task_worker                  ctrl_worker{128};
+  manual_task_worker                  dl_worker{128};
+  std::vector<task_executor*>         dl_execs = {&dl_worker};
+  dummy_ue_executor_mapper            ul_exec_mapper{ctrl_worker};
+  dummy_dl_executor_mapper            dl_exec_mapper{dl_execs[0]};
+  dummy_mac_event_indicator           du_mng_notifier;
+  dummy_mac_result_notifier           phy_notifier;
+  dummy_scheduler_ue_metrics_notifier metrics_notif;
+  rlf_detector                        rlf_handler{10000, 10000};
+  test_helpers::dummy_mac_pcap        pcap;
+  mac_dl_config mac_dl_cfg{ul_exec_mapper, dl_exec_mapper, ctrl_worker, phy_notifier, pcap, rlf_handler};
+  mac_config    maccfg{du_mng_notifier,
+                    ul_exec_mapper,
+                    dl_exec_mapper,
+                    ctrl_worker,
+                    phy_notifier,
+                    mac_expert_config{10000, 10000},
+                    pcap,
+                    scheduler_expert_config{},
+                    metrics_notif};
+  rnti_manager  rnti_mng;
 
-  srs_sched_config_adapter sched_cfg_adapter{cfg};
-  dummy_sched              sched_obj{sched_cfg_adapter.get_sched_notifier()};
-  sched_cfg_adapter.set_sched(sched_obj);
-  mac_dl_processor mac_dl(cfg, sched_obj, rnti_table);
+  srsran_scheduler_adapter sched_cfg_adapter{maccfg, rnti_mng, rlf_handler};
+  mac_dl_processor         mac_dl(mac_dl_cfg, sched_cfg_adapter, rnti_mng);
 
   // Action: Add Cell.
   mac_cell_creation_request mac_cell_cfg = test_helpers::make_default_mac_cell_config();
@@ -180,21 +193,30 @@ void test_dl_ue_procedure_tsan()
 {
   test_delimit_logger delimiter{"Test UE procedures TSAN"};
 
-  blocking_task_worker         ctrl_worker{128};
-  task_worker                  dl_workers[] = {{"DL#1", 128}, {"DL#2", 128}};
-  task_worker_executor         dl_execs[]   = {{dl_workers[0]}, {dl_workers[1]}};
-  dummy_ue_executor_mapper     ul_exec_mapper{ctrl_worker};
-  dummy_dl_executor_mapper     dl_exec_mapper{&dl_execs[0], &dl_execs[1]};
-  dummy_mac_event_indicator    du_mng_notifier;
-  dummy_mac_result_notifier    phy_notifier;
-  test_helpers::dummy_mac_pcap pcap;
-  mac_common_config_t          cfg{du_mng_notifier, ul_exec_mapper, dl_exec_mapper, ctrl_worker, phy_notifier, pcap};
-  du_rnti_table                rnti_table;
+  blocking_task_worker                ctrl_worker{128};
+  task_worker                         dl_workers[] = {{"DL#1", 128}, {"DL#2", 128}};
+  task_worker_executor                dl_execs[]   = {{dl_workers[0]}, {dl_workers[1]}};
+  dummy_ue_executor_mapper            ul_exec_mapper{ctrl_worker};
+  dummy_dl_executor_mapper            dl_exec_mapper{&dl_execs[0], &dl_execs[1]};
+  dummy_mac_event_indicator           du_mng_notifier;
+  dummy_mac_result_notifier           phy_notifier;
+  rlf_detector                        rlf_handler{10000, 10000};
+  test_helpers::dummy_mac_pcap        pcap;
+  dummy_scheduler_ue_metrics_notifier metrics_notif;
+  mac_dl_config mac_dl_cfg{ul_exec_mapper, dl_exec_mapper, ctrl_worker, phy_notifier, pcap, rlf_handler};
+  mac_config    maccfg{du_mng_notifier,
+                    ul_exec_mapper,
+                    dl_exec_mapper,
+                    ctrl_worker,
+                    phy_notifier,
+                    mac_expert_config{10000, 10000},
+                    pcap,
+                    scheduler_expert_config{},
+                    metrics_notif};
+  rnti_manager  rnti_mng;
 
-  srs_sched_config_adapter sched_cfg_adapter{cfg};
-  dummy_sched              sched_obj{sched_cfg_adapter.get_sched_notifier()};
-  sched_cfg_adapter.set_sched(sched_obj);
-  mac_dl_processor mac_dl(cfg, sched_obj, rnti_table);
+  srsran_scheduler_adapter sched_cfg_adapter{maccfg, rnti_mng, rlf_handler};
+  mac_dl_processor         mac_dl(mac_dl_cfg, sched_cfg_adapter, rnti_mng);
 
   // Action: Add Cells.
   mac_cell_creation_request cell_cfg1 = test_helpers::make_default_mac_cell_config();

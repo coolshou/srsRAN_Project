@@ -37,11 +37,8 @@ private:
   srslog::basic_logger& logger;
 
 public:
-  /// Creates an adapter with the desired logging level.
-  phy_error_adapter(std::string log_level) : logger(srslog::fetch_basic_logger("Low-PHY"))
-  {
-    logger.set_level(srslog::str_to_basic_level(log_level));
-  }
+  /// Creates an adapter with a given logger.
+  explicit phy_error_adapter(srslog::basic_logger& logger_) : logger(logger_) {}
 
   // See interface for documentation.
   void on_late_resource_grid(const resource_grid_context& context) override
@@ -49,14 +46,6 @@ public:
     logger.set_context(context.slot.sfn(), context.slot.slot_index());
     logger.warning(
         "Real-time failure in low-phy: Downlink data late for sector {} and slot {}.", context.sector, context.slot);
-  }
-
-  void on_overflow_resource_grid(const resource_grid_context& context) override
-  {
-    logger.set_context(context.slot.sfn(), context.slot.slot_index());
-    logger.info("Real-time failure in low-phy: Downlink data overflow for sector {} and slot {}.",
-                context.sector,
-                context.slot);
   }
 
   // See interface for documentation.
@@ -85,14 +74,6 @@ public:
     logger.set_context(context.slot.sfn(), context.slot.slot_index());
     logger.warning(
         "Real-time failure in low-phy: PUxCH request late for sector {}, slot {}.", context.sector, context.slot);
-  }
-
-  // See interface for documentation.
-  void on_puxch_request_overflow(const resource_grid_context& context) override
-  {
-    logger.set_context(context.slot.sfn(), context.slot.slot_index());
-    logger.warning(
-        "Real-time failure in low-phy: PUxCH request overflow for sector {}, slot {}.", context.sector, context.slot);
   }
 };
 

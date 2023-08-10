@@ -23,6 +23,7 @@
 #pragma once
 
 #include "ue/rrc_ue_impl.h"
+#include "srsran/ran/nr_cgi.h"
 #include "srsran/rrc/rrc_config.h"
 #include "srsran/rrc/rrc_du.h"
 #include <unordered_map>
@@ -35,14 +36,19 @@ namespace srs_cu_cp {
 class rrc_du_impl : public rrc_du_interface
 {
 public:
-  rrc_du_impl(const rrc_cfg_t&              cfg_,
-              rrc_ue_du_processor_notifier& rrc_ue_du_proc_notif_,
-              rrc_ue_nas_notifier&          nas_notif_,
-              rrc_ue_control_notifier&      ngap_ctrl_notif_);
+  rrc_du_impl(const rrc_cfg_t&                 cfg_,
+              rrc_ue_du_processor_notifier&    rrc_ue_du_proc_notif_,
+              rrc_ue_nas_notifier&             nas_notif_,
+              rrc_ue_control_notifier&         ngap_ctrl_notif_,
+              rrc_ue_reestablishment_notifier& cu_cp_notif_,
+              cell_meas_manager&               cell_meas_mng_);
   ~rrc_du_impl() = default;
 
-  // rrc_du_ue_manager
-  rrc_ue_interface* add_ue(rrc_ue_creation_message msg) override;
+  // rrc_du_cell_manager
+  bool handle_served_cell_list(const std::vector<cu_cp_du_served_cells_item>& served_cell_list) override;
+
+  // rrc_du_ue_repository
+  rrc_ue_interface* add_ue(up_resource_manager& up_resource_mng, rrc_ue_creation_message msg) override;
   void              remove_ue(ue_index_t ue_index) override;
   void              release_ues() override;
   void              handle_amf_connection() override;
@@ -57,6 +63,7 @@ public:
     return ue_db.at(ue_index).get();
   }
 
+  rrc_du_cell_manager&  get_rrc_du_cell_manager() override { return *this; }
   rrc_du_ue_manager&    get_rrc_du_ue_manager() override { return *this; }
   rrc_du_ue_repository& get_rrc_du_ue_repository() override { return *this; }
 
@@ -66,13 +73,17 @@ private:
 
   bool reject_users = true; ///< Reject all connection attempts, i.e. when AMF is not connected.
 
-  rrc_ue_du_processor_notifier& rrc_ue_du_proc_notifier; // notifier to the DU processor
-  rrc_ue_nas_notifier&          nas_notifier;            // PDU notifier to the NGAP
-  rrc_ue_control_notifier&      ngap_ctrl_notifier;      // Control notifier to the NGAP
-  srslog::basic_logger&         logger;
+  rrc_ue_du_processor_notifier&    rrc_ue_du_proc_notifier; // notifier to the DU processor
+  rrc_ue_nas_notifier&             nas_notifier;            // PDU notifier to the NGAP
+  rrc_ue_control_notifier&         ngap_ctrl_notifier;      // Control notifier to the NGAP
+  rrc_ue_reestablishment_notifier& cu_cp_notifier;          // notifier to the CU-CP
+  cell_meas_manager&               cell_meas_mng;           // cell measurement manager
+  srslog::basic_logger&            logger;
 
   // RRC-internal user database indexed by ue_index
   std::unordered_map<ue_index_t, std::unique_ptr<rrc_ue_impl>> ue_db;
+  // Cell database to store cell information from the DU
+  std::map<nr_cell_id_t, rrc_cell_info> cell_info_db;
 };
 
 } // namespace srs_cu_cp

@@ -22,11 +22,13 @@
 
 #pragma once
 
-#include "prb_grant.h"
 #include "sched_consts.h"
 #include "scheduler_dci.h"
+#include "vrb_alloc.h"
 #include "srsran/adt/static_vector.h"
 #include "srsran/mac/lcid_dl_sch.h"
+#include "srsran/ran/csi_report/csi_report_configuration.h"
+#include "srsran/ran/csi_report/csi_report_data.h"
 #include "srsran/ran/csi_rs/csi_rs_types.h"
 #include "srsran/ran/du_types.h"
 #include "srsran/ran/lcid.h"
@@ -35,6 +37,7 @@
 #include "srsran/ran/pci.h"
 #include "srsran/ran/pdsch/pdsch_mcs.h"
 #include "srsran/ran/prach/prach_format_type.h"
+#include "srsran/ran/precoding/precoding_constants.h"
 #include "srsran/ran/pucch/pucch_mapping.h"
 #include "srsran/ran/pusch/pusch_mcs.h"
 #include "srsran/ran/rnti.h"
@@ -50,8 +53,19 @@
 
 namespace srsran {
 
-struct beamforming_info {
-  // TODO
+/// The precoding information associated with PDCCH PDUs.
+struct pdcch_precoding_info {};
+
+/// The precoding information associated with PDSCH PDUs.
+struct pdsch_precoding_info {
+  /// Precoding Resource Block Group (PRG) information.
+  using prg_info = csi_report_pmi;
+
+  /// \brief Size in RBs of a precoding resource block group (PRG) to which same precoding and digital beamforming gets
+  /// applied. Values: {1,...,275}.
+  unsigned nof_rbs_per_prg;
+  /// PRG list.
+  static_vector<prg_info, precoding_constants::MAX_NOF_PRG> prg_infos;
 };
 
 struct tx_power_pdcch_information {
@@ -96,8 +110,8 @@ struct dci_context_information {
   cce_position cces;
   /// Starting symbol of the Search Space.
   unsigned starting_symbol;
-  /// Precoding and beamforming info used for this DCI.
-  beamforming_info bf;
+  /// Precoding info used for this DCI. This field is empty in case of 1 antenna port.
+  optional<pdcch_precoding_info> precoding_info;
   /// Transmission power information used for this DCI.
   tx_power_pdcch_information tx_pwr;
   /// Parameter \f$N_{ID}\f$ used for PDCCH DMRS scrambling as per TS38.211, 7.4.1.3.1. Values: {0, ..., 65535}.
@@ -153,18 +167,22 @@ struct pdsch_information {
   rnti_t                                                 rnti;
   const bwp_configuration*                               bwp_cfg;
   const coreset_configuration*                           coreset_cfg;
-  prb_grant                                              prbs;
+  vrb_alloc                                              rbs;
   ofdm_symbol_range                                      symbols;
   static_vector<pdsch_codeword, MAX_CODEWORDS_PER_PDSCH> codewords;
   dmrs_information                                       dmrs;
   /// Parameter n_ID, used for scrambling, as per TS 38.211, Section 7.3.1.1.
   unsigned n_id;
+  /// Number of layers as per TS 38.211, Section 7.3.1.3. Values: {1,...,8}.
+  unsigned nof_layers;
   /// Whether the PDSCH is interleaved via VRB-to-PRB mapping.
   bool                  is_interleaved;
   search_space_set_type ss_set_type;
   dci_dl_format         dci_fmt;
   /// HARQ process number as per TS38.212 Section 7.3.1.1. Values: {0,...,15}.
   harq_id_t harq_id;
+  /// Precoding information for the PDSCH. This field is empty in case of 1-antenna port setups.
+  optional<pdsch_precoding_info> precoding;
 };
 
 struct dl_msg_lc_info {
@@ -193,13 +211,15 @@ struct dl_msg_alloc {
     unsigned k1;
     /// Chosen search space id
     search_space_id ss_id;
+    /// Number of times the HARQ process has been retransmitted.
+    unsigned nof_retxs;
   } context;
 };
 
 struct pusch_information {
   rnti_t                   rnti;
   const bwp_configuration* bwp_cfg;
-  prb_grant                prbs;
+  vrb_alloc                rbs;
   ofdm_symbol_range        symbols;
   /// \brief For resource allocation type 1, it indicates if intra-slot frequency hopping is enabled, as per TS38.212
   /// Section 7.3.1.1.
@@ -339,7 +359,7 @@ struct csi_rs_info {
   uint8_t row;
   /// \brief Bitmap defining the frequencyDomainAllocation as per 3GPP TS 38.211, sec 7.4.1.5.3 and 3GPP TS 38.331
   /// "CSIResource Mapping".
-  bounded_bitset<12, true> freq_domain;
+  bounded_bitset<12, false> freq_domain;
   /// \brief The time domain location l0 and firstOFDMSymbolInTimeDomain as per 3GPP TS 38.211, sec 7.4.1.5.3.
   /// Values: {0,...,13}.
   uint8_t symbol0;
@@ -349,11 +369,16 @@ struct csi_rs_info {
   csi_rs_freq_density_type freq_density;
   /// \brief ScramblingID of the CSI-RS as per 3GPP TS 38.214, sec 5.2.2.3.1. Values: {0,...,1023}.
   uint16_t scrambling_id;
-  uint8_t  power_ctrl_offset_profile_nr;
-  uint8_t  power_ctrl_offset_ss_profile_nr;
+  /// Ratio of PDSCH EPRE to NZP CSI-RS EPRE as per 3GPP TS 38.214, clause 5.2.2.3.1. Values: {-8,...,15}.
+  int8_t power_ctrl_offset_profile_nr;
+  /// Ratio of NZP CSI-RS EPRE to SSB/PBCH block EPRE. Values: {-3,0,3,6}.
+  int8_t power_ctrl_offset_ss_profile_nr;
 };
 
 struct dl_sched_result {
+  /// Number of DL symbols active for this slot.
+  unsigned nof_dl_symbols;
+
   /// Allocated DL PDCCHs. Includes both SIB, RAR and Data PDCCHs.
   static_vector<pdcch_dl_information, MAX_DL_PDCCH_PDUS_PER_SLOT> dl_pdcchs;
 
@@ -385,6 +410,12 @@ struct ul_sched_info {
   struct decision_context {
     du_ue_index_t   ue_index;
     search_space_id ss_id;
+    /// Chosen k2 delay between UL PDCCH and PUSCH.
+    unsigned k2;
+    /// Number of times the HARQ process has been retransmitted.
+    unsigned nof_retxs;
+    /// Delay between PDSCH message with RAR and its corresponding PUSCH.
+    optional<unsigned> msg3_delay;
   } context;
 };
 
@@ -425,9 +456,13 @@ struct pucch_info {
     pucch_format_3 format_3;
     pucch_format_4 format_4;
   };
+  /// In case the PUCCH will contain CSI bits, this struct contains information how those bits are to be decoded.
+  optional<csi_report_configuration> csi_rep_cfg;
 };
 
 struct ul_sched_result {
+  /// Number of UL symbols active for this slot.
+  unsigned nof_ul_symbols;
   /// PUSCH grants allocated in the current slot.
   static_vector<ul_sched_info, MAX_PUSCH_PDUS_PER_SLOT> puschs;
   /// PRACH occasions within the given slot.
@@ -438,6 +473,7 @@ struct ul_sched_result {
 
 /// Scheduler decision made for DL and UL in a given slot.
 struct sched_result {
+  bool            success;
   dl_sched_result dl;
   ul_sched_result ul;
 };
@@ -446,7 +482,7 @@ class scheduler_slot_handler
 {
 public:
   virtual ~scheduler_slot_handler()                                                         = default;
-  virtual const sched_result* slot_indication(slot_point sl_tx, du_cell_index_t cell_index) = 0;
+  virtual const sched_result& slot_indication(slot_point sl_tx, du_cell_index_t cell_index) = 0;
 };
 
 } // namespace srsran

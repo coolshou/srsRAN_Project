@@ -33,9 +33,10 @@ project(srsran)
 
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake/modules")
+include(version) # sets version information
 
 if(NOT CMAKE_BUILD_TYPE)
    set(CMAKE_BUILD_TYPE Release)
@@ -54,21 +55,39 @@ configure_file(
 ########################################################################
 
 option(STOP_ON_WARNING       "Interrupt application on warning"         OFF)
+option(ENABLE_WERROR         "Stop compilation on errors"               ON)
 option(ENABLE_TSAN           "Enable clang thread sanitizer"            OFF)
 option(ENABLE_ASAN           "Enable clang address sanitizer"           OFF)
 option(ENABLE_GCOV           "Enable code coverage"                     OFF)
 option(ENABLE_UHD            "Enable UHD"                               ON)
 option(ENABLE_ZEROMQ         "Enable ZeroMQ"                            OFF)
 option(ENABLE_FFTW           "Enable FFTW"                              ON)
+option(ENABLE_DPDK           "Enable DPDK"                              OFF)
 option(ENABLE_EXPORT         "Enable PIC and export libraries"          OFF)
 option(ENABLE_TRX_DRIVER     "Enable Amarisoft TRX driver library"      OFF)
 option(AUTO_DETECT_ISA       "Enable automatic ISA detection"           ON)
 option(BUILD_TESTS           "Compile tests"                            ON)
 option(ENABLE_GPROF          "Enable gprof"                             OFF)
 option(USE_PHY_TESTVECTORS   "Enable testvector PHY tests"              OFF)
+
 # Set assertion level options and default value.
 set(ASSERT_LEVEL "AUTO" CACHE STRING "Assertion paranoia level")
 set_property(CACHE ASSERT_LEVEL PROPERTY STRINGS AUTO MINIMAL NORMAL PARANOID)
+
+# Set maximum time to wait for a clean exit.
+set(EXIT_TIMEOUT "AUTO" CACHE STRING "Timer to wait for a clean exit")
+
+if (ENABLE_WERROR)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror")
+    # Disable gcc's maybe uninitialized analysis as it raises false positives
+    if (CMAKE_COMPILER_IS_GNUCXX)
+        include(CheckCXXCompilerFlag)
+        check_cxx_compiler_flag("-Wmaybe-uninitialized" HAS_MAYBE_UNINITIALIZED)
+        if (HAS_MAYBE_UNINITIALIZED)
+            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-error=maybe-uninitialized")
+        endif()
+    endif()
+endif ()
 
 if (ENABLE_ASAN AND ENABLE_TSAN)
     message(FATAL_ERROR "ASAN and TSAN cannot be enabled at the same time.")
@@ -120,11 +139,12 @@ if (NOT ${CMAKE_BUILD_TYPE} STREQUAL "Debug")
 endif (NOT ${CMAKE_BUILD_TYPE} STREQUAL "Debug")
 
 if (ENABLE_ASAN)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
     # Note: When using ASAN, we need to ensure the use of RPATH instead of RUNPATH via "-Wl,--disable-new-dtags"
     # While RPATH is default, some systems (e.g. Ubuntu 18.04 and 20.04) use RUNPATH by default, which is non-transitive.
     # Since ASAN intercepts dlopen(), by which it replaces the dynamic string token "$ORIGIN" to its own location,
     # the RF plugins won't be found when using ASAN + RUNPATH in the top-level executable.
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fno-omit-frame-pointer -Wl,--disable-new-dtags")
+    ADD_CXX_COMPILER_FLAG_IF_AVAILABLE("-Wl,--disable-new-dtags" HAVE_RPATH_FORCE)
 endif (ENABLE_ASAN)
 
 if (ENABLE_TSAN)
@@ -146,6 +166,11 @@ if(NOT ASSERT_LEVEL STREQUAL "MINIMAL")
     else()
         message(STATUS "Assertion level set to NORMAL")
     endif()
+endif()
+
+if(NOT EXIT_TIMEOUT STREQUAL "AUTO")
+    message(STATUS "Manually set exit timeout. timeout=${EXIT_TIMEOUT}s")
+    add_compile_definitions(TERM_TIMEOUT_S=${EXIT_TIMEOUT})
 endif()
 
 ########################################################################
@@ -183,6 +208,11 @@ endif (ENABLE_FFTW)
 # Google Tests
 if (BUILD_TESTS)
     find_package(GTest REQUIRED)
+
+    # Alias gtest_discover_tests increase discovery the timeout.
+    function(gtest_discover_tests)
+        _gtest_discover_tests(${ARGV} DISCOVERY_TIMEOUT 15)
+    endfunction()
 endif (BUILD_TESTS)
 
 # Threads
@@ -219,6 +249,18 @@ else (ENABLE_ZEROMQ)
     unset(ZEROMQ_FOUND CACHE)
 endif (ENABLE_ZEROMQ)
 
+# DPDK
+if (ENABLE_DPDK)
+    set(DPDK_MIN_VERSION "22.11")
+    find_package(DPDK ${DPDK_MIN_VERSION})
+    if (DPDK_FOUND)
+        include_directories(${DPDK_INCLUDE_DIRS})
+        link_directories(${DPDK_LIBRARY_DIRS})
+    endif (DPDK_FOUND)
+else (ENABLE_DPDK)
+    unset(DPDK_FOUND CACHE)
+endif (ENABLE_DPDK)
+
 ########################################################################
 # Instruction Set Architecture setup
 ########################################################################
@@ -234,21 +276,28 @@ if (AUTO_DETECT_ISA)
 
     find_package(SSE)
 
-    ADD_CXX_COMPILER_FLAG_IF_AVAILABLE("-march=${GCC_ARCH}" HAVE_MARCH_${GCC_ARCH})
+    # Add default architecture if enabled and available.
+    ADD_CXX_COMPILER_FLAG_IF_AVAILABLE("-march=${GCC_ARCH}" HAVE_MARCH)
+
     if (HAVE_AVX2)
         add_definitions(-DHAVE_AVX2)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2")
     endif (HAVE_AVX2)
     if (HAVE_AVX)
         add_definitions(-DHAVE_AVX)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx")
     endif (HAVE_AVX)
     if (HAVE_SSE)
         add_definitions(-DHAVE_SSE)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -msse4.1")
     endif (HAVE_SSE)
     if (HAVE_FMA)
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mfma -DHAVE_FMA")
+        add_definitions(-DHAVE_FMA)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mfma")
     endif (HAVE_FMA)
     if (HAVE_AVX512)
         add_definitions(-DHAVE_AVX512)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx512f -mavx512cd -mavx512bw -mavx512dq")
     endif (HAVE_AVX512)
 else (AUTO_DETECT_ISA)
     unset(HAVE_SSE CACHE)
@@ -312,6 +361,7 @@ add_subdirectory(lib)
 add_subdirectory(utils)
 
 if (BUILD_TESTS)
+    add_subdirectory(tests/test_doubles)
     add_subdirectory(tests/unittests)
     add_subdirectory(tests/integrationtests)
     add_subdirectory(tests/benchmarks)
@@ -326,3 +376,5 @@ else(ENABLE_EXPORT)
   # Remove any previous export file (if it exists), since it will become outdated.
   file(REMOVE "${CMAKE_BINARY_DIR}/srsran.cmake")
 endif(ENABLE_EXPORT)
+
+message(STATUS "Building srsRAN version ${SRSRAN_VERSION_STRING}")

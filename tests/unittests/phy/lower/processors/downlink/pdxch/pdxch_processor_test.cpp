@@ -23,7 +23,7 @@
 #include "../../../../support/resource_grid_test_doubles.h"
 #include "../../../modulation/ofdm_modulator_test_doubles.h"
 #include "pdxch_processor_notifier_test_doubles.h"
-#include "srsran/gateways/baseband/baseband_gateway_buffer.h"
+#include "srsran/gateways/baseband/buffer/baseband_gateway_buffer_dynamic.h"
 #include "srsran/phy/lower/processors/downlink/downlink_processor_baseband.h"
 #include "srsran/phy/lower/processors/downlink/downlink_processor_factories.h"
 #include "srsran/phy/lower/processors/downlink/pdxch/pdxch_processor_baseband.h"
@@ -96,7 +96,7 @@ bool operator==(span<const cf_t> left, span<const cf_t> right)
   return std::equal(left.begin(), left.end(), right.begin(), right.end());
 }
 
-bool operator==(const baseband_gateway_buffer& left, const baseband_gateway_buffer& right)
+bool operator==(const baseband_gateway_buffer_reader& left, const baseband_gateway_buffer_reader& right)
 {
   if (left.get_nof_channels() != right.get_nof_channels()) {
     return false;
@@ -240,7 +240,7 @@ TEST_P(LowerPhyDownlinkProcessorFixture, FlowNoRequest)
 
           // Fill buffer.
           for (unsigned i_port = 0; i_port != nof_tx_ports; ++i_port) {
-            span<cf_t> port_buffer = buffer.get_channel_buffer(i_port);
+            span<cf_t> port_buffer = buffer[i_port];
             std::generate(
                 port_buffer.begin(), port_buffer.end(), []() { return cf_t(dist_sample(rgen), dist_sample(rgen)); });
           }
@@ -256,14 +256,14 @@ TEST_P(LowerPhyDownlinkProcessorFixture, FlowNoRequest)
           pdxch_context.symbol = i_symbol;
 
           // Process baseband.
-          pdxch_proc->get_baseband().process_symbol(buffer, pdxch_context);
+          pdxch_proc->get_baseband().process_symbol(buffer.get_writer(), pdxch_context);
 
           // Assert OFDM modulator call.
           auto& ofdm_mod_entries = ofdm_mod_spy->get_modulate_entries();
           ASSERT_EQ(ofdm_mod_entries.size(), nof_tx_ports);
           for (unsigned i_port = 0; i_port != nof_tx_ports; ++i_port) {
             auto& entry = ofdm_mod_entries[i_port];
-            ASSERT_EQ(span<const cf_t>(entry.output), buffer.get_channel_buffer(i_port));
+            ASSERT_EQ(span<const cf_t>(entry.output), buffer[i_port]);
             ASSERT_TRUE(entry.grid->is_empty(i_port));
             ASSERT_EQ(entry.port_index, i_port);
             ASSERT_EQ(entry.symbol_index, i_symbol_subframe);
@@ -303,7 +303,7 @@ TEST_P(LowerPhyDownlinkProcessorFixture, FlowFloodRequest)
         rg_context.sector = dist_sector_id(rgen);
 
         // Request resource grid modulation for the current slot.
-        resource_grid_reader_spy rg_spy;
+        resource_grid_reader_spy rg_spy(0, 0, 0);
         pdxch_proc->get_request_handler().handle_request(rg_spy, rg_context);
 
         for (unsigned i_symbol = 0; i_symbol != nof_symbols_per_slot; ++i_symbol, ++i_symbol_subframe) {
@@ -322,14 +322,14 @@ TEST_P(LowerPhyDownlinkProcessorFixture, FlowFloodRequest)
           pdxch_context.symbol = i_symbol;
 
           // Process baseband.
-          pdxch_proc->get_baseband().process_symbol(buffer, pdxch_context);
+          pdxch_proc->get_baseband().process_symbol(buffer.get_writer(), pdxch_context);
 
           // Assert OFDM modulator call.
           const auto& ofdm_mod_entries = ofdm_mod_spy->get_modulate_entries();
           ASSERT_EQ(ofdm_mod_entries.size(), nof_tx_ports);
           for (unsigned i_port = 0; i_port != nof_tx_ports; ++i_port) {
             const auto& ofdm_mod_entry = ofdm_mod_entries[i_port];
-            ASSERT_EQ(span<const cf_t>(ofdm_mod_entry.output), buffer.get_channel_buffer(i_port));
+            ASSERT_EQ(span<const cf_t>(ofdm_mod_entry.output), buffer[i_port]);
             ASSERT_EQ(static_cast<const void*>(ofdm_mod_entry.grid), static_cast<const void*>(&rg_spy));
             ASSERT_EQ(ofdm_mod_entry.port_index, i_port);
             ASSERT_EQ(ofdm_mod_entry.symbol_index, i_symbol_subframe);
@@ -367,9 +367,9 @@ TEST_P(LowerPhyDownlinkProcessorFixture, LateRequest)
   unsigned late_slot    = 2;
   unsigned next_slot    = 4;
 
-  resource_grid_spy initial_rg_spy;
-  resource_grid_spy late_rg_spy;
-  resource_grid_spy next_rg_spy;
+  resource_grid_reader_spy initial_rg_spy(0, 0, 0);
+  resource_grid_reader_spy late_rg_spy(0, 0, 0);
+  resource_grid_reader_spy next_rg_spy(0, 0, 0);
 
   // Initial request.
   resource_grid_context initial_rg_context;
@@ -399,7 +399,7 @@ TEST_P(LowerPhyDownlinkProcessorFixture, LateRequest)
 
         // Fill buffer.
         for (unsigned i_port = 0; i_port != nof_tx_ports; ++i_port) {
-          span<cf_t> port_buffer = buffer.get_channel_buffer(i_port);
+          span<cf_t> port_buffer = buffer[i_port];
           std::generate(
               port_buffer.begin(), port_buffer.end(), []() { return cf_t(dist_sample(rgen), dist_sample(rgen)); });
         }
@@ -415,15 +415,15 @@ TEST_P(LowerPhyDownlinkProcessorFixture, LateRequest)
         pdxch_context.symbol = i_symbol;
 
         // Process baseband.
-        pdxch_proc->get_baseband().process_symbol(buffer, pdxch_context);
+        pdxch_proc->get_baseband().process_symbol(buffer.get_writer(), pdxch_context);
 
         // Assert OFDM modulator call only for initial and next slot.
-        const auto&        ofdm_mod_entries = ofdm_mod_spy->get_modulate_entries();
-        resource_grid_spy* rg_spy           = (i_slot == initial_slot) ? &initial_rg_spy : &next_rg_spy;
+        const auto&               ofdm_mod_entries = ofdm_mod_spy->get_modulate_entries();
+        resource_grid_reader_spy* rg_spy           = (i_slot == initial_slot) ? &initial_rg_spy : &next_rg_spy;
         ASSERT_EQ(ofdm_mod_entries.size(), nof_tx_ports);
         for (unsigned i_port = 0; i_port != nof_tx_ports; ++i_port) {
           const auto& ofdm_mod_entry = ofdm_mod_entries[i_port];
-          ASSERT_EQ(span<const cf_t>(ofdm_mod_entry.output), buffer.get_channel_buffer(i_port));
+          ASSERT_EQ(span<const cf_t>(ofdm_mod_entry.output), buffer[i_port]);
           if ((i_slot == initial_slot) || (i_slot == next_slot)) {
             ASSERT_EQ(static_cast<const void*>(ofdm_mod_entry.grid), static_cast<const void*>(rg_spy));
           } else {
@@ -466,7 +466,7 @@ TEST_P(LowerPhyDownlinkProcessorFixture, OverflowRequest)
   pdxch_processor_notifier_spy pdxch_proc_notifier_spy;
   pdxch_proc->connect(pdxch_proc_notifier_spy);
 
-  resource_grid_reader_spy rg_spy;
+  resource_grid_reader_spy rg_spy(0, 0, 0);
 
   // Generate requests.
   for (unsigned i_request = 0; i_request != request_queue_size + 1; ++i_request) {
@@ -491,7 +491,7 @@ TEST_P(LowerPhyDownlinkProcessorFixture, OverflowRequest)
 
       // Fill buffer.
       for (unsigned i_port = 0; i_port != nof_tx_ports; ++i_port) {
-        span<cf_t> port_buffer = buffer.get_channel_buffer(i_port);
+        span<cf_t> port_buffer = buffer[i_port];
         std::generate(
             port_buffer.begin(), port_buffer.end(), []() { return cf_t(dist_sample(rgen), dist_sample(rgen)); });
       }
@@ -507,7 +507,7 @@ TEST_P(LowerPhyDownlinkProcessorFixture, OverflowRequest)
       pdxch_context.symbol = i_symbol;
 
       // Process baseband.
-      pdxch_proc->get_baseband().process_symbol(buffer, pdxch_context);
+      pdxch_proc->get_baseband().process_symbol(buffer.get_writer(), pdxch_context);
 
       // Assert OFDM modulator call only for the request enqueued.
       const auto& ofdm_mod_entries = ofdm_mod_spy->get_modulate_entries();
@@ -515,7 +515,7 @@ TEST_P(LowerPhyDownlinkProcessorFixture, OverflowRequest)
         ASSERT_EQ(ofdm_mod_entries.size(), nof_tx_ports);
         for (unsigned i_port = 0; i_port != nof_tx_ports; ++i_port) {
           const auto& ofdm_mod_entry = ofdm_mod_entries[i_port];
-          ASSERT_EQ(span<const cf_t>(ofdm_mod_entry.output), buffer.get_channel_buffer(i_port));
+          ASSERT_EQ(span<const cf_t>(ofdm_mod_entry.output), buffer[i_port]);
           ASSERT_EQ(static_cast<const void*>(ofdm_mod_entry.grid), static_cast<const void*>(&rg_spy));
           ASSERT_EQ(ofdm_mod_entry.port_index, i_port);
           ASSERT_EQ(ofdm_mod_entry.symbol_index, i_symbol_subframe);
@@ -535,6 +535,6 @@ INSTANTIATE_TEST_SUITE_P(LowerPhyDownlinkProcessor,
                          LowerPhyDownlinkProcessorFixture,
                          ::testing::Combine(::testing::Values(1, 2, 4),
                                             ::testing::Values(sampling_rate::from_MHz(3.84),
-                                                              sampling_rate::from_MHz(61.44)),
+                                                              sampling_rate::from_MHz(7.68)),
                                             ::testing::Values(subcarrier_spacing::kHz15, subcarrier_spacing::kHz30),
                                             ::testing::Values(cyclic_prefix::NORMAL, cyclic_prefix::EXTENDED)));

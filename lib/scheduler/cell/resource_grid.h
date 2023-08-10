@@ -23,7 +23,7 @@
 #pragma once
 
 #include "../support/bwp_helpers.h"
-#include "../support/rb_find_algorithm.h"
+#include "../support/rb_helper.h"
 #include "cell_configuration.h"
 #include "resource_grid_util.h"
 #include "srsran/adt/circular_array.h"
@@ -45,9 +45,7 @@ struct bwp_sch_grant_info {
   bwp_sch_grant_info(const bwp_configuration& bwp_, ofdm_symbol_range symbols_, prb_interval prbs_) :
     bwp_cfg(&bwp_), symbols(symbols_), prbs(prbs_)
   {
-    srsran_sanity_check(
-        symbols.stop() <= (bwp_cfg->cp_extended ? NOF_OFDM_SYM_PER_SLOT_EXTENDED_CP : NOF_OFDM_SYM_PER_SLOT_NORMAL_CP),
-        "OFDM symbols do not fit slot");
+    srsran_sanity_check(symbols.stop() <= get_nsymb_per_slot(bwp_cfg->cp), "OFDM symbols do not fit slot");
     srsran_sanity_check(prbs.stop() <= bwp_cfg->crbs.length(), "PRBs={} do not fit BWP={}", prbs, bwp_cfg->crbs);
   }
 };
@@ -229,10 +227,6 @@ struct cell_slot_resource_allocator {
 
   /// Sets new slot.
   void slot_indication(slot_point sl);
-
-private:
-  /// Clears all allocations.
-  void clear();
 };
 
 /// Circular Ring of cell_slot_resource_grid objects. This class manages the automatic resetting of

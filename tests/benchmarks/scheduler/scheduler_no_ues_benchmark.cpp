@@ -22,6 +22,7 @@
 
 #include "lib/scheduler/cell/cell_configuration.h"
 #include "tests/unittests/scheduler/test_utils/config_generators.h"
+#include "srsran/du/du_cell_config_helpers.h"
 #include "srsran/scheduler/scheduler_factory.h"
 #include "srsran/support/benchmark_utils.h"
 #include <getopt.h>
@@ -31,7 +32,7 @@ using namespace srsran;
 class sched_cfg_dummy_notifier : public sched_configuration_notifier
 {
 public:
-  void on_ue_config_complete(du_ue_index_t ue_index) override {}
+  void on_ue_config_complete(du_ue_index_t ue_index, bool ue_creation_result) override {}
   void on_ue_delete_response(du_ue_index_t ue_index) override {}
 };
 
@@ -116,7 +117,7 @@ void benchmark_rach_scheduling()
       // Avoid slots with SIB1, otherwise there might not be space in PDCCH.
       sch->handle_rach_indication(rach_ind);
     }
-    const sched_result* res = sch->slot_indication(sl_tx, to_du_cell_index(0));
+    const sched_result* res = &sch->slot_indication(sl_tx, to_du_cell_index(0));
 
     // ack msg3s.
     if (not res->ul.puschs.empty()) {

@@ -50,7 +50,7 @@ TEST_P(pdcp_rx_test, sn_unpack)
     byte_buffer test_pdu;
     get_test_pdu(count, test_pdu);
     pdcp_data_pdu_header hdr;
-    ASSERT_TRUE(pdcp_rx->read_data_pdu_header(hdr, byte_buffer_slice_chain{std::move(test_pdu)}));
+    ASSERT_TRUE(pdcp_rx->read_data_pdu_header(hdr, byte_buffer_chain{std::move(test_pdu)}));
     ASSERT_EQ(hdr.sn, SN(count));
   };
 
@@ -84,9 +84,9 @@ TEST_P(pdcp_rx_test, rx_in_order)
     get_test_pdu(count + 1, test_pdu2);
     pdcp_rx_state init_state = {.rx_next = count, .rx_deliv = count, .rx_reord = 0};
     pdcp_rx->set_state(init_state);
-    pdcp_rx->handle_pdu(byte_buffer_slice_chain{std::move(test_pdu1)});
+    pdcp_rx->handle_pdu(byte_buffer_chain{std::move(test_pdu1)});
     ASSERT_EQ(1, test_frame->sdu_queue.size());
-    pdcp_rx->handle_pdu(byte_buffer_slice_chain{std::move(test_pdu2)});
+    pdcp_rx->handle_pdu(byte_buffer_chain{std::move(test_pdu2)});
     ASSERT_EQ(2, test_frame->sdu_queue.size());
     while (not test_frame->sdu_queue.empty()) {
       ASSERT_EQ(test_frame->sdu_queue.front(), sdu1);
@@ -114,7 +114,7 @@ TEST_P(pdcp_rx_test, rx_out_of_order)
   auto test_rx_in_order = [this](uint32_t count) {
     srsran::test_delimit_logger delimiter(
         "RX out-of-order test, no t-Reordering. SN_SIZE={} COUNT=[{}, {}]", sn_size, count + 1, count);
-    init(GetParam(), pdcp_t_reordering::ms10);
+    init(GetParam());
 
     pdcp_rx->enable_security(sec_cfg);
 
@@ -124,9 +124,9 @@ TEST_P(pdcp_rx_test, rx_out_of_order)
     get_test_pdu(count + 1, test_pdu2);
     pdcp_rx_state init_state = {.rx_next = count, .rx_deliv = count, .rx_reord = 0};
     pdcp_rx->set_state(init_state);
-    pdcp_rx->handle_pdu(byte_buffer_slice_chain{std::move(test_pdu2)});
+    pdcp_rx->handle_pdu(byte_buffer_chain{std::move(test_pdu2)});
     ASSERT_EQ(0, test_frame->sdu_queue.size());
-    pdcp_rx->handle_pdu(byte_buffer_slice_chain{std::move(test_pdu1)});
+    pdcp_rx->handle_pdu(byte_buffer_chain{std::move(test_pdu1)});
     ASSERT_EQ(2, test_frame->sdu_queue.size());
     while (not test_frame->sdu_queue.empty()) {
       ASSERT_EQ(test_frame->sdu_queue.front(), sdu1);
@@ -154,7 +154,7 @@ TEST_P(pdcp_rx_test, rx_reordering_timer)
   auto test_rx_t_reorder = [this](uint32_t count) {
     srsran::test_delimit_logger delimiter(
         "RX out-of-order test, t-Reordering expires. SN_SIZE={} COUNT=[{}, {}]", sn_size, count + 1, count);
-    init(GetParam(), pdcp_t_reordering::ms10);
+    init(GetParam());
 
     pdcp_rx->enable_security(sec_cfg);
 
@@ -164,11 +164,11 @@ TEST_P(pdcp_rx_test, rx_reordering_timer)
     get_test_pdu(count + 1, test_pdu2);
     pdcp_rx_state init_state = {.rx_next = count, .rx_deliv = count, .rx_reord = 0};
     pdcp_rx->set_state(init_state);
-    pdcp_rx->handle_pdu(byte_buffer_slice_chain{std::move(test_pdu2)});
+    pdcp_rx->handle_pdu(byte_buffer_chain{std::move(test_pdu2)});
     ASSERT_EQ(0, test_frame->sdu_queue.size());
     tick_all(10);
     ASSERT_EQ(1, test_frame->sdu_queue.size());
-    pdcp_rx->handle_pdu(byte_buffer_slice_chain{std::move(test_pdu1)});
+    pdcp_rx->handle_pdu(byte_buffer_chain{std::move(test_pdu1)});
     ASSERT_EQ(1, test_frame->sdu_queue.size());
     while (not test_frame->sdu_queue.empty()) {
       ASSERT_EQ(test_frame->sdu_queue.front(), sdu1);
@@ -195,7 +195,7 @@ TEST_P(pdcp_rx_test, rx_reordering_timer_0ms)
   auto test_rx_t_reorder = [this](uint32_t count) {
     srsran::test_delimit_logger delimiter(
         "RX out-of-order test, t-Reordering is set to 0. SN_SIZE={} COUNT=[{}, {}]", sn_size, count + 1, count);
-    init(GetParam(), pdcp_t_reordering::ms0);
+    init(GetParam(), pdcp_rb_type::drb, pdcp_rlc_mode::am, pdcp_t_reordering::ms0);
 
     pdcp_rx->enable_security(sec_cfg);
 
@@ -205,9 +205,9 @@ TEST_P(pdcp_rx_test, rx_reordering_timer_0ms)
     get_test_pdu(count + 1, test_pdu2);
     pdcp_rx_state init_state = {.rx_next = count, .rx_deliv = count, .rx_reord = 0};
     pdcp_rx->set_state(init_state);
-    pdcp_rx->handle_pdu(byte_buffer_slice_chain{std::move(test_pdu2)});
+    pdcp_rx->handle_pdu(byte_buffer_chain{std::move(test_pdu2)});
     ASSERT_EQ(1, test_frame->sdu_queue.size());
-    pdcp_rx->handle_pdu(byte_buffer_slice_chain{std::move(test_pdu1)});
+    pdcp_rx->handle_pdu(byte_buffer_chain{std::move(test_pdu1)});
     ASSERT_EQ(1, test_frame->sdu_queue.size());
     while (not test_frame->sdu_queue.empty()) {
       ASSERT_EQ(test_frame->sdu_queue.front(), sdu1);
@@ -235,7 +235,7 @@ TEST_P(pdcp_rx_test, rx_reordering_timer_infinite)
   auto test_rx_t_reorder = [this](uint32_t count) {
     srsran::test_delimit_logger delimiter(
         "RX out-of-order test, t-Reordering is set to infinity. SN_SIZE={} COUNT=[{}, {}]", sn_size, count + 1, count);
-    init(GetParam(), pdcp_t_reordering::infinity);
+    init(GetParam(), pdcp_rb_type::drb, pdcp_rlc_mode::am, pdcp_t_reordering::infinity);
 
     pdcp_rx->enable_security(sec_cfg);
 
@@ -245,10 +245,10 @@ TEST_P(pdcp_rx_test, rx_reordering_timer_infinite)
     get_test_pdu(count + 1, test_pdu2);
     pdcp_rx_state init_state = {.rx_next = count, .rx_deliv = count, .rx_reord = 0};
     pdcp_rx->set_state(init_state);
-    pdcp_rx->handle_pdu(byte_buffer_slice_chain{std::move(test_pdu2)});
+    pdcp_rx->handle_pdu(byte_buffer_chain{std::move(test_pdu2)});
     tick_all(6000); // max t-Reordering is 3000ms
     ASSERT_EQ(0, test_frame->sdu_queue.size());
-    pdcp_rx->handle_pdu(byte_buffer_slice_chain{std::move(test_pdu1)});
+    pdcp_rx->handle_pdu(byte_buffer_chain{std::move(test_pdu1)});
     ASSERT_EQ(2, test_frame->sdu_queue.size());
     while (not test_frame->sdu_queue.empty()) {
       ASSERT_EQ(test_frame->sdu_queue.front(), sdu1);
@@ -283,7 +283,7 @@ TEST_P(pdcp_rx_test, rx_integrity_fail)
     test_pdu1.append(0); // mess up MAC-I
     pdcp_rx_state init_state = {.rx_next = count, .rx_deliv = count, .rx_reord = 0};
     pdcp_rx->set_state(init_state);
-    pdcp_rx->handle_pdu(byte_buffer_slice_chain{std::move(test_pdu1)});
+    pdcp_rx->handle_pdu(byte_buffer_chain{std::move(test_pdu1)});
     ASSERT_EQ(0, test_frame->sdu_queue.size());
     // TODO: Re-enable once the RRC supports notifications from the PDCP
     // ASSERT_EQ(1, test_frame->integrity_fail_counter);
@@ -314,7 +314,7 @@ TEST_P(pdcp_rx_test, count_wraparound)
   pdcp_max_count max_count{rx_next_notify, rx_next_max};
 
   auto test_max_count = [this, n_sdus, max_count](uint32_t count) {
-    init(GetParam(), pdcp_t_reordering::ms10, max_count);
+    init(GetParam(), pdcp_rb_type::drb, pdcp_rlc_mode::am, pdcp_t_reordering::ms10, max_count);
     // Set state of PDCP entiy
     // Do not enable integrity or ciphering, to make it easier to generate test vectors.
     pdcp_rx_state init_state = {.rx_next = count, .rx_deliv = count, .rx_reord = 0};
@@ -324,7 +324,7 @@ TEST_P(pdcp_rx_test, count_wraparound)
     for (uint32_t i = 0; i < n_sdus; i++) {
       byte_buffer pdu;
       get_test_pdu(count + i, pdu);
-      pdcp_rx->handle_pdu(byte_buffer_slice_chain{std::move(pdu)});
+      pdcp_rx->handle_pdu(byte_buffer_chain{std::move(pdu)});
     }
 
     // check nof max_count reached and max protocol failures.

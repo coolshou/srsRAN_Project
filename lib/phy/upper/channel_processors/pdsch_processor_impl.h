@@ -25,6 +25,7 @@
 #include "srsran/phy/upper/channel_processors/pdsch_modulator.h"
 #include "srsran/phy/upper/channel_processors/pdsch_processor.h"
 #include "srsran/phy/upper/signal_processors/dmrs_pdsch_processor.h"
+#include "srsran/ran/pdsch/pdsch_constants.h"
 
 namespace srsran {
 
@@ -36,7 +37,7 @@ public:
   bool is_valid(const pdsch_processor::pdu_t& pdu) const override;
 };
 
-/// Describes a generic PDSCH processor.
+/// Implements a generic PDSCH processor.
 class pdsch_processor_impl : public pdsch_processor
 {
 public:
@@ -53,7 +54,7 @@ public:
   }
 
   // See interface for documentation.
-  void process(resource_grid_writer&                                        grid,
+  void process(resource_grid_mapper&                                        mapper,
                static_vector<span<const uint8_t>, MAX_NOF_TRANSPORT_BLOCKS> data,
                const pdu_t&                                                 pdu) override;
 
@@ -62,7 +63,7 @@ private:
 
   /// \brief Computes the number of RE used for mapping PDSCH data.
   ///
-  /// The number of RE excludes the elements described by \c pdu reserved and the RE used for DMRS.
+  /// The number of RE excludes the elements described by \c pdu as reserved and the RE used for DM-RS.
   ///
   /// \param[in] pdu Describes a PDSCH transmission.
   /// \return The number of resource elements.
@@ -80,21 +81,22 @@ private:
   encode(span<const uint8_t> data, unsigned codeword_id, unsigned nof_layers, unsigned Nre, const pdu_t& pdu);
 
   /// \brief Modulates a PDSCH transmission as per TS 38.211 section 7.3.1.
-  /// \param[out] grid          Provides the destination resource grid.
+  /// \param[out] mapper         Resource grid mapping interface.
   /// \param[in] temp_codewords Provides the encoded codewords.
   /// \param[in] pdu            Provides the PDSCH processor PDU.
-  void modulate(resource_grid_writer& grid, span<const bit_buffer> temp_codewords, const pdu_t& pdu);
+  void modulate(resource_grid_mapper& mapper, span<const bit_buffer> temp_codewords, const pdu_t& pdu);
 
   /// \brief Generates and maps DMRS for the PDSCH transmission as per TS 38.211 section 7.4.1.1.
-  /// \param[out] grid   Provides the destination resource grid.
+  /// \param[out] mapper  Resource grid mapping interface.
   /// \param[in] pdu     Provides the PDSCH processor PDU.
-  void put_dmrs(resource_grid_writer& grid, const pdu_t& pdu);
+  void put_dmrs(resource_grid_mapper& mapper, const pdu_t& pdu);
 
-  std::unique_ptr<pdsch_encoder>                                                              encoder;
-  std::unique_ptr<pdsch_modulator>                                                            modulator;
-  std::unique_ptr<dmrs_pdsch_processor>                                                       dmrs;
-  std::array<std::array<uint8_t, MAX_CODEWORD_SIZE>, MAX_NOF_TRANSPORT_BLOCKS>                temp_codewords;
-  std::array<static_bit_buffer<pdsch_modulator::MAX_CODEWORD_SIZE>, MAX_NOF_TRANSPORT_BLOCKS> temp_packed_codewords;
+  std::unique_ptr<pdsch_encoder>                                  encoder;
+  std::unique_ptr<pdsch_modulator>                                modulator;
+  std::unique_ptr<dmrs_pdsch_processor>                           dmrs;
+  std::array<uint8_t, pdsch_constants::CODEWORD_MAX_SIZE.value()> temp_unpacked_codeword;
+  std::array<static_bit_buffer<pdsch_constants::CODEWORD_MAX_SIZE.value()>, MAX_NOF_TRANSPORT_BLOCKS>
+      temp_packed_codewords;
 };
 
 } // namespace srsran

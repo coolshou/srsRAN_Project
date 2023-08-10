@@ -22,6 +22,10 @@ set_directory_properties(PROPERTIES LABELS "ran")
 
 include_directories(../../..)
 
+add_executable(csi_report_unpacking_test csi_report/csi_report_unpacking_test.cpp)
+target_link_libraries(csi_report_unpacking_test srsran_ran gtest gtest_main)
+gtest_discover_tests(csi_report_unpacking_test csi_report_unpacking_test)
+
 add_library(du_test_suite ssb_coreset0_freq_pos_checker.cpp)
 target_link_libraries(du_test_suite srsran_ran gtest)
 
@@ -77,6 +81,10 @@ add_executable(resource_allocation_frequency_test resource_allocation/resource_a
 target_link_libraries(resource_allocation_frequency_test srsran_support srsran_ran)
 add_test(resource_allocation_frequency_test resource_allocation_frequency_test)
 
+add_executable(uci_part2_size_calculator_test uci/uci_part2_size_calculator_test.cpp)
+target_link_libraries(uci_part2_size_calculator_test srsran_support srsran_ran srsvec gtest gtest_main)
+add_test(uci_part2_size_calculator_test uci_part2_size_calculator_test)
+
 add_executable(slot_point_test slot_point_test.cpp)
 target_link_libraries(slot_point_test srsran_support)
 add_test(slot_point_test slot_point_test)
@@ -86,6 +94,10 @@ target_link_libraries(band_helper_test srsran_ran srslog gtest gtest_main)
 target_include_directories(band_helper_test PRIVATE ${CMAKE_SOURCE_DIR})
 add_test(band_helper_test band_helper_test)
 
+add_executable(ssb_gscn_test ssb_gscn_test.cpp)
+target_link_libraries(ssb_gscn_test srsran_ran gtest gtest_main)
+add_test(ssb_gscn_test ssb_gscn_test)
+
 add_executable(ssb_mapping_test ssb_mapping_test.cpp)
 target_link_libraries(ssb_mapping_test srsran_ran srslog)
 add_test(ssb_mapping_test ssb_mapping_test)
@@ -94,6 +106,6 @@ add_executable(bcd_helpers_test bcd_helpers_test.cpp)
 target_link_libraries(bcd_helpers_test srsran_support gtest gtest_main)
 gtest_discover_tests(bcd_helpers_test)
 
-add_executable(up_transport_layer_info_test up_transport_layer_info_test.cpp)
-target_link_libraries(up_transport_layer_info_test srsran_support srsran_f1ap_cu gtest gtest_main)
-gtest_discover_tests(up_transport_layer_info_test)
+add_executable(nr_cgi_helpers_test nr_cgi_helpers_test.cpp)
+target_link_libraries(nr_cgi_helpers_test srsran_support gtest gtest_main)
+gtest_discover_tests(nr_cgi_helpers_test)

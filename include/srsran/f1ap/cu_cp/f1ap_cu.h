@@ -23,21 +23,16 @@
 #pragma once
 
 #include "../common/f1ap_types.h"
+#include "f1ap_cu_ue_context_update.h"
+#include "f1ap_interface_management_types.h"
 #include "srsran/adt/byte_buffer.h"
-#include "srsran/adt/expected.h"
-#include "srsran/asn1/f1ap/f1ap.h"
 #include "srsran/cu_cp/cu_cp_types.h"
 #include "srsran/f1ap/common/f1ap_common.h"
-#include "srsran/f1ap/cu_cp/f1ap_cu_ue_context_update.h"
 #include "srsran/ran/lcid.h"
 #include "srsran/support/async/async_task.h"
 
 namespace srsran {
 namespace srs_cu_cp {
-
-struct f1ap_initial_ul_rrc_message {
-  asn1::f1ap::init_ul_rrc_msg_transfer_s msg;
-};
 
 struct f1ap_ul_rrc_message {
   ue_index_t                        ue_index = ue_index_t::invalid;
@@ -45,8 +40,9 @@ struct f1ap_ul_rrc_message {
 };
 
 struct f1ap_dl_rrc_message {
-  ue_index_t  ue_index = ue_index_t::invalid;
-  srb_id_t    srb_id   = srb_id_t::nulltype;
+  ue_index_t  ue_index     = ue_index_t::invalid;
+  ue_index_t  old_ue_index = ue_index_t::invalid;
+  srb_id_t    srb_id       = srb_id_t::nulltype;
   byte_buffer rrc_container;
 };
 
@@ -60,16 +56,6 @@ public:
   virtual void handle_dl_rrc_message_transfer(const f1ap_dl_rrc_message& msg) = 0;
 };
 
-struct f1_setup_response_message {
-  asn1::f1ap::f1_setup_resp_s response;
-  asn1::f1ap::f1_setup_fail_s failure;
-  bool                        success = false;
-};
-
-struct f1_setup_request_message {
-  asn1::f1ap::f1_setup_request_s request;
-};
-
 /// Handle F1AP interface management procedures as defined in TS 38.473 section 8.2.
 class f1ap_connection_manager
 {
@@ -77,14 +63,16 @@ public:
   virtual ~f1ap_connection_manager() = default;
 
   /// \brief Creates and transmits the F1 Setup outcome to the DU.
-  /// \param[in] msg The f1_setup_response_message to transmit.
+  /// \param[in] msg The common type F1 Setup Response Message to transmit.
   /// \remark The CU transmits the F1SetupResponse/F1SetupFailure as per TS 38.473 section 8.2.3.
-  virtual void handle_f1_setup_response(const f1_setup_response_message& msg) = 0;
+  virtual void handle_f1_setup_response(const f1ap_f1_setup_response& msg) = 0;
 };
 
 struct f1ap_ue_context_release_command {
-  ue_index_t ue_index = ue_index_t::invalid;
-  cause_t    cause;
+  ue_index_t         ue_index = ue_index_t::invalid;
+  cause_t            cause;
+  byte_buffer        rrc_release_pdu;
+  optional<srb_id_t> srb_id;
 };
 
 struct f1ap_ue_context_release_complete {
@@ -108,10 +96,10 @@ public:
 
   /// \brief Initiates the UE Context Modification procedure as per TS 38.473 section 8.3.4.
   /// \param[in] request The UE Context Modification message to transmit.
-  /// \return Returns a cu_cp_ue_context_modification_response_message struct with the success member set to
+  /// \return Returns a f1ap_ue_context_modification_response_message struct with the success member set to
   /// 'true' in case of a successful outcome, 'false' otherwise.
-  virtual async_task<cu_cp_ue_context_modification_response>
-  handle_ue_context_modification_request(const cu_cp_ue_context_modification_request& request) = 0;
+  virtual async_task<f1ap_ue_context_modification_response>
+  handle_ue_context_modification_request(const f1ap_ue_context_modification_request& request) = 0;
 };
 
 /// Handle F1AP paging procedures as defined in TS 38.473 section 8.7.
@@ -146,7 +134,7 @@ public:
   };
 
 private:
-  srslog::basic_logger& logger = srslog::fetch_basic_logger("F1AP");
+  srslog::basic_logger& logger = srslog::fetch_basic_logger("CU-CP-F1");
 };
 
 /// Non-owning handlers to RRC message notifiers.
@@ -162,6 +150,20 @@ struct ue_creation_complete_message {
   f1ap_srb_notifiers srbs;
 };
 
+struct ue_update_message {
+  ue_index_t          ue_index = ue_index_t::invalid;
+  nr_cell_global_id_t cgi;
+  rnti_t              c_rnti = INVALID_RNTI;
+  byte_buffer         cell_group_cfg;
+  byte_buffer         meas_gap_cfg;
+  byte_buffer         requested_p_max_fr1;
+};
+
+struct ue_update_complete_message {
+  ue_index_t         ue_index = ue_index_t::invalid;
+  f1ap_srb_notifiers srbs;
+};
+
 /// Methods used by F1AP to notify the DU processor.
 class f1ap_du_processor_notifier
 {
@@ -170,12 +172,22 @@ public:
 
   /// \brief Notifies about the reception of a F1 Setup Request message.
   /// \param[in] msg The received F1 Setup Request message.
-  virtual void on_f1_setup_request_received(const f1_setup_request_message& msg) = 0;
+  virtual void on_f1_setup_request_received(const f1ap_f1_setup_request& msg) = 0;
+
+  /// \brief Request allocation of a new UE index.
+  virtual ue_index_t on_new_ue_index_required() = 0;
 
   /// \brief Notifies the DU processor to create a UE.
-  /// \param[in] msg The received initial UL RRC message transfer message.
+  /// \param[in] msg The ue creation message.
   /// \return Returns a UE creation complete message containing the index of the created UE and its SRB notifiers.
-  virtual ue_creation_complete_message on_create_ue(const f1ap_initial_ul_rrc_message& msg) = 0;
+  virtual ue_creation_complete_message on_create_ue(const cu_cp_ue_creation_message& msg) = 0;
+
+  /// \brief Instructs the DU processor to delete the given UE.
+  virtual void on_delete_ue(ue_index_t ue_index) = 0;
+
+  /// \brief Indicates the reception of a UE Context Release Request (gNB-DU initiated) as per TS 38.473
+  /// section 8.3.2.
+  virtual void on_du_initiated_ue_context_release_request(const f1ap_ue_context_release_request& req) = 0;
 
   /// \brief Get the DU index.
   /// \return The DU index.
@@ -187,6 +199,7 @@ class f1ap_du_management_notifier
 {
 public:
   virtual ~f1ap_du_management_notifier() = default;
+
   /// \brief Notifies about a successful F1 Removal procedure.
   /// The corresponding DU processor will be removed now.
   /// \param[in] du_index The index of the DU processor to delete.

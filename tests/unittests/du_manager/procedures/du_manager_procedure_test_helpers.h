@@ -30,6 +30,8 @@ namespace srs_du {
 
 class ue_manager_dummy : public du_ue_manager_repository
 {
+  dummy_teid_pool teid_pool;
+
 public:
   slotted_array<std::unique_ptr<du_ue>, MAX_NOF_DU_UES> ues;
 
@@ -40,6 +42,7 @@ public:
     return ret;
   }
   void   remove_ue(du_ue_index_t ue_index) override { ues.erase(ue_index); }
+  void   update_crnti(du_ue_index_t ue_index, rnti_t rnti) override {}
   du_ue* find_ue(du_ue_index_t ue_index) override { return ues.contains(ue_index) ? ues[ue_index].get() : nullptr; }
   du_ue* find_rnti(rnti_t rnti) override
   {
@@ -50,6 +53,8 @@ public:
     }
     return nullptr;
   }
+  void            handle_radio_link_failure(du_ue_index_t ue_index, rlf_cause cause) override {}
+  gtpu_teid_pool& get_f1u_teid_pool() override { return teid_pool; }
 };
 
 ul_ccch_indication_message create_test_ul_ccch_message(rnti_t rnti);
@@ -61,6 +66,7 @@ public:
 
   du_ue& create_ue(du_ue_index_t ue_index);
 
+  /// \brief Run DU UE configuration procedure to completion.
   f1ap_ue_context_update_response configure_ue(const f1ap_ue_context_update_request& req);
 
   ue_manager_dummy ue_mng;

@@ -201,32 +201,45 @@ public:
   using const_iterator = const T*;
 
   dyn_array() = default;
-  explicit dyn_array(uint32_t new_size) : size_(new_size), cap_(new_size) { data_ = new T[size_]; }
-  dyn_array(const dyn_array<T>& other) : dyn_array(&other[0], other.size_) {}
-  dyn_array(const T* ptr, uint32_t nof_items)
+  explicit dyn_array(uint32_t new_size) : size_(new_size), cap_(new_size)
   {
-    size_ = nof_items;
-    cap_  = nof_items;
-    data_ = new T[cap_];
-    std::copy(ptr, ptr + size_, data_);
-  }
-  ~dyn_array()
-  {
-    if (data_ != NULL) {
-      delete[] data_;
+    if (size_ > 0) {
+      data_ = new T[size_];
     }
   }
-  uint32_t      size() const { return size_; }
-  uint32_t      capacity() const { return cap_; }
-  T&            operator[](uint32_t idx) { return data_[idx]; }
-  const T&      operator[](uint32_t idx) const { return data_[idx]; }
+  dyn_array(const dyn_array<T>& other) : dyn_array(other.data(), other.size()) {}
+  dyn_array(const T* ptr, uint32_t nof_items) : size_(nof_items), cap_(nof_items)
+  {
+    if (size_ > 0) {
+      data_ = new T[cap_];
+      std::copy(ptr, ptr + size_, data_);
+    }
+  }
+  ~dyn_array() { delete[] data_; }
+  uint32_t size() const { return size_; }
+  uint32_t capacity() const { return cap_; }
+  T&       operator[](uint32_t idx)
+  {
+    srsran_assert(idx < size(), "out-of-bounds access to dyn_array ({} >= {})", idx, size());
+    return data_[idx];
+  }
+  const T& operator[](uint32_t idx) const
+  {
+    srsran_assert(idx < size(), "out-of-bounds access to dyn_array ({} >= {})", idx, size());
+    return data_[idx];
+  }
   dyn_array<T>& operator=(const dyn_array<T>& other)
   {
     if (this == &other) {
       return *this;
     }
-    resize(other.size());
-    std::copy(&other[0], &other[size_], data_);
+    if (cap_ < other.size()) {
+      delete[] data_;
+      data_ = new T[other.size()];
+      cap_  = other.size();
+    }
+    size_ = other.size();
+    std::copy(other.data(), other.data() + other.size(), data());
     return *this;
   }
   void resize(uint32_t new_size, uint32_t new_cap = 0)
@@ -235,6 +248,9 @@ public:
       return;
     }
     if (cap_ >= new_size) {
+      if (new_size > size_) {
+        std::fill(data_ + size_, data_ + new_size, T());
+      }
       size_ = new_size;
       return;
     }
@@ -243,17 +259,14 @@ public:
     cap_        = new_size > new_cap ? new_size : new_cap;
     if (cap_ > 0) {
       data_ = new T[cap_];
-      if (old_data != NULL) {
-        srsran_assert(cap_ > size_, "Old size larger than new capacity in dyn_array\n");
-        std::copy(&old_data[0], &old_data[size_], data_);
+      if (old_data != nullptr) {
+        std::copy(old_data, old_data + size_, data_);
       }
     } else {
-      data_ = NULL;
+      data_ = nullptr;
     }
     size_ = new_size;
-    if (old_data != NULL) {
-      delete[] old_data;
-    }
+    delete[] old_data;
   }
   iterator erase(iterator it)
   {
@@ -277,14 +290,14 @@ public:
     data_[size() - 1] = elem;
   }
   void           clear() { resize(0); }
-  T&             back() { return data_[size() - 1]; }
-  const T&       back() const { return data_[size() - 1]; }
-  T*             data() { return &data_[0]; }
-  const T*       data() const { return &data_[0]; }
-  iterator       begin() { return &data_[0]; }
-  iterator       end() { return &data_[size()]; }
-  const_iterator begin() const { return &data_[0]; }
-  const_iterator end() const { return &data_[size()]; }
+  T&             back() { return (*this)[size() - 1]; }
+  const T&       back() const { return (*this)[size() - 1]; }
+  T*             data() { return data_; }
+  const T*       data() const { return data_; }
+  iterator       begin() { return data_; }
+  iterator       end() { return data_ + size(); }
+  const_iterator begin() const { return data_; }
+  const_iterator end() const { return data_ + size(); }
 
 private:
   T*       data_ = nullptr;
@@ -507,6 +520,24 @@ bool number_string_to_enum(EnumType& e, const std::string& val)
     }
   }
   return false;
+}
+template <class EnumType>
+void bool_to_enum(EnumType& e, const bool s)
+{
+  srsran_assert(e.nof_types == 1, "Can't convert enum with too many values");
+
+  if (s) {
+    e = (typename EnumType::options)0;
+  } else {
+    e = EnumType::nulltype;
+  }
+}
+template <class EnumType>
+bool enum_to_bool(EnumType& e)
+{
+  srsran_assert(e.nof_types == 1, "Can't convert enum with too many values");
+
+  return !(bool)e;
 }
 
 template <class EnumType, bool E = false, uint32_t M = 0>
@@ -1404,18 +1435,20 @@ class json_writer
 {
 public:
   json_writer();
-  void        write_fieldname(const std::string& fieldname);
-  void        write_str(const std::string& fieldname, const std::string& value);
+  void        write_fieldname(const char* fieldname);
+  void        write_str(const char* fieldname, const std::string& value);
+  void        write_str(const char* fieldname, const char* value);
+  void        write_str(const char* value);
   void        write_str(const std::string& value);
-  void        write_int(const std::string& fieldname, int64_t value);
+  void        write_int(const char* fieldname, int64_t value);
   void        write_int(int64_t value);
-  void        write_bool(const std::string& fieldname, bool value);
+  void        write_bool(const char* fieldname, bool value);
   void        write_bool(bool value);
-  void        write_null(const std::string& fieldname);
+  void        write_null(const char* fieldname);
   void        write_null();
-  void        start_obj(const std::string& fieldname = "");
+  void        start_obj(const char* fieldname = "");
   void        end_obj();
-  void        start_array(const std::string& fieldname = "");
+  void        start_array(const char* fieldname = "");
   void        end_array();
   std::string to_string() const;
 
@@ -1462,6 +1495,20 @@ inline void to_json(json_writer& j, int64_t number)
 {
   j.write_int(number);
 }
+
+struct real_s {
+  SRSASN_CODE pack(bit_ref& bref) const
+  {
+    printf(" WARNING using unimplemented REAL packing function\n");
+    return SRSASN_SUCCESS;
+  };
+  SRSASN_CODE unpack(cbit_ref& bref) const
+  {
+    printf(" WARNING using unimplemented REAL unpacking function\n");
+    return SRSASN_SUCCESS;
+  };
+  void to_json(json_writer& j) const { printf(" WARNING using unimplemented REAL json function\n"); };
+};
 
 /*******************
   Test pack/unpack
@@ -1596,6 +1643,11 @@ struct setup_release_c {
   {
     set(types::setup);
     return c;
+  }
+
+  bool operator==(const setup_release_c<T>& other) const
+  {
+    return type_ == other.type_ and (type_ != types::setup or (c == other.c));
   }
 
 private:
@@ -1795,6 +1847,29 @@ struct protocol_ie_single_container_s : public protocol_ie_field_s<ies_set_param
 template <class ExtensionSetParam>
 struct protocol_ext_field_s : public detail::base_ie_field<detail::ie_field_ext_item<ExtensionSetParam>> {
 };
+
+template <typename IEValue>
+SRSASN_CODE pack_ie_container_item(bit_ref& bref, uint32_t id, crit_e crit, const IEValue& value)
+{
+  HANDLE_CODE(pack_integer(bref, id, (uint32_t)0u, (uint32_t)65535u, false, true));
+  HANDLE_CODE(crit.pack(bref));
+  {
+    varlength_field_pack_guard varlen_scope(bref, true);
+    HANDLE_CODE(value.pack(bref));
+  }
+  return SRSASN_SUCCESS;
+}
+
+template <typename IEValue>
+void ie_container_item_to_json(json_writer& j, uint32_t id, crit_e crit, const char* value_name, const IEValue& value)
+{
+  j.start_obj();
+  j.write_int("id", id);
+  j.write_str("criticality", crit.to_string());
+  j.write_fieldname(value_name);
+  asn1::to_json(j, value);
+  j.end_obj();
+}
 
 namespace detail {
 

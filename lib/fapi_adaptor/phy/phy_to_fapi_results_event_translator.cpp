@@ -58,10 +58,22 @@ void phy_to_fapi_results_event_translator::on_new_prach_results(const ul_prach_r
     return;
   }
 
+  slot_point slot = result.context.slot;
+
+  // Avoid generating a PRACH indication when all detected preambles have a negative TA value as they must be discarded.
+  if (std::all_of(
+          result.result.preambles.begin(),
+          result.result.preambles.end(),
+          [](const prach_detection_result::preamble_indication& ind) { return ind.time_advance.to_seconds() < 0.0; })) {
+    logger.warning(
+        "All detected PRACH preambles have a negative TA value in slot={}, no PRACH.ind message will be generated",
+        slot);
+    return;
+  }
+
   fapi::rach_indication_message         msg;
   fapi::rach_indication_message_builder builder(msg);
 
-  slot_point slot = result.context.slot;
   builder.set_basic_parameters(slot.sfn(), slot.slot_index());
 
   // NOTE: Currently not managing handle.
@@ -87,9 +99,16 @@ void phy_to_fapi_results_event_translator::on_new_prach_results(const ul_prach_r
     static constexpr float MIN_PREAMBLE_SNR_VALUE   = -64.F;
     static constexpr float MAX_PREAMBLE_SNR_VALUE   = 63.F;
 
+    double TA_ns = preamble.time_advance.to_seconds() * 1e9;
+    // Ignore preambles with a negative TA value.
+    if (TA_ns < 0.0) {
+      logger.warning("Detected PRACH preamble in slot={} has a negative TA value of {}ns, skipping it", slot, TA_ns);
+      continue;
+    }
+
     builder_pdu.add_preamble(preamble.preamble_index,
                              {},
-                             static_cast<uint32_t>(std::max(0.0, preamble.time_advance.to_seconds() * 1e9)),
+                             TA_ns,
                              clamp(preamble.power_dB, MIN_PREAMBLE_POWER_VALUE, MAX_PREAMBLE_POWER_VALUE),
                              clamp(preamble.snr_dB, MIN_PREAMBLE_SNR_VALUE, MAX_PREAMBLE_SNR_VALUE));
   }
@@ -145,7 +164,11 @@ void phy_to_fapi_results_event_translator::notify_pusch_uci_indication(const ul_
   static constexpr float MIN_UL_SINR_VALUE = -65.534;
   static constexpr float MAX_UL_SINR_VALUE = 65.534;
 
-  builder_pdu.set_metrics_parameters(clamp(csi_info.sinr_dB, MIN_UL_SINR_VALUE, MAX_UL_SINR_VALUE), {}, {}, {}, {});
+  builder_pdu.set_metrics_parameters(clamp(csi_info.sinr_dB, MIN_UL_SINR_VALUE, MAX_UL_SINR_VALUE),
+                                     {},
+                                     optional<int>(result.csi.time_alignment.to_seconds() * 1e9),
+                                     {},
+                                     {});
 
   // Add the HARQ section.
   if (result.harq_ack.has_value()) {
@@ -310,8 +333,11 @@ static void add_format_0_1_pucch_pdu(fapi::uci_indication_message_builder& build
   static constexpr float MIN_UL_SINR_VALUE = -65.534;
   static constexpr float MAX_UL_SINR_VALUE = 65.534;
 
-  builder_format01.set_metrics_parameters(
-      clamp(csi_info.sinr_dB, MIN_UL_SINR_VALUE, MAX_UL_SINR_VALUE), {}, {}, {}, {});
+  builder_format01.set_metrics_parameters(clamp(csi_info.sinr_dB, MIN_UL_SINR_VALUE, MAX_UL_SINR_VALUE),
+                                          {},
+                                          optional<int>(result.processor_result.csi.time_alignment.to_seconds() * 1e9),
+                                          {},
+                                          {});
 
   // Fill SR parameters.
   fill_format_0_1_sr(builder_format01, result);
@@ -399,8 +425,11 @@ static void add_format_2_pucch_pdu(fapi::uci_indication_message_builder& builder
   static constexpr float MIN_UL_SINR_VALUE = -65.534;
   static constexpr float MAX_UL_SINR_VALUE = 65.534;
 
-  builder_format234.set_metrics_parameters(
-      clamp(csi_info.sinr_dB, MIN_UL_SINR_VALUE, MAX_UL_SINR_VALUE), {}, {}, {}, {});
+  builder_format234.set_metrics_parameters(clamp(csi_info.sinr_dB, MIN_UL_SINR_VALUE, MAX_UL_SINR_VALUE),
+                                           {},
+                                           optional<int>(result.processor_result.csi.time_alignment.to_seconds() * 1e9),
+                                           {},
+                                           {});
 
   // Fill SR parameters.
   fill_format_2_3_4_sr(builder_format234, result.processor_result.message);

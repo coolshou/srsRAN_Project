@@ -92,6 +92,7 @@ const radio_configuration::radio radio_base_config = {base_clock_sources,
                                                       {base_rx_stream},
                                                       1.92e6,
                                                       radio_configuration::over_the_wire_format::DEFAULT,
+                                                      "",
                                                       "none"};
 
 struct test_case_t {
@@ -128,7 +129,14 @@ const std::vector<test_case_t> radio_zmq_validator_test_data = {
        config.tx_streams.clear();
        return config;
      },
-     "At least one transmit stream must be available.\n"},
+     "Transmit and receive number of streams must be equal.\n"},
+    {[] {
+       radio_configuration::radio config = radio_base_config;
+       config.tx_streams.clear();
+       config.rx_streams.clear();
+       return config;
+     },
+     "At least one transmit and one receive stream must be configured.\n"},
     {[] {
        radio_configuration::radio config = radio_base_config;
        config.tx_streams.front().channels.clear();
@@ -171,12 +179,6 @@ const std::vector<test_case_t> radio_zmq_validator_test_data = {
        return config;
      },
      "Stream arguments are not currently supported.\n"},
-    {[] {
-       radio_configuration::radio config = radio_base_config;
-       config.rx_streams.clear();
-       return config;
-     },
-     "At least one receive stream must be available.\n"},
     {[] {
        radio_configuration::radio config = radio_base_config;
        config.rx_streams.front().channels.clear();

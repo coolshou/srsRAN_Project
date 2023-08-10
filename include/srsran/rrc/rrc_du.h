@@ -24,18 +24,33 @@
 
 #include "rrc_cell_context.h"
 #include "rrc_ue.h"
+#include "srsran/ran/band_helper.h"
 
 namespace srsran {
 
 namespace srs_cu_cp {
 
+struct rrc_cell_info {
+  nr_band                      band;
+  std::vector<rrc_meas_timing> meas_timings;
+};
+
+class rrc_du_cell_manager
+{
+public:
+  rrc_du_cell_manager()          = default;
+  virtual ~rrc_du_cell_manager() = default;
+
+  virtual bool handle_served_cell_list(const std::vector<cu_cp_du_served_cells_item>& served_cell_list) = 0;
+};
+
 struct rrc_ue_creation_message {
-  ue_index_t                      ue_index;
-  rnti_t                          c_rnti;
-  rrc_cell_context                cell;
-  srb_notifiers_array             srbs;
-  asn1::unbounded_octstring<true> du_to_cu_container;
-  rrc_ue_task_scheduler*          ue_task_sched;
+  ue_index_t             ue_index;
+  rnti_t                 c_rnti;
+  rrc_cell_context       cell;
+  srb_notifiers_array    srbs;
+  byte_buffer            du_to_cu_container;
+  rrc_ue_task_scheduler* ue_task_sched;
 };
 
 /// \brief Interface class for the main RRC DU object used by the RRC UE objects.
@@ -59,7 +74,7 @@ public:
   virtual ~rrc_du_ue_repository() = default;
 
   /// Creates a new RRC UE object and returns a handle to it.
-  virtual rrc_ue_interface* add_ue(rrc_ue_creation_message msg) = 0;
+  virtual rrc_ue_interface* add_ue(up_resource_manager& resource_mng, const rrc_ue_creation_message msg) = 0;
 
   /// Remove a RRC UE object.
   /// \param[in] ue_index The index of the UE object to remove.
@@ -73,11 +88,12 @@ public:
 };
 
 /// Combined entry point for the RRC DU handling.
-class rrc_du_interface : public rrc_du_ue_manager, public rrc_du_ue_repository
+class rrc_du_interface : public rrc_du_cell_manager, public rrc_du_ue_manager, public rrc_du_ue_repository
 {
 public:
   virtual ~rrc_du_interface() = default;
 
+  virtual rrc_du_cell_manager&  get_rrc_du_cell_manager()  = 0;
   virtual rrc_du_ue_manager&    get_rrc_du_ue_manager()    = 0;
   virtual rrc_du_ue_repository& get_rrc_du_ue_repository() = 0;
 };

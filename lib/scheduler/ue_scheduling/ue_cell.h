@@ -24,9 +24,11 @@
 
 #include "../support/bwp_helpers.h"
 #include "harq_process.h"
+#include "ue_channel_state_manager.h"
 #include "ue_configuration.h"
 #include "srsran/ran/uci/uci_constants.h"
 #include "srsran/scheduler/config/scheduler_expert_config.h"
+#include "srsran/scheduler/scheduler_feedback_handler.h"
 
 namespace srsran {
 
@@ -44,20 +46,15 @@ class ue_cell
 {
 public:
   struct metrics {
-    /// Save the latest PUSCH SNR reported from PHY, in dB.
-    // NOTE: the 0 is only used for initialization and will be overwritten by the first UL SNR report.
-    double   pusch_snr_db          = 0.0;
     unsigned consecutive_pusch_kos = 0;
-    // This gets initialized in the ue_cell constructor.
-    unsigned latest_wb_cqi;
-    // TODO: Add other metrics of interest for the scheduler.
   };
 
   ue_cell(du_ue_index_t                     ue_index_,
           rnti_t                            crnti_val,
           const scheduler_ue_expert_config& expert_cfg_,
           const cell_configuration&         cell_cfg_common_,
-          const serving_cell_config&        ue_serv_cell);
+          const serving_cell_config&        ue_serv_cell,
+          ue_harq_timeout_notifier          harq_timeout_notifier);
 
   const du_ue_index_t   ue_index;
   const du_cell_index_t cell_index;
@@ -73,46 +70,83 @@ public:
 
   void handle_reconfiguration_request(const serving_cell_config& new_ue_cell_cfg);
 
-  unsigned get_latest_wb_cqi() const { return ue_metrics.latest_wb_cqi; }
-
-  void set_latest_wb_cqi(const bounded_bitset<uci_constants::MAX_NOF_CSI_PART1_OR_PART2_BITS>& payload);
-
   /// \brief Estimate the number of required DL PRBs to allocate the given number of bytes.
-  grant_prbs_mcs required_dl_prbs(unsigned time_resource, unsigned pending_bytes) const;
+  grant_prbs_mcs required_dl_prbs(const pdsch_time_domain_resource_allocation& pdsch_td_cfg,
+                                  const search_space_info&                     ss_info,
+                                  unsigned                                     pending_bytes) const;
 
   /// \brief Estimate the number of required UL PRBs to allocate the given number of bytes.
-  grant_prbs_mcs required_ul_prbs(unsigned time_resource, unsigned pending_bytes, dci_ul_rnti_config_type type) const;
+  grant_prbs_mcs required_ul_prbs(const pusch_time_domain_resource_allocation& pusch_td_cfg,
+                                  unsigned                                     pending_bytes,
+                                  dci_ul_rnti_config_type                      type) const;
 
-  /// \brief Derive UL resource allocation type1 BWP configuration as per TS38.214, 6.1.2.2.2.
-  bwp_configuration alloc_type1_bwp_limits(dci_ul_format dci_fmt, search_space_configuration::type_t ss_type) const
+  uint8_t get_pdsch_rv(const dl_harq_process& h_dl) const
   {
-    return get_resource_alloc_type_1_ul_bwp_size(dci_fmt,
-                                                 ue_cfg.cell_cfg_common.ul_cfg_common.init_ul_bwp.generic_params,
-                                                 ue_cfg.ul_bwp_common(active_bwp_id()).generic_params,
-                                                 ss_type);
+    return expert_cfg.pdsch_rv_sequence[h_dl.tb(0).nof_retxs % expert_cfg.pdsch_rv_sequence.size()];
+  }
+  uint8_t get_pusch_rv(const ul_harq_process& h_ul) const
+  {
+    return expert_cfg.pusch_rv_sequence[h_ul.tb().nof_retxs % expert_cfg.pusch_rv_sequence.size()];
   }
 
   /// \brief Handle CRC PDU indication.
   int handle_crc_pdu(slot_point pusch_slot, const ul_crc_pdu_indication& crc_pdu);
 
+  /// Update UE with the latest CSI report for a given cell.
+  void handle_csi_report(const csi_report_data& csi_report)
+  {
+    set_fallback_state(false);
+    if (not channel_state.handle_csi_report(csi_report)) {
+      logger.warning("ue={} rnti={:#x}: Invalid CSI report received", ue_index, rnti());
+    }
+  }
+
   /// \brief Get the current UE cell metrics.
   const metrics& get_metrics() const { return ue_metrics; }
   metrics&       get_metrics() { return ue_metrics; }
 
-private:
-  /// Update PUSCH SNR metric of the UE.
-  void update_pusch_snr(optional<float> snr)
+  /// \brief Get recommended aggregation level for PDCCH given reported CQI.
+  aggregation_level get_aggregation_level() const
   {
-    if (snr.has_value()) {
-      ue_metrics.pusch_snr_db = static_cast<double>(snr.value());
-    }
+    // TODO: Use dynamic aggregation level.
+    return aggregation_level::n4;
   }
 
+  /// \brief Get list of recommended Search Spaces given the UE current state and channel quality.
+  /// \param[in] required_dci_rnti_type Optional parameter to filter Search Spaces by DCI RNTI config type.
+  /// \return List of SearchSpace configuration.
+  static_vector<const search_space_info*, MAX_NOF_SEARCH_SPACE_PER_BWP>
+  get_active_dl_search_spaces(optional<dci_dl_rnti_config_type> required_dci_rnti_type = {}) const;
+  static_vector<const search_space_info*, MAX_NOF_SEARCH_SPACE_PER_BWP>
+  get_active_ul_search_spaces(optional<dci_ul_rnti_config_type> required_dci_rnti_type = {}) const;
+
+  /// \brief Set UE fallback state.
+  void set_fallback_state(bool fallback_state_)
+  {
+    if (fallback_state_ != is_fallback_mode) {
+      logger.debug("ue={} rnti={:#x}: {} fallback mode", ue_index, rnti(), fallback_state_ ? "Entering" : "Leaving");
+    }
+    is_fallback_mode = fallback_state_;
+  }
+
+  /// \brief Get UE channel state handler.
+  ue_channel_state_manager&       channel_state_manager() { return channel_state; }
+  const ue_channel_state_manager& channel_state_manager() const { return channel_state; }
+
+private:
   rnti_t                            crnti_;
   const scheduler_ue_expert_config& expert_cfg;
   ue_cell_configuration             ue_cfg;
+  srslog::basic_logger&             logger;
+
+  /// \brief Fallback state of the UE. When in "fallback" mode, only the search spaces of cellConfigCommon are used.
+  /// The UE should automatically leave this mode, when a SR/CSI is received, since, in order to send SR/CSI the UE must
+  /// already have applied a dedicated config.
+  bool is_fallback_mode = false;
 
   metrics ue_metrics;
+
+  ue_channel_state_manager channel_state;
 };
 
 } // namespace srsran

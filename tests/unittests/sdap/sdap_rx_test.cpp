@@ -36,7 +36,7 @@ public:
   std::queue<byte_buffer> sdu_queue;
 
   // sdap_rx_sdu_notifier interface
-  void on_new_sdu(byte_buffer pdu) override { sdu_queue.push(std::move(pdu)); };
+  void on_new_sdu(byte_buffer pdu, qos_flow_id_t qfi) override { sdu_queue.push(std::move(pdu)); };
 };
 
 /// Fixture class for SDAP RX tests
@@ -61,7 +61,8 @@ protected:
     // Create SDAP RX entity
     ue_inactivity_timer = timers.create_timer();
     ue_inactivity_timer.set(std::chrono::milliseconds(10000), [](timer_id_t) {});
-    sdap = std::make_unique<sdap_entity_rx_impl>(7, pdu_session_id_t::min, ue_inactivity_timer, *tester);
+    sdap = std::make_unique<sdap_entity_rx_impl>(
+        7, pdu_session_id_t::min, qos_flow_id_t::min, drb_id_t::drb1, ue_inactivity_timer, *tester);
   }
 
   void TearDown() override

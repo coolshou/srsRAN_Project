@@ -25,8 +25,7 @@
 #include "srsran/du/du_cell_config.h"
 #include "srsran/du/du_qos_config.h"
 #include "srsran/du/du_test_config.h"
-#include "srsran/du_high/du_high_cell_executor_mapper.h"
-#include "srsran/du_high/du_high_ue_executor_mapper.h"
+#include "srsran/du_high/du_high_executor_mapper.h"
 #include "srsran/f1ap/du/f1ap_du.h"
 #include "srsran/f1u/du/f1u_gateway.h"
 #include "srsran/mac/mac.h"
@@ -44,6 +43,7 @@ struct du_manager_params {
     std::string                        gnb_du_name;
     uint64_t                           gnb_du_id;
     uint8_t                            rrc_version;
+    transport_layer_address            du_bind_addr;
     std::vector<du_cell_config>        cells;
     std::map<five_qi_t, du_qos_config> qos;
   };

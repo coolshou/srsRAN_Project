@@ -48,17 +48,17 @@ void ue_deletion_procedure::operator()(coro_context<async_task<void>>& ctx)
     CORO_EARLY_RETURN();
   }
 
-  // > Disconnect DRBs from F1-U to stop handling DL traffic in flight and delivery notifications.
-  CORO_AWAIT(disconnect_drbs());
-
-  // > Remove UE from MAC.
-  CORO_AWAIT_VALUE(const mac_ue_delete_response_message mac_resp, launch_mac_ue_delete());
-  if (not mac_resp.result) {
-    proc_logger.log_proc_failure("Failed to remove UE from MAC.");
-  }
+  // > Disconnect DRBs from F1-U and SRBs from F1-C to stop handling traffic in flight and delivery notifications.
+  CORO_AWAIT(disconnect_rbs());
 
   // > Remove UE from F1AP.
   du_params.f1ap.ue_mng.handle_ue_deletion_request(msg.ue_index);
+
+  // > Remove UE from MAC.
+  CORO_AWAIT_VALUE(const mac_ue_delete_response mac_resp, launch_mac_ue_delete());
+  if (not mac_resp.result) {
+    proc_logger.log_proc_failure("Failed to remove UE from MAC.");
+  }
 
   // > Remove UE object from DU UE manager.
   ue_mng.remove_ue(msg.ue_index);
@@ -68,16 +68,16 @@ void ue_deletion_procedure::operator()(coro_context<async_task<void>>& ctx)
   CORO_RETURN();
 }
 
-async_task<mac_ue_delete_response_message> ue_deletion_procedure::launch_mac_ue_delete()
+async_task<mac_ue_delete_response> ue_deletion_procedure::launch_mac_ue_delete()
 {
-  mac_ue_delete_request_message mac_msg{};
+  mac_ue_delete_request mac_msg{};
   mac_msg.ue_index   = ue->ue_index;
   mac_msg.rnti       = ue->rnti;
   mac_msg.cell_index = ue->pcell_index;
   return du_params.mac.ue_cfg.handle_ue_delete_request(mac_msg);
 }
 
-async_task<void> ue_deletion_procedure::disconnect_drbs()
+async_task<void> ue_deletion_procedure::disconnect_rbs()
 {
   // Note: If the DRB was not deleted on demand by the CU-CP via F1AP UE Context Modification Procedure, there is a
   // chance that the CU-UP will keep pushing new F1-U PDUs to the DU. To avoid dangling references during UE removal,
@@ -85,11 +85,15 @@ async_task<void> ue_deletion_procedure::disconnect_drbs()
 
   return dispatch_and_resume_on(
       du_params.services.ue_execs.executor(msg.ue_index), du_params.services.du_mng_exec, [this]() {
+        // > Disconnect DRBs.
         for (auto& drb_pair : ue->bearers.drbs()) {
           du_ue_drb& drb = *drb_pair.second;
+          drb.disconnect();
+        }
 
-          // > Disconnect DRBs from F1-U and remove F1-U bearer.
-          drb.disconnect_rx();
+        // > Disconnect SRBs.
+        for (du_ue_srb& srb : ue->bearers.srbs()) {
+          srb.disconnect();
         }
       });
 }

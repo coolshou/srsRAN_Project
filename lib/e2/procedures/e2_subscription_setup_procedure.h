@@ -22,9 +22,10 @@
 #pragma once
 
 #include "../common/e2ap_asn1_utils.h"
-#include "e2_event_manager.h"
 #include "srsran/asn1/e2ap/e2ap.h"
 #include "srsran/e2/e2.h"
+#include "srsran/e2/e2_event_manager.h"
+#include "srsran/e2/subscription/e2_subscription.h"
 #include "srsran/support/async/async_task.h"
 #include "srsran/support/timers.h"
 
@@ -35,11 +36,12 @@ class e2_subscription_setup_procedure
 {
 public:
   e2_subscription_setup_procedure(e2_message_notifier&  ric_notif_,
-                                  e2_subscriber&        sub_notif_,
+                                  e2_subscription_proc& subscription_mngr_,
                                   timer_factory         timers_,
                                   srslog::basic_logger& logger_);
 
-  void run_subscription_procedure(const asn1::e2ap::ricsubscription_request_s request_);
+  void run_subscription_procedure(const asn1::e2ap::ricsubscription_request_s request_,
+                                  e2_event_manager&                           event_manager);
 
 private:
   // results senders
@@ -48,7 +50,7 @@ private:
 
   srslog::basic_logger& logger;
   e2_message_notifier&  ric_notif;
-  e2_subscriber&        sub_notif;
+  e2_subscription_proc& subscription_mngr;
   timer_factory         timers;
 };
 

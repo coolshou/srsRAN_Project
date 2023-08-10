@@ -28,6 +28,7 @@
 #include "srsran/fapi_adaptor/phy/messages/pucch.h"
 #include "srsran/fapi_adaptor/phy/messages/pusch.h"
 #include "srsran/fapi_adaptor/phy/messages/ssb.h"
+#include "srsran/instrumentation/traces/du_traces.h"
 #include "srsran/phy/support/prach_buffer_context.h"
 #include "srsran/phy/support/resource_grid_pool.h"
 #include "srsran/phy/upper/downlink_processor.h"
@@ -42,16 +43,16 @@ namespace {
 class downlink_processor_dummy : public downlink_processor
 {
 public:
-  void process_pdcch(const pdcch_processor::pdu_t& pdu) override {}
-  void process_pdsch(const static_vector<span<const uint8_t>, pdsch_processor::MAX_NOF_TRANSPORT_BLOCKS>& data,
+  bool process_pdcch(const pdcch_processor::pdu_t& pdu) override { return true; }
+  bool process_pdsch(const static_vector<span<const uint8_t>, pdsch_processor::MAX_NOF_TRANSPORT_BLOCKS>& data,
                      const pdsch_processor::pdu_t&                                                        pdu) override
   {
+    return true;
   }
-  void process_ssb(const ssb_processor::pdu_t& pdu) override {}
-  void process_nzp_csi_rs(const nzp_csi_rs_generator::config_t& config) override {}
-  void configure_resource_grid(const resource_grid_context& context, resource_grid& grid) override {}
+  bool process_ssb(const ssb_processor::pdu_t& pdu) override { return true; }
+  bool process_nzp_csi_rs(const nzp_csi_rs_generator::config_t& config) override { return true; }
+  bool configure_resource_grid(const resource_grid_context& context, resource_grid& grid) override { return true; }
   void finish_processing_pdus() override {}
-  bool is_reserved() const override { return false; }
 };
 
 } // namespace
@@ -65,19 +66,32 @@ fapi_to_phy_translator::slot_based_upper_phy_controller::slot_based_upper_phy_co
 {
 }
 
+fapi_to_phy_translator::slot_based_upper_phy_controller::slot_based_upper_phy_controller(slot_point slot_) :
+  slot(slot_), dl_processor(dummy_dl_processor)
+{
+}
+
 fapi_to_phy_translator::slot_based_upper_phy_controller::slot_based_upper_phy_controller(
     downlink_processor_pool& dl_processor_pool,
     resource_grid_pool&      rg_pool,
     slot_point               slot_,
     unsigned                 sector_id) :
-  slot(slot_), dl_processor(dl_processor_pool.get_processor(slot_, sector_id))
+  slot(slot_), dl_processor(dl_processor_pool.get_processor(slot_, 0))
 {
   resource_grid_context context = {slot_, sector_id};
   // Grab the resource grid.
-  resource_grid& grid = rg_pool.get_resource_grid(context);
+  // FIXME: 0 is hardcoded as the sector as in this implementation there is one DU per sector, so each DU have its own
+  // resource grid pool and downlink processor pool. It is also in the previous get processor call of the downlink
+  // processor pool
+  resource_grid& grid = rg_pool.get_resource_grid({slot_, 0});
 
   // Configure the downlink processor.
-  dl_processor.get().configure_resource_grid(context, grid);
+  bool success = dl_processor.get().configure_resource_grid(context, grid);
+
+  // Swap the DL processor with a dummy if it failed to configure the resource grid.
+  if (!success) {
+    dl_processor = dummy_dl_processor;
+  }
 }
 
 fapi_to_phy_translator::slot_based_upper_phy_controller&
@@ -124,21 +138,23 @@ static re_pattern get_re_pattern_port(const csi_rs_pattern& pattern_all_ports, u
                     pattern_all_ports.prb_patterns[i_port].symbol_mask);
 }
 
-/// \brief Returns a vector of the RE patterns from the CSI-RS PDUs of the given DL_TTI.request.
-/// Each element of the vector refers to a CSI-RS PDU with the same index.
+/// \brief Returns a list of the RE patterns that carry CSI-RS for the given DL_TTI.request.
+/// Each element of the list refers to a CSI-RS PDU with the same index.
 static static_vector<re_pattern_list, MAX_CSI_RS_PDUS_PER_SLOT>
-calculate_csi_re_pattern(const fapi::dl_tti_request_message& msg, uint16_t cell_bandwidth_prb)
+generate_csi_re_pattern_list(const fapi::dl_tti_request_message& msg, uint16_t cell_bandwidth_prb)
 {
-  // Get all the CSI-RS patterns from the message.
-  // NOTE: Assuming one port only in the pattern.
   static_vector<re_pattern_list, MAX_CSI_RS_PDUS_PER_SLOT> re_pattern_lst;
+
   for (const auto& pdu : msg.pdus) {
     switch (pdu.pdu_type) {
       case fapi::dl_pdu_type::CSI_RS: {
         csi_rs_pattern pattern;
         get_csi_rs_pattern_from_fapi_pdu(pattern, pdu.csi_rs_pdu, cell_bandwidth_prb);
+
         auto& re_pat = re_pattern_lst.emplace_back();
-        re_pat.merge(get_re_pattern_port(pattern, 0));
+        for (unsigned port = 0, nof_ports = pattern.prb_patterns.size(); port != nof_ports; ++port) {
+          re_pat.merge(get_re_pattern_port(pattern, port));
+        }
         break;
       }
       default:
@@ -155,18 +171,26 @@ static downlink_pdus translate_dl_tti_pdus_to_phy_pdus(const fapi::dl_tti_reques
                                                        const downlink_pdu_validator&       dl_pdu_validator,
                                                        srslog::basic_logger&               logger,
                                                        subcarrier_spacing                  scs_common,
-                                                       uint16_t                            cell_bandwidth_prb)
+                                                       uint16_t                            cell_bandwidth_prb,
+                                                       const precoding_matrix_repository&  pm_repo)
 {
   downlink_pdus pdus;
-  const auto&   csi_re_patterns = calculate_csi_re_pattern(msg, cell_bandwidth_prb);
+  const auto&   csi_re_patterns = generate_csi_re_pattern_list(msg, cell_bandwidth_prb);
+
   for (const auto& pdu : msg.pdus) {
     switch (pdu.pdu_type) {
       case fapi::dl_pdu_type::CSI_RS: {
-        if (pdu.csi_rs_pdu.type != csi_rs_type::CSI_RS_NZP) {
+        if (pdu.csi_rs_pdu.type != csi_rs_type::CSI_RS_NZP && pdu.csi_rs_pdu.type != csi_rs_type::CSI_RS_ZP) {
           logger.warning(
-              "Only NZP-CSI-RS PDU type is supported. Skipping DL_TTI.request message in {}.{}.", msg.sfn, msg.slot);
+              "Only NZP-CSI-RS and ZP-CSI-RS PDU types are supported. Skipping DL_TTI.request message in {}.{}.",
+              msg.sfn,
+              msg.slot);
 
           return {};
+        }
+        // ZP-CSI does not need any further work to do.
+        if (pdu.csi_rs_pdu.type == csi_rs_type::CSI_RS_ZP) {
+          break;
         }
         nzp_csi_rs_generator::config_t& csi_pdu = pdus.csi_rs.emplace_back();
         convert_csi_rs_fapi_to_phy(csi_pdu, pdu.csi_rs_pdu, msg.sfn, msg.slot, cell_bandwidth_prb);
@@ -182,7 +206,7 @@ static downlink_pdus translate_dl_tti_pdus_to_phy_pdus(const fapi::dl_tti_reques
         // For each DCI in the PDCCH PDU, create a pdcch_processor::pdu_t.
         for (unsigned i_dci = 0, i_dci_end = pdu.pdcch_pdu.dl_dci.size(); i_dci != i_dci_end; ++i_dci) {
           pdcch_processor::pdu_t& pdcch_pdu = pdus.pdcch.emplace_back();
-          convert_pdcch_fapi_to_phy(pdcch_pdu, pdu.pdcch_pdu, msg.sfn, msg.slot, i_dci);
+          convert_pdcch_fapi_to_phy(pdcch_pdu, pdu.pdcch_pdu, msg.sfn, msg.slot, i_dci, pm_repo);
           if (!dl_pdu_validator.is_valid(pdcch_pdu)) {
             logger.warning(
                 "Unsupported DL DCI {} detected. Skipping DL_DCI.request message in {}.{}.", i_dci, msg.sfn, msg.slot);
@@ -194,7 +218,7 @@ static downlink_pdus translate_dl_tti_pdus_to_phy_pdus(const fapi::dl_tti_reques
       }
       case fapi::dl_pdu_type::PDSCH: {
         pdsch_processor::pdu_t& pdsch_pdu = pdus.pdsch.emplace_back();
-        convert_pdsch_fapi_to_phy(pdsch_pdu, pdu.pdsch_pdu, msg.sfn, msg.slot, csi_re_patterns);
+        convert_pdsch_fapi_to_phy(pdsch_pdu, pdu.pdsch_pdu, msg.sfn, msg.slot, csi_re_patterns, pm_repo);
         if (!dl_pdu_validator.is_valid(pdsch_pdu)) {
           logger.warning(
               "Unsupported PDSCH PDU detected. Skipping DL_TTI.request message in {}.{}.", msg.sfn, msg.slot);
@@ -217,6 +241,7 @@ static downlink_pdus translate_dl_tti_pdus_to_phy_pdus(const fapi::dl_tti_reques
         srsran_assert(0, "DL_TTI.request PDU type value ({}) not recognized.", static_cast<unsigned>(pdu.pdu_type));
     }
   }
+
   return pdus;
 }
 
@@ -235,11 +260,16 @@ void fapi_to_phy_translator::dl_tti_request(const fapi::dl_tti_request_message& 
                    current_slot_controller.get_slot().slot_index(),
                    msg.sfn,
                    msg.slot);
+    l2_tracer << instant_trace_event{"dl_tti_req_late", instant_trace_event::cpu_scope::global};
     return;
   }
 
+  // Configure the slot controller to manage the downlink processor and resource grid for this downlink slot.
+  current_slot_controller =
+      slot_based_upper_phy_controller(dl_processor_pool, dl_rg_pool, current_slot_controller.get_slot(), sector_id);
+
   const downlink_pdus& pdus = translate_dl_tti_pdus_to_phy_pdus(
-      msg, dl_pdu_validator, logger, scs_common, carrier_cfg.dl_grid_size[to_numerology_value(scs_common)]);
+      msg, dl_pdu_validator, logger, scs_common, carrier_cfg.dl_grid_size[to_numerology_value(scs_common)], *pm_repo);
 
   // Process the PDUs
   for (const auto& ssb : pdus.ssb) {
@@ -288,6 +318,12 @@ static prach_detector::configuration get_prach_dectector_config_from(const prach
   config.start_preamble_index  = context.start_preamble_index;
   config.nof_preamble_indices  = context.nof_preamble_indices;
   config.ra_scs                = to_ra_subcarrier_spacing(context.pusch_scs);
+  if (config.format < prach_format_type::three) {
+    config.ra_scs = prach_subcarrier_spacing::kHz1_25;
+  } else if (config.format == prach_format_type::three) {
+    config.ra_scs = prach_subcarrier_spacing::kHz5;
+  }
+  config.nof_rx_ports = 1;
 
   return config;
 }
@@ -330,7 +366,7 @@ static uplink_pdus translate_ul_tti_pdus_to_phy_pdus(const fapi::ul_tti_request_
       }
       case fapi::ul_pdu_type::PUSCH: {
         uplink_processor::pusch_pdu& ul_pdu = pdus.pusch.emplace_back();
-        convert_pusch_fapi_to_phy(ul_pdu, pdu.pusch_pdu, msg.sfn, msg.slot);
+        convert_pusch_fapi_to_phy(ul_pdu, pdu.pusch_pdu, msg.sfn, msg.slot, carrier_cfg.num_rx_ant);
         if (!ul_pdu_validator.is_valid(ul_pdu.pdu)) {
           logger.warning(
               "Unsupported PUSCH PDU detected. Skipping UL_TTI.request message in {}.{}.", msg.sfn, msg.slot);
@@ -361,6 +397,7 @@ void fapi_to_phy_translator::ul_tti_request(const fapi::ul_tti_request_message& 
                    current_slot_controller.get_slot().slot_index(),
                    msg.sfn,
                    msg.slot);
+    l2_tracer << instant_trace_event{"ul_tti_req_late", instant_trace_event::cpu_scope::global};
     return;
   }
 
@@ -389,8 +426,11 @@ void fapi_to_phy_translator::ul_tti_request(const fapi::ul_tti_request_message& 
   resource_grid_context rg_context;
   rg_context.slot   = slot;
   rg_context.sector = sector_id;
+
   // Get ul_resource_grid.
-  resource_grid& ul_rg = ul_rg_pool.get_resource_grid(rg_context);
+  resource_grid_context pool_context = rg_context;
+  pool_context.sector                = 0;
+  resource_grid& ul_rg               = ul_rg_pool.get_resource_grid(pool_context);
   // Request to capture uplink slot.
   ul_request_processor.process_uplink_slot_request(rg_context, ul_rg);
 }
@@ -407,6 +447,7 @@ void fapi_to_phy_translator::ul_dci_request(const fapi::ul_dci_request_message& 
                    current_slot_controller.get_slot().slot_index(),
                    msg.sfn,
                    msg.slot);
+    l2_tracer << instant_trace_event{"ul_dci_req_late", instant_trace_event::cpu_scope::global};
     return;
   }
 
@@ -415,7 +456,7 @@ void fapi_to_phy_translator::ul_dci_request(const fapi::ul_dci_request_message& 
     // For each DCI in the PDCCH PDU, create a pdcch_processor::pdu_t.
     for (unsigned i_dci = 0, i_dci_end = pdu.pdu.dl_dci.size(); i_dci != i_dci_end; ++i_dci) {
       pdcch_processor::pdu_t& pdcch_pdu = pdus.emplace_back();
-      convert_pdcch_fapi_to_phy(pdcch_pdu, pdu.pdu, msg.sfn, msg.slot, i_dci);
+      convert_pdcch_fapi_to_phy(pdcch_pdu, pdu.pdu, msg.sfn, msg.slot, i_dci, *pm_repo);
       if (!dl_pdu_validator.is_valid(pdcch_pdu)) {
         logger.warning(
             "Unsupported UL DCI {} detected. Skipping UL_DCI.request message in {}.{}.", i_dci, msg.sfn, msg.slot);
@@ -441,12 +482,7 @@ void fapi_to_phy_translator::tx_data_request(const fapi::tx_data_request_message
                    current_slot_controller.get_slot().slot_index(),
                    msg.sfn,
                    msg.slot);
-    return;
-  }
-
-  // Skip if there is no PDSCH PDU in the repository. This may be caused by a PDU not supported in the
-  // DL_TTI.request.
-  if (pdsch_pdu_repository.empty()) {
+    l2_tracer << instant_trace_event{"tx_data_req_late", instant_trace_event::cpu_scope::global};
     return;
   }
 
@@ -454,6 +490,12 @@ void fapi_to_phy_translator::tx_data_request(const fapi::tx_data_request_message
     logger.warning("Invalid TX_Data.request. Message contains ({}) payload PDUs but expected ({})",
                    msg.pdus.size(),
                    pdsch_pdu_repository.size());
+    return;
+  }
+
+  // Skip if there is no PDSCH PDU in the repository. This may be caused by a PDU not supported in the
+  // DL_TTI.request.
+  if (pdsch_pdu_repository.empty()) {
     return;
   }
 
@@ -470,7 +512,11 @@ void fapi_to_phy_translator::handle_new_slot(slot_point slot)
 {
   std::lock_guard<std::mutex> lock(mutex);
 
-  current_slot_controller = slot_based_upper_phy_controller(dl_processor_pool, dl_rg_pool, slot, sector_id);
+  // On new slot, create a controller that only manages the slot. In case that a DL_TTI.request is received, a new slot
+  // controller will be created and will be responsible for managing the downlink processor and resource grid for the
+  // downlink slot. In case that an UL_TTI.request is received, the slot controller will only manage the slot, giving
+  // access to the current slot.
+  current_slot_controller = slot_based_upper_phy_controller(slot);
   pdsch_pdu_repository.clear();
   ul_pdu_repository.clear_slot(slot);
 }

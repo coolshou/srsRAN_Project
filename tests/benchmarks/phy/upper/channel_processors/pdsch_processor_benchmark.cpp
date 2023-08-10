@@ -24,7 +24,9 @@
 #include "../../../lib/scheduler/support/tbs_calculator.h"
 #include "srsran/phy/support/support_factories.h"
 #include "srsran/phy/upper/channel_processors/channel_processor_factories.h"
+#include "srsran/ran/precoding/precoding_codebooks.h"
 #include "srsran/support/benchmark_utils.h"
+#include "srsran/support/executors/task_worker_pool.h"
 #include "srsran/support/srsran_test.h"
 #include "srsran/support/unique_thread.h"
 #include <condition_variable>
@@ -80,12 +82,15 @@ static uint64_t                           nof_threads                 = max_nof_
 static uint64_t                           batch_size_per_thread       = 100;
 static std::string                        selected_profile_name       = "default";
 static std::string                        ldpc_encoder_type           = "auto";
+static std::string                        pdsch_processor_type        = "generic";
 static benchmark_modes                    benchmark_mode              = benchmark_modes::throughput_total;
-static unsigned                           nof_tx_layers               = 1;
 static dmrs_type                          dmrs                        = dmrs_type::TYPE1;
-static unsigned                           nof_cdm_groups_without_data = 2;
+static unsigned                           nof_cdm_groups_without_data = 1;
 static bounded_bitset<MAX_NSYMB_PER_SLOT> dmrs_symbol_mask =
     {false, false, true, false, false, false, false, true, false, false, false, true, false, false};
+static unsigned                                   nof_pdsch_processor_concurrent_threads = 4;
+static std::unique_ptr<task_worker_pool>          worker_pool                            = nullptr;
+static std::unique_ptr<task_worker_pool_executor> executor                               = nullptr;
 
 // Thread shared variables.
 static std::mutex              mutex_pending_count;
@@ -97,12 +102,15 @@ static unsigned                finish_count  = 0;
 
 // Test profile structure, initialized with default profile values.
 struct test_profile {
+  enum class mimo_topology { one_port_one_layer = 0, two_port_two_layer, four_port_four_layer };
+
   std::string                      name         = "default";
   std::string                      description  = "Runs all combinations.";
   subcarrier_spacing               scs          = subcarrier_spacing::kHz15;
   std::vector<unsigned>            rv_set       = {0};
   cyclic_prefix                    cp           = cyclic_prefix::NORMAL;
   unsigned                         start_symbol = 2;
+  mimo_topology                    mimo         = mimo_topology::one_port_one_layer;
   unsigned                         nof_symbols  = get_nsymb_per_slot(cyclic_prefix::NORMAL) - 2;
   std::vector<unsigned>            nof_prb_set  = {25, 52, 106, 270};
   std::vector<sch_mcs_description> mcs_set      = {{modulation_scheme::QPSK, 120.0F},
@@ -126,6 +134,7 @@ static const std::vector<test_profile> profile_set = {
      {0},
      cyclic_prefix::NORMAL,
      0,
+     test_profile::mimo_topology::one_port_one_layer,
      12,
      {25},
      {{modulation_scheme::QPSK, 120.0F}}},
@@ -136,6 +145,7 @@ static const std::vector<test_profile> profile_set = {
      {0},
      cyclic_prefix::NORMAL,
      0,
+     test_profile::mimo_topology::one_port_one_layer,
      12,
      {25},
      {{modulation_scheme::QAM256, 948.0F}}},
@@ -146,6 +156,7 @@ static const std::vector<test_profile> profile_set = {
      {0},
      cyclic_prefix::NORMAL,
      0,
+     test_profile::mimo_topology::one_port_one_layer,
      12,
      {106},
      {{modulation_scheme::QPSK, 120.0F}}},
@@ -156,6 +167,7 @@ static const std::vector<test_profile> profile_set = {
      {0},
      cyclic_prefix::NORMAL,
      0,
+     test_profile::mimo_topology::one_port_one_layer,
      12,
      {106},
      {{modulation_scheme::QAM16, 658.0F}}},
@@ -166,6 +178,7 @@ static const std::vector<test_profile> profile_set = {
      {0},
      cyclic_prefix::NORMAL,
      0,
+     test_profile::mimo_topology::one_port_one_layer,
      12,
      {106},
      {{modulation_scheme::QAM64, 873.0F}}},
@@ -176,6 +189,7 @@ static const std::vector<test_profile> profile_set = {
      {0},
      cyclic_prefix::NORMAL,
      0,
+     test_profile::mimo_topology::one_port_one_layer,
      12,
      {106},
      {{modulation_scheme::QAM256, 948.0F}}},
@@ -186,6 +200,7 @@ static const std::vector<test_profile> profile_set = {
      {0},
      cyclic_prefix::NORMAL,
      0,
+     test_profile::mimo_topology::one_port_one_layer,
      12,
      {270},
      {{modulation_scheme::QPSK, 120.0F}}},
@@ -196,6 +211,40 @@ static const std::vector<test_profile> profile_set = {
      {0},
      cyclic_prefix::NORMAL,
      0,
+     test_profile::mimo_topology::one_port_one_layer,
+     12,
+     {270},
+     {{modulation_scheme::QAM256, 948.0F}}},
+
+    {"scs30_100MHz_256qam_max",
+     "Encodes PDSCH with 100 MHz of bandwidth and a 30 kHz SCS, 256-QAM modulation at maximum code rate.",
+     subcarrier_spacing::kHz30,
+     {0},
+     cyclic_prefix::NORMAL,
+     0,
+     test_profile::mimo_topology::one_port_one_layer,
+     12,
+     {270},
+     {{modulation_scheme::QAM256, 948.0F}}},
+
+    {"2port_2layer_scs30_100MHz_256qam",
+     "Encodes 2 layers of PDSCH with 100 MHz of bandwidth and a 30 kHz SCS, 256-QAM modulation at maximum code rate.",
+     subcarrier_spacing::kHz30,
+     {0},
+     cyclic_prefix::NORMAL,
+     0,
+     test_profile::mimo_topology::two_port_two_layer,
+     12,
+     {270},
+     {{modulation_scheme::QAM256, 948.0F}}},
+
+    {"4port_4layer_scs30_100MHz_256qam",
+     "Encodes 4 layers of PDSCH with 100 MHz of bandwidth and a 30 kHz SCS, 256-QAM modulation at maximum code rate.",
+     subcarrier_spacing::kHz30,
+     {0},
+     cyclic_prefix::NORMAL,
+     0,
+     test_profile::mimo_topology::four_port_four_layer,
      12,
      {270},
      {{modulation_scheme::QAM256, 948.0F}}},
@@ -205,7 +254,7 @@ static void usage(const char* prog)
 {
   fmt::print("Usage: {} [-m benchmark mode] [-R repetitions] [-B Batch size per thread] [-T number of threads] [-D "
              "LDPC type] [-M rate "
-             "matcher type] [-P profile] [-s silent]\n",
+             "matcher type] [-P profile]\n",
              prog);
   fmt::print("\t-m Benchmark mode. [Default {}]\n", to_string(benchmark_mode));
   fmt::print("\t\t {:<20}It does not print any result.\n", to_string(benchmark_modes::silent));
@@ -218,6 +267,7 @@ static void usage(const char* prog)
   fmt::print("\t-B Batch size [Default {}]\n", batch_size_per_thread);
   fmt::print("\t-T Number of threads [Default {}, max. {}]\n", nof_threads, max_nof_threads);
   fmt::print("\t-D LDPC encoder type. [Default {}]\n", ldpc_encoder_type);
+  fmt::print("\t-t PDSCH processor type (generic, concurrent:nof_threads). [Default {}]\n", pdsch_processor_type);
   fmt::print("\t-P Benchmark profile. [Default {}]\n", selected_profile_name);
   for (const test_profile& profile : profile_set) {
     fmt::print("\t\t {:<30}{}\n", profile.name, profile.description);
@@ -228,7 +278,7 @@ static void usage(const char* prog)
 static int parse_args(int argc, char** argv)
 {
   int opt = 0;
-  while ((opt = getopt(argc, argv, "R:T:B:D:P:m:h")) != -1) {
+  while ((opt = getopt(argc, argv, "R:T:B:D:P:m:t:h")) != -1) {
     switch (opt) {
       case 'R':
         nof_repetitions = std::strtol(optarg, nullptr, 10);
@@ -241,6 +291,9 @@ static int parse_args(int argc, char** argv)
         break;
       case 'D':
         ldpc_encoder_type = std::string(optarg);
+        break;
+      case 't':
+        pdsch_processor_type = std::string(optarg);
         break;
       case 'P':
         selected_profile_name = std::string(optarg);
@@ -285,6 +338,20 @@ static std::vector<test_case_type> generate_test_cases(const test_profile& profi
 {
   std::vector<test_case_type> test_case_set;
 
+  // Select precoding configuration.
+  precoding_configuration precoding_config;
+  switch (profile.mimo) {
+    case test_profile::mimo_topology::one_port_one_layer:
+      precoding_config = precoding_configuration::make_wideband(make_single_port());
+      break;
+    case test_profile::mimo_topology::two_port_two_layer:
+      precoding_config = precoding_configuration::make_wideband(make_two_layer_two_ports(0));
+      break;
+    case test_profile::mimo_topology::four_port_four_layer:
+      precoding_config = precoding_configuration::make_wideband(make_four_layer_four_ports_type1_sp(0, 0));
+      break;
+  }
+
   for (sch_mcs_description mcs : profile.mcs_set) {
     for (unsigned nof_prb : profile.nof_prb_set) {
       for (unsigned i_rv : profile.rv_set) {
@@ -292,10 +359,10 @@ static std::vector<test_case_type> generate_test_cases(const test_profile& profi
         tbs_calculator_configuration tbs_config = {};
         tbs_config.mcs_descr                    = mcs;
         tbs_config.n_prb                        = nof_prb;
-        tbs_config.nof_layers                   = nof_tx_layers;
+        tbs_config.nof_layers                   = precoding_config.get_nof_layers();
         tbs_config.nof_symb_sh                  = profile.nof_symbols;
-        tbs_config.nof_dmrs_prb                 = dmrs.nof_dmrs_per_rb() * dmrs_symbol_mask.count();
-        unsigned tbs                            = tbs_calculator_calculate(tbs_config);
+        tbs_config.nof_dmrs_prb = dmrs.nof_dmrs_per_rb() * dmrs_symbol_mask.count() * nof_cdm_groups_without_data;
+        unsigned tbs            = tbs_calculator_calculate(tbs_config);
 
         // Build the PDSCH PDU configuration.
         pdsch_processor::pdu_t config = {nullopt,
@@ -306,7 +373,6 @@ static std::vector<test_case_type> generate_test_cases(const test_profile& profi
                                          profile.cp,
                                          {pdsch_processor::codeword_description{mcs.modulation, i_rv}},
                                          0,
-                                         {0},
                                          pdsch_processor::pdu_t::CRB0,
                                          dmrs_symbol_mask,
                                          dmrs_type::options::TYPE1,
@@ -320,7 +386,8 @@ static std::vector<test_case_type> generate_test_cases(const test_profile& profi
                                          ldpc::MAX_CODEBLOCK_SIZE / 8,
                                          {},
                                          0.0,
-                                         0.0};
+                                         0.0,
+                                         precoding_config};
         test_case_set.emplace_back(std::tuple<pdsch_processor::pdu_t, unsigned>(config, tbs));
       }
     }
@@ -328,9 +395,14 @@ static std::vector<test_case_type> generate_test_cases(const test_profile& profi
   return test_case_set;
 }
 
-// Instantiates the PDSCH processor and validator.
-static std::tuple<std::unique_ptr<pdsch_processor>, std::unique_ptr<pdsch_pdu_validator>> create_processor()
+static pdsch_processor_factory& get_processor_factory()
 {
+  static std::shared_ptr<pdsch_processor_factory> pdsch_proc_factory = nullptr;
+
+  if (pdsch_proc_factory) {
+    return *pdsch_proc_factory;
+  }
+
   // Create pseudo-random sequence generator.
   std::shared_ptr<pseudo_random_generator_factory> prg_factory = create_pseudo_random_generator_sw_factory();
   TESTASSERT(prg_factory);
@@ -374,25 +446,73 @@ static std::tuple<std::unique_ptr<pdsch_processor>, std::unique_ptr<pdsch_pdu_va
   std::shared_ptr<pdsch_encoder_factory> pdsch_enc_factory = create_pdsch_encoder_factory_sw(pdsch_enc_config);
   TESTASSERT(pdsch_enc_factory);
 
-  // Create PDSCH processor.
-  std::shared_ptr<pdsch_processor_factory> pdsch_proc_factory =
-      create_pdsch_processor_factory_sw(pdsch_enc_factory, pdsch_mod_factory, dmrs_pdsch_gen_factory);
+  // Create generic PDSCH processor.
+  if (pdsch_processor_type == "generic") {
+    pdsch_proc_factory =
+        create_pdsch_processor_factory_sw(pdsch_enc_factory, pdsch_mod_factory, dmrs_pdsch_gen_factory);
+  }
+
+  if (pdsch_processor_type == "lite") {
+    pdsch_proc_factory = create_pdsch_lite_processor_factory_sw(ldpc_segm_tx_factory,
+                                                                ldpc_enc_factory,
+                                                                ldpc_rm_factory,
+                                                                prg_factory,
+                                                                chan_modulation_factory,
+                                                                dmrs_pdsch_gen_factory);
+  }
+
+  // Create concurrent PDSCH processor.
+  if (pdsch_processor_type.find("concurrent") != std::string::npos) {
+    std::size_t pos = pdsch_processor_type.find(":");
+    if (pos < pdsch_processor_type.size() - 1) {
+      std::string str                        = pdsch_processor_type.substr(pos + 1);
+      nof_pdsch_processor_concurrent_threads = std::strtol(str.c_str(), nullptr, 10);
+    }
+
+    worker_pool = std::make_unique<task_worker_pool>(
+        nof_pdsch_processor_concurrent_threads, 1024, "pdsch_proc", os_thread_realtime_priority::max());
+    executor = std::make_unique<task_worker_pool_executor>(*worker_pool);
+
+    pdsch_proc_factory = create_pdsch_concurrent_processor_factory_sw(ldpc_segm_tx_factory,
+                                                                      ldpc_enc_factory,
+                                                                      ldpc_rm_factory,
+                                                                      prg_factory,
+                                                                      chan_modulation_factory,
+                                                                      dmrs_pdsch_gen_factory,
+                                                                      *executor,
+                                                                      nof_pdsch_processor_concurrent_threads);
+  }
   TESTASSERT(pdsch_proc_factory);
 
-  // Create PDSCH processor.
-  std::unique_ptr<pdsch_processor> processor = pdsch_proc_factory->create();
-  TESTASSERT(processor);
+  return *pdsch_proc_factory;
+}
 
-  // Create PDSCH processor validator.
-  std::unique_ptr<pdsch_pdu_validator> validator = pdsch_proc_factory->create_validator();
-  TESTASSERT(validator);
+// Instantiates the PDSCH processor and validator.
+static std::unique_ptr<pdsch_pdu_validator> create_validator()
+{
+  return get_processor_factory().create_validator();
+}
 
-  return std::make_tuple(std::move(processor), std::move(validator));
+// Instantiates the PDSCH processor and validator.
+static std::unique_ptr<pdsch_processor> create_processor()
+{
+  return get_processor_factory().create();
+}
+
+// Creates a resource grid.
+static std::unique_ptr<resource_grid> create_resource_grid(unsigned nof_ports, unsigned nof_symbols, unsigned nof_subc)
+{
+  std::shared_ptr<channel_precoder_factory> precoding_factory = create_channel_precoder_factory("auto");
+  TESTASSERT(precoding_factory != nullptr, "Invalid channel precoder factory.");
+  std::shared_ptr<resource_grid_factory> rg_factory = create_resource_grid_factory(precoding_factory);
+  TESTASSERT(rg_factory != nullptr, "Invalid resource grid factory.");
+
+  return rg_factory->create(nof_ports, nof_symbols, nof_subc);
 }
 
 static void thread_process(const pdsch_processor::pdu_t& config, span<const uint8_t> data)
 {
-  std::unique_ptr<pdsch_processor> proc(std::get<0>(create_processor()));
+  std::unique_ptr<pdsch_processor> proc = create_processor();
 
   // Create grid.
   std::unique_ptr<resource_grid> grid = create_resource_grid(MAX_PORTS, MAX_NSYMB_PER_SLOT, MAX_RB * NRE);
@@ -421,7 +541,7 @@ static void thread_process(const pdsch_processor::pdu_t& config, span<const uint
     }
 
     // Process PDU.
-    proc->process(*grid, {data}, config);
+    proc->process(grid->get_mapper(), {data}, config);
 
     // Notify finish count.
     {
@@ -468,7 +588,7 @@ int main(int argc, char** argv)
     std::vector<uint8_t> data(tbs / 8);
     std::generate(data.begin(), data.end(), [&rgen]() { return static_cast<uint8_t>(rgen() & 0xff); });
 
-    std::unique_ptr<pdsch_pdu_validator> validator(std::move(std::get<1>(create_processor())));
+    std::unique_ptr<pdsch_pdu_validator> validator = create_validator();
 
     // Make sure the configuration is valid.
     TESTASSERT(validator->is_valid(config));
@@ -558,6 +678,10 @@ int main(int argc, char** argv)
   if ((benchmark_mode == benchmark_modes::throughput_thread) || (benchmark_mode == benchmark_modes::all)) {
     fmt::print("\n--- Thread throughput ---\n");
     perf_meas.print_percentiles_throughput("bits", 1.0 / static_cast<double>(nof_threads));
+  }
+
+  if (worker_pool) {
+    worker_pool->stop();
   }
 
   return 0;

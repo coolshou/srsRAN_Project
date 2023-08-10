@@ -26,10 +26,12 @@
 #include "srsran/f1u/cu_up/f1u_gateway.h"
 #include "srsran/gtpu/gtpu_config.h"
 #include "srsran/support/executors/task_executor.h"
-#include "srsran/support/io_broker/io_broker.h"
 #include "srsran/support/timers.h"
 
 namespace srsran {
+
+class io_broker;
+
 namespace srs_cu_up {
 
 struct network_interface_config {
@@ -53,6 +55,7 @@ struct network_interface_config {
 struct cu_up_configuration {
   task_executor*         cu_up_executor    = nullptr;
   task_executor*         gtpu_pdu_executor = nullptr;
+  task_executor*         cu_up_e2_exec     = nullptr;
   e1ap_message_notifier* e1ap_notifier     = nullptr; ///< Callback for incoming E1AP messages.
   f1u_cu_up_gateway*     f1u_gateway       = nullptr;
   io_broker*             epoll_broker      = nullptr; ///< IO broker to receive messages from a network gateway

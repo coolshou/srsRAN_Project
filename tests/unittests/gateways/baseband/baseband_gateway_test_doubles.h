@@ -37,18 +37,10 @@ class baseband_gateway_spy : public baseband_gateway
 {
 public:
   // See interface for documentation.
-  baseband_gateway_transmitter& get_transmitter(unsigned stream_id) override
-  {
-    transmitter.set_stream_id(stream_id);
-    return transmitter;
-  }
+  baseband_gateway_transmitter& get_transmitter() override { return transmitter; }
 
   // See interface for documentation.
-  baseband_gateway_receiver& get_receiver(unsigned stream_id) override
-  {
-    receiver.set_stream_id(stream_id);
-    return receiver;
-  }
+  baseband_gateway_receiver& get_receiver() override { return receiver; }
 
   /// Gets all transmit entries.
   const std::vector<baseband_gateway_transmitter_spy::entry_t>& get_transmit_entries() const
@@ -62,9 +54,10 @@ public:
     return receiver.get_entries();
   }
 
-  void set_transmitter_buffer_size(unsigned buffer_size) { transmitter.set_buffer_size(buffer_size); }
-
-  void set_receiver_buffer_size(unsigned buffer_size) { receiver.set_buffer_size(buffer_size); }
+  void set_receiver_current_timestamp(baseband_gateway_timestamp timestamp)
+  {
+    receiver.set_current_timestamp(timestamp);
+  }
 
   /// Clears all types of entries.
   void clear_all_entries()

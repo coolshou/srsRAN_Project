@@ -22,25 +22,16 @@ set_directory_properties(PROPERTIES LABELS "mac")
 
 include_directories(../../..)
 
-add_library(mac_test_helpers mac_test_helpers.cpp)
+add_library(mac_test_helpers mac_test_helpers.cpp mac_ctrl_test_dummies.cpp)
 target_link_libraries(mac_test_helpers srsran_support srslog sched_config)
 
 add_executable(mac_ue_create_test mac_ue_create_test.cpp)
-target_link_libraries(mac_ue_create_test srsran_pcap srsran_support srslog gtest gtest_main)
+target_link_libraries(mac_ue_create_test srsran_mac mac_test_helpers srsran_pcap srsran_support srslog gtest gtest_main)
 gtest_discover_tests(mac_ue_create_test)
 
 add_executable(mac_ctrl_test mac_ctrl_test.cpp)
-target_link_libraries(mac_ctrl_test srsran_pcap srsran_support srslog rrc_nr_asn1 srsran_mac)
+target_link_libraries(mac_ctrl_test mac_test_helpers srsran_pcap srsran_support srslog rrc_nr_asn1 srsran_mac gtest gtest_main)
 add_test(mac_ctrl_test mac_ctrl_test)
-
-add_executable(mac_dl_cfg_test mac_dl_cfg_test.cpp)
-target_link_libraries(mac_dl_cfg_test
-                      srsran_mac
-                      srsran_pcap
-                      srsran_support
-                      srslog
-                      sched_config)
-add_test(mac_dl_cfg_test mac_dl_cfg_test)
 
 add_executable(mac_ul_pdu_test mac_ul_pdu_test.cpp)
 target_link_libraries(mac_ul_pdu_test srsran_mac srsran_pcap srsran_support srslog gtest gtest_main)
@@ -50,14 +41,12 @@ add_executable(mac_ul_processor_test mac_ul_processor_test.cpp)
 target_link_libraries(mac_ul_processor_test srsran_mac mac_test_helpers srsran_pcap srsran_support srslog gtest gtest_main)
 add_test(mac_ul_processor_test mac_ul_processor_test)
 
-add_executable(mac_rar_pdu_assembler_test mac_rar_pdu_assembler_test.cpp)
-target_link_libraries(mac_rar_pdu_assembler_test srsran_mac srsran_ran srsran_pcap srsran_support srslog sched_config)
-add_test(mac_rar_pdu_assembler_test mac_rar_pdu_assembler_test)
-
-add_executable(dl_sch_pdu_assembler_test dl_sch_pdu_assembler_test.cpp)
-target_link_libraries(dl_sch_pdu_assembler_test srsran_mac srsran_pcap srsran_support srslog sched_config gtest gtest_main)
-add_test(dl_sch_pdu_assembler_test dl_sch_pdu_assembler_test)
-
-add_executable(mac_cell_processor_test mac_cell_processor_test.cpp)
-target_link_libraries(mac_cell_processor_test srsran_mac srsran_pcap sched_config gtest gtest_main)
-add_test(mac_cell_processor_test mac_cell_processor_test)
+add_executable(mac_dl_test
+        mac_dl_cfg_test.cpp
+        mac_dl_ue_manager_test.cpp
+        mac_cell_processor_test.cpp
+        dl_sch_pdu_assembler_test.cpp
+        mac_rar_pdu_assembler_test.cpp)
+target_link_libraries(mac_dl_test srsran_mac mac_test_helpers srsran_pcap sched_config gtest gtest_main)
+gtest_discover_tests(mac_dl_test)
+add_test(mac_dl_test mac_dl_test)
