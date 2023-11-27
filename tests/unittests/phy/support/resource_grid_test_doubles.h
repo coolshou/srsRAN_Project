@@ -35,6 +35,7 @@
 #include "srsran/support/srsran_assert.h"
 #include "srsran/support/srsran_test.h"
 #include <map>
+#include <mutex>
 #include <random>
 #include <tuple>
 
@@ -82,17 +83,20 @@ public:
   // See interface for documentation.
   void put(unsigned port, span<const resource_grid_coordinate> coordinates, span<const cf_t> symbols) override
   {
+    std::unique_lock<std::mutex> lock(entries_mutex);
     ++count;
     const cf_t* symbol_ptr = symbols.begin();
     for (const resource_grid_coordinate& coordinate : coordinates) {
       put(port, coordinate.symbol, coordinate.subcarrier, *(symbol_ptr++));
     }
+    fmt::print("entries.size()={}\n", entries.size());
   }
 
   // See interface for documentation.
   span<const cf_t>
   put(unsigned port, unsigned l, unsigned k_init, span<const bool> mask, span<const cf_t> symbols) override
   {
+    std::unique_lock<std::mutex> lock(entries_mutex);
     TESTASSERT(k_init + mask.size() <= max_prb * NRE,
                "The mask staring at {} for {} subcarriers exceeds the resource grid bandwidth (max {}).",
                k_init,
@@ -117,13 +121,21 @@ public:
                        const bounded_bitset<NRE * MAX_RB>& mask,
                        span<const cf_t>                    symbols) override
   {
+    std::unique_lock<std::mutex> lock(entries_mutex);
     ++count;
     unsigned i_symb = 0;
     for (unsigned k = 0; k != mask.size(); ++k) {
-      if (mask.test(k)) {
-        put(port, l, k + k_init, symbols[i_symb]);
-        ++i_symb;
+      // Skip if subcarrier is not active.
+      if (!mask.test(k)) {
+        continue;
       }
+
+      // Skip Symbol if the symbol is 0.
+      if ((symbols[i_symb].real() != 0) || (symbols[i_symb].imag() != 0)) {
+        put(port, l, k + k_init, symbols[i_symb]);
+      }
+
+      ++i_symb;
     }
 
     // Consume buffer.
@@ -133,6 +145,7 @@ public:
   // See interface for documentation.
   void put(unsigned port, unsigned l, unsigned k_init, span<const cf_t> symbols) override
   {
+    std::unique_lock<std::mutex> lock(entries_mutex);
     ++count;
     for (unsigned i = 0; i != symbols.size(); ++i) {
       put(port, l, k_init + i, symbols[i]);
@@ -213,6 +226,9 @@ private:
 
   /// Stores the resource grid written entries.
   std::map<entry_key_t, cf_t> entries;
+
+  /// Protects concurrent write to entries.
+  std::mutex entries_mutex;
 
   /// Counts the number of times a \c put method is called.
   unsigned count = 0;
@@ -438,11 +454,10 @@ public:
     srsran_assertion_failure("Resource grid spy does not implement the resource grid mapper.");
   }
 
-  void map(span<const cf_t>                    symbols,
-           unsigned                            i_symbol,
-           unsigned                            i_subcarrier,
-           const bounded_bitset<NRE * MAX_RB>& mask,
-           const precoding_weight_matrix&      precoding) override
+  void map(symbol_buffer&                 buffer,
+           const re_pattern_list&         pattern,
+           const re_pattern_list&         reserved,
+           const precoding_configuration& precoding) override
   {
     srsran_assertion_failure("Resource grid spy does not implement the resource grid mapper.");
   }
@@ -498,11 +513,10 @@ public:
     failure();
   }
 
-  void map(span<const cf_t> /* symbols */,
-           unsigned /* i_symbol */,
-           unsigned /* i_subcarrier */,
-           const bounded_bitset<NRE * MAX_RB>& /* mask */,
-           const precoding_weight_matrix& /* precoding */) override
+  void map(symbol_buffer& /* buffer */,
+           const re_pattern_list& /* pattern */,
+           const re_pattern_list& /* reserved */,
+           const precoding_configuration& /* precoding */) override
   {
     failure();
   }

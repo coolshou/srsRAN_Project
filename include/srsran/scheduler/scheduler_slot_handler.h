@@ -185,11 +185,23 @@ struct pdsch_information {
   optional<pdsch_precoding_info> precoding;
 };
 
+/// Dummy MAC CE payload.
+/// To be replaced by other MAC CE payload when its supported.
+using dummy_ce_payload = unsigned;
+
+/// Timing Advance Command CE payload.
+struct ta_cmd_ce_payload {
+  uint8_t  tag_id;
+  unsigned ta_cmd;
+};
+
 struct dl_msg_lc_info {
-  /// LCID {0..32}.
+  /// Values of LCID for DL-SCH. See TS 38.321, Table 6.2.1-1.
   lcid_dl_sch_t lcid;
   /// Number of scheduled bytes for this specific logical channel. {0..65535}.
   unsigned sched_bytes;
+  /// Holds payload of CE except UE Contention Resolution Identity.
+  variant<ta_cmd_ce_payload, dummy_ce_payload> ce_payload;
 };
 
 struct dl_msg_tb_info {
@@ -213,6 +225,8 @@ struct dl_msg_alloc {
     search_space_id ss_id;
     /// Number of times the HARQ process has been retransmitted.
     unsigned nof_retxs;
+    /// Offset that the OLLA algorithm applied to the DL MCS candidate to account for channel impairments.
+    optional<float> olla_offset;
   } context;
 };
 
@@ -324,6 +338,7 @@ struct ssb_information {
 /// Stores the information associated with an SIB1 or other SI allocation.
 struct sib_information {
   enum si_indicator_type { sib1, other_si } si_indicator;
+  optional<uint8_t> si_msg_index;
   unsigned          nof_txs;
   pdsch_information pdsch_cfg;
 };
@@ -416,6 +431,8 @@ struct ul_sched_info {
     unsigned nof_retxs;
     /// Delay between PDSCH message with RAR and its corresponding PUSCH.
     optional<unsigned> msg3_delay;
+    /// Offset that the OLLA algorithm applied to derive the UL MCS.
+    optional<float> olla_offset;
   } context;
 };
 

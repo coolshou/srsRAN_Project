@@ -48,7 +48,7 @@ TEST_P(pdcp_tx_test, sn_pack)
 
     // Pack header
     byte_buffer buf = {};
-    pdcp_tx->write_data_pdu_header(buf, hdr);
+    ASSERT_TRUE(pdcp_tx->write_data_pdu_header(buf, hdr));
     // Get expected PDU header
     byte_buffer exp_pdu;
     get_expected_pdu(sn, exp_pdu);
@@ -78,9 +78,11 @@ TEST_P(pdcp_tx_test, pdu_gen)
   auto test_pdu_gen = [this](uint32_t tx_next) {
     srsran::test_delimit_logger delimiter("TX PDU generation. SN_SIZE={} COUNT={}", sn_size, tx_next);
     // Set state of PDCP entiy
-    pdcp_tx_state st = {tx_next};
+    pdcp_tx_state st = {tx_next, tx_next};
     pdcp_tx->set_state(st);
-    pdcp_tx->enable_security(sec_cfg);
+    pdcp_tx->configure_security(sec_cfg);
+    pdcp_tx->set_integrity_protection(security::integrity_enabled::on);
+    pdcp_tx->set_ciphering(security::ciphering_enabled::on);
 
     // Write SDU
     byte_buffer sdu = {sdu1};
@@ -113,6 +115,70 @@ TEST_P(pdcp_tx_test, pdu_gen)
   }
 }
 
+/// \brief Test correct stalling of PDCP if RLC SDU queue is full
+TEST_P(pdcp_tx_test, pdu_stall)
+{
+  init(GetParam(), pdcp_rb_type::drb, pdcp_rlc_mode::am, pdcp_discard_timer::infinity);
+
+  auto test_pdu_gen = [this](uint32_t tx_next) {
+    srsran::test_delimit_logger delimiter("TX PDU stall. SN_SIZE={} COUNT={}", sn_size, tx_next);
+    // Set state of PDCP entiy
+    pdcp_tx_state st = {tx_next, tx_next};
+    pdcp_tx->set_state(st);
+    pdcp_tx->configure_security(sec_cfg);
+    pdcp_tx->set_integrity_protection(security::integrity_enabled::on);
+    pdcp_tx->set_ciphering(security::ciphering_enabled::on);
+
+    uint32_t sdu_queue_size = 4096;
+    uint32_t window_size    = pdcp_window_size(sn_size);
+    uint32_t stall          = std::min(sdu_queue_size, window_size - 1); // nof SDUs before stalling
+
+    // Write SDU
+    for (uint32_t count = tx_next; count < tx_next + stall; ++count) {
+      byte_buffer sdu = {sdu1};
+      pdcp_tx->handle_sdu(std::move(sdu));
+
+      // Get generated PDU
+      ASSERT_EQ(test_frame.pdu_queue.size(), 1);
+      pdcp_tx_pdu pdu = std::move(test_frame.pdu_queue.front());
+      test_frame.pdu_queue.pop();
+    }
+    {
+      // Write an SDU and SDU should be dropped
+      byte_buffer sdu = {sdu1};
+      pdcp_tx->handle_sdu(std::move(sdu));
+
+      // Get generated PDU
+      ASSERT_EQ(test_frame.pdu_queue.size(), 0);
+    }
+    {
+      // Notify transmission of all PDUs
+      pdcp_tx->handle_transmit_notification(pdcp_compute_sn(tx_next + stall, GetParam()));
+
+      // Write an SDU and SDU should be dropped
+      byte_buffer sdu = {sdu1};
+      pdcp_tx->handle_sdu(std::move(sdu));
+
+      // Get generated PDU
+      ASSERT_EQ(test_frame.pdu_queue.size(), 1);
+      test_frame.pdu_queue.pop();
+    }
+  };
+
+  if (config.sn_size == pdcp_sn_size::size12bits) {
+    test_pdu_gen(0);
+    test_pdu_gen(2048);
+    test_pdu_gen(4095);
+    test_pdu_gen(4096);
+  } else if (config.sn_size == pdcp_sn_size::size18bits) {
+    test_pdu_gen(0);
+    test_pdu_gen(131072);
+    test_pdu_gen(262144);
+  } else {
+    FAIL();
+  }
+}
+
 /// Test correct start of PDCP discard timers
 /// and normal expiry of them
 TEST_P(pdcp_tx_test, discard_timer_and_expiry)
@@ -121,20 +187,22 @@ TEST_P(pdcp_tx_test, discard_timer_and_expiry)
 
   auto test_discard_timer_expiry = [this](uint32_t tx_next) {
     // Set state of PDCP entiy
-    pdcp_tx_state st = {tx_next};
+    pdcp_tx_state st = {tx_next, tx_next};
     pdcp_tx->set_state(st);
-    pdcp_tx->enable_security(sec_cfg);
+    pdcp_tx->configure_security(sec_cfg);
 
     // Write first SDU
     {
       byte_buffer sdu = {sdu1};
       pdcp_tx->handle_sdu(std::move(sdu));
+      pdcp_tx->handle_transmit_notification(pdcp_compute_sn(tx_next, GetParam()));
       ASSERT_EQ(1, pdcp_tx->nof_discard_timers());
     }
     // Write second SDU
     {
       byte_buffer sdu = {sdu1};
       pdcp_tx->handle_sdu(std::move(sdu));
+      pdcp_tx->handle_transmit_notification(pdcp_compute_sn(tx_next + 1, GetParam()));
       ASSERT_EQ(2, pdcp_tx->nof_discard_timers());
     }
     // Let timers expire
@@ -168,7 +236,7 @@ TEST_P(pdcp_tx_test, discard_timer_and_stop)
   auto test_discard_timer_stop = [this](pdcp_tx_state st) {
     // Set state of PDCP entiy
     pdcp_tx->set_state(st);
-    pdcp_tx->enable_security(sec_cfg);
+    pdcp_tx->configure_security(sec_cfg);
 
     constexpr uint32_t nof_sdus = 5;
 
@@ -176,6 +244,7 @@ TEST_P(pdcp_tx_test, discard_timer_and_stop)
     for (uint32_t i = 0; i < nof_sdus; i++) {
       byte_buffer sdu = {sdu1};
       pdcp_tx->handle_sdu(std::move(sdu));
+      pdcp_tx->handle_transmit_notification(pdcp_compute_sn(st.tx_next, GetParam()));
       ASSERT_EQ(i + 1, pdcp_tx->nof_discard_timers());
     }
 
@@ -200,41 +269,134 @@ TEST_P(pdcp_tx_test, discard_timer_and_stop)
   pdcp_tx_state st = {};
   if (config.sn_size == pdcp_sn_size::size12bits) {
     // test the beginning
-    st.tx_next = 0;
+    st = {0, 0};
     test_discard_timer_stop(st);
 
     // test the center of SN range
-    st.tx_next = 2046;
+    st = {2046, 2046};
     test_discard_timer_stop(st);
 
     // test the first wrap around
-    st.tx_next = 4094;
+    st = {4094, 4094};
     test_discard_timer_stop(st);
 
     // test the second wrap around
-    st.tx_next = 8190;
+    st = {8190, 8190};
     test_discard_timer_stop(st);
   } else if (config.sn_size == pdcp_sn_size::size18bits) {
     // test the beginning
-    st.tx_next = 0;
+    st = {0, 0};
     test_discard_timer_stop(st);
 
     // test the center of SN range
-    st.tx_next = 131070;
+    st = {131070, 131070};
     test_discard_timer_stop(st);
 
     // test the first wrap around
-    st.tx_next = 262142;
+    st = {262142, 262142};
     test_discard_timer_stop(st);
 
     // test the second wrap around
-    st.tx_next = 524286;
+    st = {524286, 524286};
     test_discard_timer_stop(st);
   } else {
     FAIL();
   }
 }
 
+/// \brief Test correct generation of PDCP PDUs
+TEST_P(pdcp_tx_test, pdu_stall_with_discard)
+{
+  init(GetParam(), pdcp_rb_type::drb, pdcp_rlc_mode::am);
+
+  auto test_pdu_gen = [this](uint32_t tx_next) {
+    srsran::test_delimit_logger delimiter("TX PDU stall. SN_SIZE={} COUNT={}", sn_size, tx_next);
+    // Set state of PDCP entiy
+    pdcp_tx_state st = {tx_next, tx_next};
+    pdcp_tx->set_state(st);
+    pdcp_tx->configure_security(sec_cfg);
+    pdcp_tx->set_integrity_protection(security::integrity_enabled::on);
+    pdcp_tx->set_ciphering(security::ciphering_enabled::on);
+
+    uint32_t sdu_queue_size = 4096;
+    uint32_t window_size    = pdcp_window_size(sn_size);
+    uint32_t stall          = std::min(sdu_queue_size, window_size - 1); // nof SDUs before stalling
+
+    // Write SDU
+    for (uint32_t count = tx_next; count < tx_next + stall; ++count) {
+      byte_buffer sdu = {sdu1};
+      pdcp_tx->handle_sdu(std::move(sdu));
+
+      // Get generated PDU
+      ASSERT_EQ(test_frame.pdu_queue.size(), 1);
+      pdcp_tx_pdu pdu = std::move(test_frame.pdu_queue.front());
+      test_frame.pdu_queue.pop();
+    }
+    {
+      // Write an SDU and SDU should be dropped
+      byte_buffer sdu = {sdu1};
+      pdcp_tx->handle_sdu(std::move(sdu));
+
+      // Get generated PDU
+      ASSERT_EQ(test_frame.pdu_queue.size(), 0);
+    }
+
+    // Let timers expire
+    for (int i = 0; i < 10; i++) {
+      timers.tick();
+      worker.run_pending_tasks();
+    }
+
+    // Check that we can write PDUs again
+    for (uint32_t count = tx_next + stall; count < tx_next + 2 * stall; ++count) {
+      byte_buffer sdu = {sdu1};
+      pdcp_tx->handle_sdu(std::move(sdu));
+
+      // Get generated PDU
+      ASSERT_EQ(test_frame.pdu_queue.size(), 1);
+      pdcp_tx_pdu pdu = std::move(test_frame.pdu_queue.front());
+      test_frame.pdu_queue.pop();
+    }
+    {
+      // Write an SDU and SDU should be dropped
+      byte_buffer sdu = {sdu1};
+      pdcp_tx->handle_sdu(std::move(sdu));
+
+      // Get generated PDU
+      ASSERT_EQ(test_frame.pdu_queue.size(), 0);
+    }
+    {
+      // Notify transmission of all PDUs
+      pdcp_tx->handle_transmit_notification(pdcp_compute_sn(tx_next + 2 * stall, GetParam()));
+
+      // Write an SDU and SDU should be dropped
+      byte_buffer sdu = {sdu1};
+      pdcp_tx->handle_sdu(std::move(sdu));
+
+      // Get generated PDU
+      ASSERT_EQ(test_frame.pdu_queue.size(), 1);
+      test_frame.pdu_queue.pop();
+    }
+    // Let timers expire
+    for (int i = 0; i < 10; i++) {
+      timers.tick();
+      worker.run_pending_tasks();
+    }
+  };
+
+  if (config.sn_size == pdcp_sn_size::size12bits) {
+    test_pdu_gen(0);
+    test_pdu_gen(2048);
+    test_pdu_gen(4095);
+    test_pdu_gen(4096);
+  } else if (config.sn_size == pdcp_sn_size::size18bits) {
+    test_pdu_gen(0);
+    test_pdu_gen(131072);
+    test_pdu_gen(262144);
+  } else {
+    FAIL();
+  }
+}
 /// Test COUNT wrap-around protection systems
 TEST_P(pdcp_tx_test, count_wraparound)
 {
@@ -247,14 +409,15 @@ TEST_P(pdcp_tx_test, count_wraparound)
 
   auto test_max_count = [this, n_sdus](uint32_t tx_next) {
     // Set state of PDCP entiy
-    pdcp_tx_state st = {tx_next};
+    pdcp_tx_state st = {tx_next, tx_next};
     pdcp_tx->set_state(st);
-    pdcp_tx->enable_security(sec_cfg);
+    pdcp_tx->configure_security(sec_cfg);
 
     // Write first SDU
     for (uint32_t i = 0; i < n_sdus; i++) {
       byte_buffer sdu = {sdu1};
       pdcp_tx->handle_sdu(std::move(sdu));
+      pdcp_tx->handle_transmit_notification(pdcp_compute_sn(st.tx_next + i, GetParam()));
     }
     // check nof max_count reached and max protocol failures.
     ASSERT_EQ(11, test_frame.pdu_queue.size());
@@ -270,6 +433,7 @@ TEST_P(pdcp_tx_test, count_wraparound)
     FAIL();
   }
 }
+
 ///////////////////////////////////////////////////////////////////
 // Finally, instantiate all testcases for each supported SN size //
 ///////////////////////////////////////////////////////////////////

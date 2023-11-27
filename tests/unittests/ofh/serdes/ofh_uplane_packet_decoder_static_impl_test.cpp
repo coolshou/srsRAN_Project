@@ -55,12 +55,11 @@ TEST(ofh_uplane_packet_decoder_static_impl, valid_packet_should_decode_correctly
       0x02, 0x80, 0x02, 0x8a, 0x02, 0x8a, 0x02, 0x94, 0x02, 0x94, 0x02, 0x9e, 0x02, 0x9e, 0x02, 0xa8, 0x02, 0xa8, 0x02,
       0xb2, 0x02, 0xb2, 0x02, 0xbc, 0x02, 0xbc, 0x02, 0xc6, 0x02, 0xc6, 0x02, 0xd0, 0x02, 0xd0, 0x02, 0xda, 0x02, 0xda};
 
-  iq_decompressor_dummy                          dummy_decomp;
   uplane_message_decoder_static_compression_impl decoder(srslog::fetch_basic_logger("TEST"),
                                                          subcarrier_spacing::kHz30,
                                                          get_nsymb_per_slot(cyclic_prefix::NORMAL),
                                                          273,
-                                                         dummy_decomp,
+                                                         std::make_unique<iq_decompressor_dummy>(),
                                                          {compression_type::none, 16},
                                                          {compression_type::none, 16});
 
@@ -94,12 +93,11 @@ TEST(ofh_uplane_packet_decoder_static_impl, missing_one_iq_sample_must_fail)
       0x02, 0x80, 0x02, 0x8a, 0x02, 0x8a, 0x02, 0x94, 0x02, 0x94, 0x02, 0x9e, 0x02, 0x9e, 0x02, 0xa8, 0x02, 0xa8, 0x02,
       0xb2, 0x02, 0xb2, 0x02, 0xbc, 0x02, 0xbc, 0x02, 0xc6, 0x02, 0xc6, 0x02, 0xd0, 0x02, 0xd0};
 
-  iq_decompressor_dummy                          dummy_decomp;
   uplane_message_decoder_static_compression_impl decoder(srslog::fetch_basic_logger("TEST"),
                                                          subcarrier_spacing::kHz30,
                                                          get_nsymb_per_slot(cyclic_prefix::NORMAL),
                                                          273,
-                                                         dummy_decomp,
+                                                         std::make_unique<iq_decompressor_dummy>(),
                                                          {compression_type::none, 16},
                                                          {compression_type::none, 16});
 
@@ -119,12 +117,11 @@ TEST(ofh_uplane_packet_decoder_static_impl, missing_one_prb_must_fail)
       0x02, 0x12, 0x02, 0x12, 0x02, 0x1c, 0x02, 0x1c, 0x02, 0x26, 0x02, 0x26, 0x02, 0x30, 0x02, 0x30, 0x02,
       0x3a, 0x02, 0x3a, 0x02, 0x44, 0x02, 0x44, 0x02, 0x4e, 0x02, 0x4e, 0x02, 0x58, 0x02, 0x58, 0x02};
 
-  iq_decompressor_dummy                          dummy_decomp;
   uplane_message_decoder_static_compression_impl decoder(srslog::fetch_basic_logger("TEST"),
                                                          subcarrier_spacing::kHz30,
                                                          get_nsymb_per_slot(cyclic_prefix::NORMAL),
                                                          273,
-                                                         dummy_decomp,
+                                                         std::make_unique<iq_decompressor_dummy>(),
                                                          {compression_type::none, 16},
                                                          {compression_type::none, 16});
 
@@ -144,12 +141,11 @@ TEST(ofh_uplane_packet_decoder_static_impl, static_compression_with_compression_
       0x02, 0x12, 0x02, 0x1c, 0x02, 0x1c, 0x02, 0x26, 0x02, 0x26, 0x02, 0x30, 0x02, 0x30, 0x02, 0x3a, 0x02, 0x3a,
       0x02, 0x44, 0x02, 0x44, 0x02, 0x4e, 0x02, 0x4e, 0x02, 0x58, 0x02, 0x58, 0x02};
 
-  iq_decompressor_dummy                          dummy_decomp;
   uplane_message_decoder_static_compression_impl decoder(srslog::fetch_basic_logger("TEST"),
                                                          subcarrier_spacing::kHz30,
                                                          get_nsymb_per_slot(cyclic_prefix::NORMAL),
                                                          273,
-                                                         dummy_decomp,
+                                                         std::make_unique<iq_decompressor_dummy>(),
                                                          {compression_type::none, 16},
                                                          {compression_type::none, 16});
 
@@ -167,12 +163,11 @@ TEST(ofh_uplane_packet_decoder_static_impl, decoding_one_section_and_failing_to_
                                  0x01, 0xc2, 0x01, 0xcc, 0x01, 0xcc, 0x01, 0xd6, 0x01, 0xd6, 0x01, 0xe0, 0x01,
                                  0xe0, 0x01, 0xea, 0x01, 0xea, 0x01, 0xea, 0x01, 0xea};
 
-  iq_decompressor_dummy                          dummy_decomp;
   uplane_message_decoder_static_compression_impl decoder(srslog::fetch_basic_logger("TEST"),
                                                          subcarrier_spacing::kHz30,
                                                          get_nsymb_per_slot(cyclic_prefix::NORMAL),
                                                          273,
-                                                         dummy_decomp,
+                                                         std::make_unique<iq_decompressor_dummy>(),
                                                          {compression_type::none, 16},
                                                          {compression_type::none, 16});
 
@@ -187,12 +182,11 @@ TEST(ofh_uplane_packet_decoder_static_impl, missing_section_header_must_fail)
 {
   std::vector<uint8_t> packet = {0x10, 0x02, 0x40, 0x42, 0x00, 0x70, 0x24};
 
-  iq_decompressor_dummy                          dummy_decomp;
   uplane_message_decoder_static_compression_impl decoder(srslog::fetch_basic_logger("TEST"),
                                                          subcarrier_spacing::kHz30,
                                                          get_nsymb_per_slot(cyclic_prefix::NORMAL),
                                                          273,
-                                                         dummy_decomp,
+                                                         std::make_unique<iq_decompressor_dummy>(),
                                                          {compression_type::none, 16},
                                                          {compression_type::none, 16});
 
@@ -206,12 +200,11 @@ TEST(ofh_uplane_packet_decoder_static_impl, missing_header_must_fail)
 {
   std::vector<uint8_t> packet = {0x10, 0x02, 0x40};
 
-  iq_decompressor_dummy                          dummy_decomp;
   uplane_message_decoder_static_compression_impl decoder(srslog::fetch_basic_logger("TEST"),
                                                          subcarrier_spacing::kHz30,
                                                          get_nsymb_per_slot(cyclic_prefix::NORMAL),
                                                          273,
-                                                         dummy_decomp,
+                                                         std::make_unique<iq_decompressor_dummy>(),
                                                          {compression_type::none, 16},
                                                          {compression_type::none, 16});
 
@@ -228,12 +221,11 @@ TEST(ofh_uplane_packet_decoder_static_impl, downlink_packet_should_fail)
                                  0x01, 0xae, 0x01, 0xae, 0x01, 0xb8, 0x01, 0xb8, 0x01, 0xc2, 0x01, 0xc2, 0x01, 0xcc,
                                  0x01, 0xcc, 0x01, 0xd6, 0x01, 0xd6, 0x01, 0xe0, 0x01, 0xe0, 0x01, 0xea, 0x01, 0xea};
 
-  iq_decompressor_dummy                          dummy_decomp;
   uplane_message_decoder_static_compression_impl decoder(srslog::fetch_basic_logger("TEST"),
                                                          subcarrier_spacing::kHz30,
                                                          get_nsymb_per_slot(cyclic_prefix::NORMAL),
                                                          273,
-                                                         dummy_decomp,
+                                                         std::make_unique<iq_decompressor_dummy>(),
                                                          {compression_type::none, 16},
                                                          {compression_type::none, 16});
 
@@ -250,12 +242,11 @@ TEST(ofh_uplane_packet_decoder_static_impl, reserved_filter_index_should_fail)
                                  0x01, 0xae, 0x01, 0xae, 0x01, 0xb8, 0x01, 0xb8, 0x01, 0xc2, 0x01, 0xc2, 0x01, 0xcc,
                                  0x01, 0xcc, 0x01, 0xd6, 0x01, 0xd6, 0x01, 0xe0, 0x01, 0xe0, 0x01, 0xea, 0x01, 0xea};
 
-  iq_decompressor_dummy                          dummy_decomp;
   uplane_message_decoder_static_compression_impl decoder(srslog::fetch_basic_logger("TEST"),
                                                          subcarrier_spacing::kHz30,
                                                          get_nsymb_per_slot(cyclic_prefix::NORMAL),
                                                          273,
-                                                         dummy_decomp,
+                                                         std::make_unique<iq_decompressor_dummy>(),
                                                          {compression_type::none, 16},
                                                          {compression_type::none, 16});
 
@@ -272,12 +263,11 @@ TEST(ofh_uplane_packet_decoder_static_impl, symbol_index_out_of_range_should_fai
                                  0x01, 0xae, 0x01, 0xae, 0x01, 0xb8, 0x01, 0xb8, 0x01, 0xc2, 0x01, 0xc2, 0x01, 0xcc,
                                  0x01, 0xcc, 0x01, 0xd6, 0x01, 0xd6, 0x01, 0xe0, 0x01, 0xe0, 0x01, 0xea, 0x01, 0xea};
 
-  iq_decompressor_dummy                          dummy_decomp;
   uplane_message_decoder_static_compression_impl decoder(srslog::fetch_basic_logger("TEST"),
                                                          subcarrier_spacing::kHz30,
                                                          get_nsymb_per_slot(cyclic_prefix::NORMAL),
                                                          273,
-                                                         dummy_decomp,
+                                                         std::make_unique<iq_decompressor_dummy>(),
                                                          {compression_type::none, 16},
                                                          {compression_type::none, 16});
 
@@ -294,12 +284,11 @@ TEST(ofh_uplane_packet_decoder_static_impl, none_compression_with_15_bits_should
                                  0x01, 0xae, 0x01, 0xae, 0x01, 0xb8, 0x01, 0xb8, 0x01, 0xc2, 0x01, 0xc2, 0x01, 0xcc,
                                  0x01, 0xcc, 0x01, 0xd6, 0x01, 0xd6, 0x01, 0xe0, 0x01, 0xe0, 0x01};
 
-  iq_decompressor_dummy                          dummy_decomp;
   uplane_message_decoder_static_compression_impl decoder(srslog::fetch_basic_logger("TEST"),
                                                          subcarrier_spacing::kHz30,
                                                          get_nsymb_per_slot(cyclic_prefix::NORMAL),
                                                          273,
-                                                         dummy_decomp,
+                                                         std::make_unique<iq_decompressor_dummy>(),
                                                          {compression_type::none, 15},
                                                          {compression_type::none, 15});
 
@@ -316,12 +305,11 @@ TEST(ofh_uplane_packet_decoder_static_impl, bfp_with_15_bits_should_pass)
                                  0xa4, 0x01, 0xae, 0x01, 0xae, 0x01, 0xb8, 0x01, 0xb8, 0x01, 0xc2, 0x01, 0xc2, 0x01,
                                  0xcc, 0x01, 0xcc, 0x01, 0xd6, 0x01, 0xd6, 0x01, 0xe0, 0x01, 0xe0, 0x01};
 
-  iq_decompressor_dummy                          dummy_decomp;
   uplane_message_decoder_static_compression_impl decoder(srslog::fetch_basic_logger("TEST"),
                                                          subcarrier_spacing::kHz30,
                                                          get_nsymb_per_slot(cyclic_prefix::NORMAL),
                                                          273,
-                                                         dummy_decomp,
+                                                         std::make_unique<iq_decompressor_dummy>(),
                                                          {compression_type::BFP, 15},
                                                          {compression_type::BFP, 15});
 
@@ -338,12 +326,11 @@ TEST(ofh_uplane_packet_decoder_static_impl, bfp_with_15_bits_without_ud_comp_len
                                  0x01, 0xae, 0x01, 0xae, 0x01, 0xb8, 0x01, 0xb8, 0x01, 0xc2, 0x01, 0xc2, 0x01, 0xcc,
                                  0x01, 0xcc, 0x01, 0xd6, 0x01, 0xd6, 0x01, 0xe0, 0x01, 0xe0, 0x01};
 
-  iq_decompressor_dummy                          dummy_decomp;
   uplane_message_decoder_static_compression_impl decoder(srslog::fetch_basic_logger("TEST"),
                                                          subcarrier_spacing::kHz30,
                                                          get_nsymb_per_slot(cyclic_prefix::NORMAL),
                                                          273,
-                                                         dummy_decomp,
+                                                         std::make_unique<iq_decompressor_dummy>(),
                                                          {compression_type::BFP, 15},
                                                          {compression_type::BFP, 15});
 
@@ -363,12 +350,11 @@ TEST(ofh_uplane_packet_decoder_static_impl, if_message_num_prbs_equals_zero_deco
 
   const unsigned ru_nof_prbs = 2;
 
-  iq_decompressor_dummy                          dummy_decomp;
   uplane_message_decoder_static_compression_impl decoder(srslog::fetch_basic_logger("TEST"),
                                                          subcarrier_spacing::kHz30,
                                                          get_nsymb_per_slot(cyclic_prefix::NORMAL),
                                                          ru_nof_prbs,
-                                                         dummy_decomp,
+                                                         std::make_unique<iq_decompressor_dummy>(),
                                                          {compression_type::BFP, 9},
                                                          {compression_type::BFP, 9});
 
@@ -389,12 +375,11 @@ TEST(ofh_uplane_packet_decoder_static_impl, if_message_contains_one_valid_sectio
 
   const unsigned ru_nof_prbs = 2;
 
-  iq_decompressor_dummy                          dummy_decomp;
   uplane_message_decoder_static_compression_impl decoder(srslog::fetch_basic_logger("TEST"),
                                                          subcarrier_spacing::kHz30,
                                                          get_nsymb_per_slot(cyclic_prefix::NORMAL),
                                                          ru_nof_prbs,
-                                                         dummy_decomp,
+                                                         std::make_unique<iq_decompressor_dummy>(),
                                                          {compression_type::BFP, 9},
                                                          {compression_type::BFP, 9});
 
@@ -404,4 +389,104 @@ TEST(ofh_uplane_packet_decoder_static_impl, if_message_contains_one_valid_sectio
   ASSERT_TRUE(decode_result);
   ASSERT_EQ(ru_nof_prbs, results.sections.front().nof_prbs);
   ASSERT_EQ(1, results.sections.size());
+}
+
+TEST(ofh_uplane_packet_decoder_static_impl, peek_filter_index)
+{
+  std::vector<uint8_t> packet = {
+      0x10, 0x02, 0x40, 0x42, 0x00, 0x70, 0x24, 0x00, 0x00, 0x01, 0x7c, 0x01, 0x7c, 0x01, 0x86, 0x01, 0x86, 0x01, 0x90,
+      0x01, 0x90, 0x01, 0x9a, 0x01, 0x9a, 0x01, 0xa4, 0x01, 0x86, 0x01, 0x86, 0x01, 0x90, 0x01, 0x90, 0x01, 0x9a, 0x01,
+      0x9a, 0x01, 0xa4, 0x01, 0x86, 0x01, 0x86, 0x01, 0x90, 0x01, 0x90, 0x01, 0x9a, 0x01, 0x9a, 0x01, 0xa4, 0x01, 0x01,
+      0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+  const unsigned ru_nof_prbs = 2;
+
+  uplane_message_decoder_static_compression_impl decoder(srslog::fetch_basic_logger("TEST"),
+                                                         subcarrier_spacing::kHz30,
+                                                         get_nsymb_per_slot(cyclic_prefix::NORMAL),
+                                                         ru_nof_prbs,
+                                                         std::make_unique<iq_decompressor_dummy>(),
+                                                         {compression_type::BFP, 9},
+                                                         {compression_type::BFP, 9});
+
+  ASSERT_EQ(filter_index_type::standard_channel_filter, decoder.peek_filter_index(packet));
+}
+
+TEST(ofh_uplane_packet_decoder_static_impl, peek_filter_index_returns_reserved_on_peek_failure)
+{
+  std::vector<uint8_t> packet;
+  const unsigned       ru_nof_prbs = 2;
+
+  uplane_message_decoder_static_compression_impl decoder(srslog::fetch_basic_logger("TEST"),
+                                                         subcarrier_spacing::kHz30,
+                                                         get_nsymb_per_slot(cyclic_prefix::NORMAL),
+                                                         ru_nof_prbs,
+                                                         std::make_unique<iq_decompressor_dummy>(),
+                                                         {compression_type::BFP, 9},
+                                                         {compression_type::BFP, 9});
+
+  ASSERT_EQ(filter_index_type::reserved, decoder.peek_filter_index(packet));
+}
+
+TEST(ofh_uplane_packet_decoder_static_impl, peek_prach_filter_index)
+{
+  std::vector<uint8_t> packet = {
+      0x11, 0x02, 0x40, 0x42, 0x00, 0x70, 0x24, 0x00, 0x00, 0x01, 0x7c, 0x01, 0x7c, 0x01, 0x86, 0x01, 0x86, 0x01, 0x90,
+      0x01, 0x90, 0x01, 0x9a, 0x01, 0x9a, 0x01, 0xa4, 0x01, 0x86, 0x01, 0x86, 0x01, 0x90, 0x01, 0x90, 0x01, 0x9a, 0x01,
+      0x9a, 0x01, 0xa4, 0x01, 0x86, 0x01, 0x86, 0x01, 0x90, 0x01, 0x90, 0x01, 0x9a, 0x01, 0x9a, 0x01, 0xa4, 0x01, 0x01,
+      0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+  const unsigned ru_nof_prbs = 2;
+
+  uplane_message_decoder_static_compression_impl decoder(srslog::fetch_basic_logger("TEST"),
+                                                         subcarrier_spacing::kHz30,
+                                                         get_nsymb_per_slot(cyclic_prefix::NORMAL),
+                                                         ru_nof_prbs,
+                                                         std::make_unique<iq_decompressor_dummy>(),
+                                                         {compression_type::BFP, 9},
+                                                         {compression_type::BFP, 9});
+
+  ASSERT_EQ(filter_index_type::ul_prach_preamble_1p25khz, decoder.peek_filter_index(packet));
+}
+
+TEST(ofh_uplane_packet_decoder_static_impl, peek_slot_symbol_point)
+{
+  slot_symbol_point slot_point({1, 2, 4, 1}, 2, 14);
+
+  std::vector<uint8_t> packet = {
+      0x11, 0x02, 0x40, 0x42, 0x00, 0x70, 0x24, 0x00, 0x00, 0x01, 0x7c, 0x01, 0x7c, 0x01, 0x86, 0x01, 0x86, 0x01, 0x90,
+      0x01, 0x90, 0x01, 0x9a, 0x01, 0x9a, 0x01, 0xa4, 0x01, 0x86, 0x01, 0x86, 0x01, 0x90, 0x01, 0x90, 0x01, 0x9a, 0x01,
+      0x9a, 0x01, 0xa4, 0x01, 0x86, 0x01, 0x86, 0x01, 0x90, 0x01, 0x90, 0x01, 0x9a, 0x01, 0x9a, 0x01, 0xa4, 0x01, 0x01,
+      0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+  const unsigned ru_nof_prbs = 2;
+
+  uplane_message_decoder_static_compression_impl decoder(srslog::fetch_basic_logger("TEST"),
+                                                         subcarrier_spacing::kHz30,
+                                                         get_nsymb_per_slot(cyclic_prefix::NORMAL),
+                                                         ru_nof_prbs,
+                                                         std::make_unique<iq_decompressor_dummy>(),
+                                                         {compression_type::BFP, 9},
+                                                         {compression_type::BFP, 9});
+
+  ASSERT_EQ(slot_point, decoder.peek_slot_symbol_point(packet));
+}
+
+TEST(ofh_uplane_packet_decoder_static_impl, return_invalid_slot_point_on_packet_size_smaller_than_required)
+{
+  std::vector<uint8_t> packet = {0x10, 0x30, 0x40};
+
+  const unsigned ru_nof_prbs = 2;
+
+  uplane_message_decoder_static_compression_impl decoder(srslog::fetch_basic_logger("TEST"),
+                                                         subcarrier_spacing::kHz30,
+                                                         get_nsymb_per_slot(cyclic_prefix::NORMAL),
+                                                         ru_nof_prbs,
+                                                         std::make_unique<iq_decompressor_dummy>(),
+                                                         {compression_type::BFP, 9},
+                                                         {compression_type::BFP, 9});
+
+  slot_symbol_point slot = decoder.peek_slot_symbol_point(packet);
+
+  ASSERT_FALSE(slot.get_slot().valid());
 }

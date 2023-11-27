@@ -65,13 +65,15 @@ struct mac_nr_context_info {
   uint16_t length;
 };
 
+enum class mac_pcap_type { udp, dlt };
+
 /// @brief Interface class for writing a MAC PCAP to a file.
 class mac_pcap
 {
 public:
   virtual ~mac_pcap() = default;
 
-  virtual void open(const std::string& filename_)                             = 0;
+  virtual void open(const std::string& filename_, mac_pcap_type type)         = 0;
   virtual void close()                                                        = 0;
   virtual bool is_write_enabled()                                             = 0;
   virtual void push_pdu(mac_nr_context_info context, const_span<uint8_t> pdu) = 0;
@@ -83,6 +85,7 @@ constexpr uint16_t PCAP_NGAP_DLT = 152;
 constexpr uint16_t PCAP_E1AP_DLT = 153;
 constexpr uint16_t PCAP_F1AP_DLT = 154;
 constexpr uint16_t PCAP_E2AP_DLT = 155;
+constexpr uint16_t PCAP_GTPU_DLT = 156;
 
 /// @brief Interface class for writing a DLT PCAP to a file.
 class dlt_pcap
@@ -96,4 +99,16 @@ public:
   virtual void push_pdu(const_span<uint8_t> pdu)  = 0;
   virtual void push_pdu(byte_buffer pdu)          = 0;
 };
+
+/// @brief dummy pcap class that can be used for unit tests.
+class dummy_dlt_pcap : public dlt_pcap
+{
+public:
+  void open(const std::string& filename_) override {}
+  void close() override {}
+  bool is_write_enabled() override { return false; }
+  void push_pdu(const_span<uint8_t> pdu) override {}
+  void push_pdu(byte_buffer pdu) override {}
+};
+
 } // namespace srsran

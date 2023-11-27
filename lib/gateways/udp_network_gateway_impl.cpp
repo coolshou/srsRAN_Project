@@ -35,10 +35,22 @@
 
 using namespace srsran;
 
-udp_network_gateway_impl::udp_network_gateway_impl(udp_network_gateway_config     config_,
-                                                   network_gateway_data_notifier& data_notifier_) :
+udp_network_gateway_impl::udp_network_gateway_impl(udp_network_gateway_config                   config_,
+                                                   network_gateway_data_notifier_with_src_addr& data_notifier_) :
   config(std::move(config_)), data_notifier(data_notifier_), logger(srslog::fetch_basic_logger("UDP-GW"))
 {
+  logger.info("UDP GW configured. rx_max_mmsg={}", config.rx_max_mmsg);
+
+  // Allocate RX buffers
+  rx_mem.resize(config.rx_max_mmsg);
+  for (uint32_t i = 0; i < config.rx_max_mmsg; ++i) {
+    rx_mem[i].resize(network_gateway_udp_max_len);
+  }
+
+  // Allocate context for recv_mmsg
+  rx_srcaddr.resize(config.rx_max_mmsg);
+  rx_msghdr.resize(config.rx_max_mmsg);
+  rx_iovecs.resize(config.rx_max_mmsg);
 }
 
 bool udp_network_gateway_impl::is_initialized()
@@ -46,7 +58,7 @@ bool udp_network_gateway_impl::is_initialized()
   return sock_fd != -1;
 }
 
-void udp_network_gateway_impl::handle_pdu(const byte_buffer& pdu, const ::sockaddr* dest_addr, ::socklen_t dest_len)
+void udp_network_gateway_impl::handle_pdu(const byte_buffer& pdu, const sockaddr_storage& dest_addr)
 {
   logger.debug("Sending PDU of {} bytes", pdu.length());
 
@@ -65,11 +77,12 @@ void udp_network_gateway_impl::handle_pdu(const byte_buffer& pdu, const ::sockad
 
   span<const uint8_t> pdu_span = to_span(pdu, tmp_mem);
 
-  int bytes_sent = sendto(sock_fd, pdu_span.data(), pdu_span.size_bytes(), 0, dest_addr, dest_len);
+  int bytes_sent =
+      sendto(sock_fd, pdu_span.data(), pdu_span.size_bytes(), 0, (sockaddr*)&dest_addr, sizeof(sockaddr_storage));
   if (bytes_sent == -1) {
     std::string local_addr_str;
     std::string dest_addr_str;
-    sockaddr_to_ip_str(dest_addr, dest_addr_str, logger);
+    sockaddr_to_ip_str((sockaddr*)&dest_addr, dest_addr_str, logger);
     sockaddr_to_ip_str((sockaddr*)&local_addr, local_addr_str, logger);
     logger.error("Couldn't send {} B of data on UDP socket: local_ip={} dest_ip={} error=\"{}\"",
                  pdu_span.size_bytes(),
@@ -116,7 +129,8 @@ bool udp_network_gateway_impl::create_and_bind()
       continue;
     }
 
-    char ip_addr[NI_MAXHOST], port_nr[NI_MAXSERV];
+    char ip_addr[NI_MAXHOST];
+    char port_nr[NI_MAXSERV];
     getnameinfo(
         result->ai_addr, result->ai_addrlen, ip_addr, NI_MAXHOST, port_nr, NI_MAXSERV, NI_NUMERICHOST | NI_NUMERICSERV);
     logger.debug("Binding to {} port {}", ip_addr, port_nr);
@@ -175,22 +189,40 @@ void udp_network_gateway_impl::receive()
     logger.error("Cannot receive on UDP gateway: Socket is not initialized.");
   }
 
-  // Fixme: consider class member on heap when sequential access is guaranteed
-  std::array<uint8_t, network_gateway_udp_max_len> tmp_mem; // no init
+  socklen_t src_addr_len = sizeof(struct sockaddr_storage);
 
-  int rx_bytes = recv(sock_fd, tmp_mem.data(), network_gateway_udp_max_len, 0);
+  for (unsigned i = 0; i < config.rx_max_mmsg; ++i) {
+    rx_msghdr[i].msg_hdr             = {};
+    rx_msghdr[i].msg_hdr.msg_name    = &rx_srcaddr[i];
+    rx_msghdr[i].msg_hdr.msg_namelen = src_addr_len;
 
-  if (rx_bytes == -1 && errno != EAGAIN) {
+    rx_iovecs[i].iov_base           = rx_mem[i].data();
+    rx_iovecs[i].iov_len            = network_gateway_udp_max_len;
+    rx_msghdr[i].msg_hdr.msg_iov    = &rx_iovecs[i];
+    rx_msghdr[i].msg_hdr.msg_iovlen = 1;
+  }
+
+  int rx_msgs = recvmmsg(sock_fd, rx_msghdr.data(), config.rx_max_mmsg, MSG_WAITFORONE, nullptr);
+  if (rx_msgs == -1 && errno != EAGAIN) {
     logger.error("Error reading from UDP socket: {}", strerror(errno));
-  } else if (rx_bytes == -1 && errno == EAGAIN) {
+    return;
+  }
+  if (rx_msgs == -1 && errno == EAGAIN) {
     if (!config.non_blocking_mode) {
       logger.debug("Socket timeout reached");
     }
-  } else {
-    logger.debug("Received {} bytes on UDP socket", rx_bytes);
-    span<uint8_t> payload(tmp_mem.data(), rx_bytes);
-    byte_buffer   pdu = {payload};
-    data_notifier.on_new_pdu(std::move(pdu));
+    return;
+  }
+
+  for (int i = 0; i < rx_msgs; ++i) {
+    span<uint8_t> payload(rx_mem[i].data(), rx_msghdr[i].msg_len);
+    byte_buffer   pdu = {};
+    if (pdu.append(payload)) {
+      logger.debug("Received {} bytes on UDP socket", rx_msghdr[i].msg_len);
+      data_notifier.on_new_pdu(std::move(pdu), *(sockaddr_storage*)rx_msghdr[i].msg_hdr.msg_name);
+    } else {
+      logger.error("Could not allocate byte buffer. Received {} bytes on UDP socket", rx_msghdr[i].msg_len);
+    }
   }
 }
 

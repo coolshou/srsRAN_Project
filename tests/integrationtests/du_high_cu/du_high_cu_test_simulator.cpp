@@ -24,10 +24,12 @@
 #include "lib/du_high/du_high_executor_strategies.h"
 #include "tests/test_doubles/f1ap/f1ap_test_message_validators.h"
 #include "tests/test_doubles/mac/mac_test_messages.h"
+#include "tests/unittests/ngap/ngap_test_messages.h"
 #include "srsran/cu_cp/cu_cp_factory.h"
 #include "srsran/du/du_cell_config_helpers.h"
 #include "srsran/du_high/du_high_factory.h"
 #include "srsran/support/test_utils.h"
+#include <gtest/gtest.h>
 
 using namespace srsran;
 
@@ -103,18 +105,24 @@ du_high_cu_test_simulator::du_high_cu_test_simulator(const du_high_cu_cp_test_si
   srs_cu_cp::cu_cp_configuration cu_cfg;
   cu_cfg.cu_cp_executor            = workers.executors["CU-CP"];
   cu_cfg.ngap_notifier             = &ngap_amf_notifier;
+  cu_cfg.timers                    = &timers;
   cu_cfg.ngap_config.ran_node_name = "srsgnb01";
   cu_cfg.ngap_config.plmn          = "00101";
   cu_cfg.ngap_config.tac           = 7;
   s_nssai_t slice_cfg;
   slice_cfg.sst = 1;
   cu_cfg.ngap_config.slice_configurations.push_back(slice_cfg);
+  cu_cfg.statistics_report_period = std::chrono::seconds(1);
 
   // Instatiate CU-CP.
   cu_cp_inst = create_cu_cp(cu_cfg);
+  cu_cp_inst->handle_amf_connection();
 
   // Start CU-CP.
   cu_cp_inst->start();
+
+  // Connect AMF by injecting a ng_setup_response
+  cu_cp_inst->get_ngap_message_handler().handle_message(srs_cu_cp::generate_ng_setup_response());
 
   // Connect F1-C to CU-CP.
   f1c_gw.attach_cu_cp_du_repo(cu_cp_inst->get_connected_dus());
@@ -168,7 +176,7 @@ void du_high_cu_test_simulator::start_dus()
     du_hi_cfg.f1u_gw                         = nullptr;
     du_hi_cfg.phy_adapter                    = &du_ctxt.phy;
     du_hi_cfg.timers                         = &timers;
-    du_hi_cfg.metrics_notifier               = &du_ctxt.ue_metrics_notifier;
+    du_hi_cfg.sched_ue_metrics_notifier      = &du_ctxt.ue_metrics_notifier;
     du_hi_cfg.cells                          = cfg.dus[du_idx];
     du_hi_cfg.sched_cfg                      = config_helpers::make_default_scheduler_expert_config();
     du_hi_cfg.pcap                           = &du_ctxt.mac_pcap;

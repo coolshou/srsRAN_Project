@@ -29,6 +29,7 @@
 #include "srsran/ran/pdcch/pdcch_type0_css_coreset_config.h"
 #include "srsran/ran/phy_time_unit.h"
 #include "srsran/ran/prach/prach_configuration.h"
+#include "srsran/ran/prach/prach_helper.h"
 #include "srsran/srslog/logger.h"
 
 using namespace srsran;
@@ -96,10 +97,32 @@ static bool validate_ru_ofh_appconfig(const gnb_appconfig& config)
     const ru_ofh_cell_appconfig& ofh_cell = ofh_cfg.cells[i];
     const base_cell_appconfig&   cell_cfg = config.cells_cfg[i].cell;
 
+    // Open Fronthaul has not been tested yet in FDD mode.
+    if (band_helper::get_duplex_mode(cell_cfg.band.value()) != duplex_mode::TDD) {
+      fmt::print("Open Fronthaul implementation only supports TDD mode\n");
+      return false;
+    }
+
     if (!ofh_cell.cell.is_downlink_broadcast_enabled && cell_cfg.nof_antennas_dl != ofh_cell.ru_dl_port_id.size()) {
       fmt::print("RU number of downlink ports={} must match the number of transmission antennas={}\n",
                  ofh_cell.ru_dl_port_id.size(),
                  cell_cfg.nof_antennas_dl);
+
+      return false;
+    }
+
+    if (cell_cfg.nof_antennas_ul > ofh_cell.ru_ul_port_id.size()) {
+      fmt::print("RU number of uplink ports={} must be equal or greater than the number of reception antennas={}\n",
+                 ofh_cell.ru_ul_port_id.size(),
+                 cell_cfg.nof_antennas_ul);
+
+      return false;
+    }
+
+    if (cell_cfg.nof_antennas_ul > ofh_cell.ru_prach_port_id.size()) {
+      fmt::print("RU number of PRACH ports={} must be equal or greater than the number of reception antennas={}\n",
+                 ofh_cell.ru_prach_port_id.size(),
+                 cell_cfg.nof_antennas_ul);
 
       return false;
     }
@@ -153,6 +176,13 @@ static bool validate_pdsch_cell_app_config(const pdsch_appconfig& config)
     return false;
   }
 
+  if (config.max_rb_size < config.min_rb_size) {
+    fmt::print("Invalid UE PDSCH RB range [{}, {}). The min_rb_size must be less or equal to the max_rb_size",
+               config.min_rb_size,
+               config.max_rb_size);
+    return false;
+  }
+
   return true;
 }
 
@@ -173,34 +203,34 @@ static bool validate_pusch_cell_app_config(const pusch_appconfig& config)
   return true;
 }
 
-/// Validates the given PRACH cell application configuration. Returns true on success, otherwise false.
-static bool validate_prach_cell_app_config(const prach_appconfig& config, nr_band band)
+/// Validates the given PUCCH cell application configuration. Returns true on success, otherwise false.
+static bool validate_pucch_cell_app_config(const base_cell_appconfig& config)
 {
-  bool       is_paired_spectrum = band_helper::is_paired_spectrum(band);
-  const bool is_prach_cfg_idx_supported =
-      is_paired_spectrum
-          ? config.prach_config_index <= 107U or (config.prach_config_index > 197U and config.prach_config_index < 219U)
-          : config.prach_config_index <= 86U or (config.prach_config_index > 144U and config.prach_config_index < 169U);
-  if (not is_prach_cfg_idx_supported) {
-    fmt::print("PRACH configuration index {} not supported. For {}, the supported PRACH configuration indices are {}\n",
-               config.prach_config_index,
-               is_paired_spectrum ? "FDD" : "TDD",
-               is_paired_spectrum ? "[0, 107] and [198, 218]" : "[0, 86] and [145, 168]");
+  const pucch_appconfig& pucch_cfg = config.pucch_cfg;
+  if (config.pdsch_cfg.min_ue_mcs == config.pdsch_cfg.max_ue_mcs and pucch_cfg.nof_cell_csi_resources > 0) {
+    fmt::print("Number of PUCCH Format 1 cell resources for CSI must be zero when a fixed MCS is used.\n");
     return false;
   }
 
-  prach_configuration prach_config =
-      prach_configuration_get(frequency_range::FR1, band_helper::get_duplex_mode(band), config.prach_config_index);
-  if (is_paired_spectrum && (prach_config.format == prach_format_type::B4) && (config.zero_correlation_zone != 0) &&
-      (config.zero_correlation_zone != 11)) {
-    fmt::print("PRACH Zero Correlation Zone index (i.e., {}) with Format B4 is not supported for FDD. Use 0 or 11.\n",
-               config.zero_correlation_zone);
+  return true;
+}
+
+/// Validates the given PRACH cell application configuration. Returns true on success, otherwise false.
+static bool validate_prach_cell_app_config(const prach_appconfig& config, nr_band band)
+{
+  srsran_assert(config.prach_config_index.has_value(), "The PRACH configuration index must be set.");
+
+  auto code =
+      prach_helper::prach_config_index_is_valid(config.prach_config_index.value(), band_helper::get_duplex_mode(band));
+  if (code.is_error()) {
+    fmt::print("{}", code.error());
     return false;
   }
-  if (!is_paired_spectrum && (prach_config.format == prach_format_type::B4) && (config.zero_correlation_zone != 0) &&
-      (config.zero_correlation_zone != 14)) {
-    fmt::print("PRACH Zero Correlation Zone index (i.e., {}) with Format B4 is not supported for FDD. Use 0 or 14.\n",
-               config.zero_correlation_zone);
+
+  code = prach_helper::zero_correlation_zone_is_valid(
+      config.zero_correlation_zone, config.prach_config_index.value(), band_helper::get_duplex_mode(band));
+  if (code.is_error()) {
+    fmt::print("{}", code.error());
     return false;
   }
 
@@ -282,6 +312,38 @@ static bool validate_dl_arfcn_and_band(const base_cell_appconfig& config)
   return true;
 }
 
+static bool validate_cell_sib_config(const base_cell_appconfig& cell_cfg)
+{
+  const sib_appconfig& sib_cfg = cell_cfg.sib_cfg;
+
+  for (const auto& si_msg : sib_cfg.si_sched_info) {
+    const unsigned si_period_slots =
+        si_msg.si_period_rf * get_nof_slots_per_subframe(cell_cfg.common_scs) * NOF_SUBFRAMES_PER_FRAME;
+    if (sib_cfg.si_window_len_slots > si_period_slots) {
+      fmt::print("The SI window length in slots {} is larger than the SI message period {}.\n",
+                 sib_cfg.si_window_len_slots,
+                 si_period_slots);
+      return false;
+    }
+  }
+
+  // Check if there are repeated SIBs in the SI messages.
+  std::vector<uint8_t> sibs_included;
+  for (const auto& si_msg : sib_cfg.si_sched_info) {
+    for (const uint8_t sib_it : si_msg.sib_mapping_info) {
+      sibs_included.push_back(sib_it);
+    }
+  }
+  std::sort(sibs_included.begin(), sibs_included.end());
+  const auto duplicate_it = std::adjacent_find(sibs_included.begin(), sibs_included.end());
+  if (duplicate_it != sibs_included.end()) {
+    fmt::print("The SIB{} cannot be included more than once in the broadcast SI messages", *duplicate_it);
+    return false;
+  }
+
+  return true;
+}
+
 /// Validates the given cell application configuration. Returns true on success, otherwise false.
 static bool validate_base_cell_appconfig(const base_cell_appconfig& config)
 {
@@ -312,7 +374,20 @@ static bool validate_base_cell_appconfig(const base_cell_appconfig& config)
     return false;
   }
 
+  const auto ssb_scs =
+      band_helper::get_most_suitable_ssb_scs(band_helper::get_band_from_dl_arfcn(config.dl_arfcn), config.common_scs);
+  if (ssb_scs != config.common_scs) {
+    fmt::print("Common SCS {}kHz is not equal to SSB SCS {}kHz. Different SCS for common and SSB is not supported.\n",
+               scs_to_khz(config.common_scs),
+               scs_to_khz(ssb_scs));
+    return false;
+  }
+
   if (!validate_pdsch_cell_app_config(config.pdsch_cfg)) {
+    return false;
+  }
+
+  if (!validate_pucch_cell_app_config(config)) {
     return false;
   }
 
@@ -330,10 +405,7 @@ static bool validate_base_cell_appconfig(const base_cell_appconfig& config)
     return false;
   }
 
-  if (config.pdsch_cfg.nof_ports.has_value() and config.nof_antennas_dl < *config.pdsch_cfg.nof_ports) {
-    fmt::print("Number of PDSCH ports {} cannot be higher than the number of DL antennas {}\n",
-               *config.pdsch_cfg.nof_ports,
-               config.nof_antennas_dl);
+  if (!validate_cell_sib_config(config)) {
     return false;
   }
 
@@ -486,34 +558,12 @@ static bool validate_log_appconfig(const log_appconfig& config)
 /// Validates expert physical layer configuration parameters.
 static bool validate_expert_phy_appconfig(const expert_upper_phy_appconfig& config)
 {
-  static const interval<unsigned, true> nof_ul_dl_threads_range(1, std::thread::hardware_concurrency());
-
   bool valid = true;
 
-  if (!nof_ul_dl_threads_range.contains(config.nof_ul_threads)) {
+  if ((config.pusch_sinr_calc_method != "channel_estimator") &&
+      (config.pusch_sinr_calc_method != "post_equalization") && (config.pusch_sinr_calc_method != "evm")) {
     fmt::print(
-        "Number of PHY UL threads (i.e., {}) must be in range {}.\n", config.nof_ul_threads, nof_ul_dl_threads_range);
-    valid = false;
-  }
-
-  if (!nof_ul_dl_threads_range.contains(config.nof_pdsch_threads)) {
-    fmt::print("Number of PHY PDSCH threads (i.e., {}) must be in range {}.\n",
-               config.nof_pdsch_threads,
-               nof_ul_dl_threads_range);
-    valid = false;
-  }
-
-  if (!nof_ul_dl_threads_range.contains(config.nof_dl_threads)) {
-    fmt::print(
-        "Number of PHY DL threads (i.e., {}) must be in range {}.\n", config.nof_dl_threads, nof_ul_dl_threads_range);
-    valid = false;
-  }
-
-  if (config.nof_dl_threads > config.max_processing_delay_slots) {
-    fmt::print(
-        "Number of PHY DL threads (i.e., {}) cannot be larger than the maximum processing delay in slots (i.e., {}).\n",
-        config.nof_dl_threads,
-        config.max_processing_delay_slots);
+        "Invalid PUSCH SINR calculation method. Valid types are: channel_estimator, post_equalization and evm.\n");
     valid = false;
   }
 
@@ -600,13 +650,10 @@ static bool validate_test_mode_appconfig(const gnb_appconfig& config)
     fmt::print("For test mode, RI shall not be set if UE is configured to use DCI format 1_0\n");
     return false;
   }
-  unsigned nof_ports = config.common_cell_cfg.pdsch_cfg.nof_ports.has_value()
-                           ? *config.common_cell_cfg.pdsch_cfg.nof_ports
-                           : config.common_cell_cfg.nof_antennas_dl;
-  if (config.test_mode_cfg.test_ue.ri > nof_ports) {
+  if (config.test_mode_cfg.test_ue.ri > config.common_cell_cfg.nof_antennas_dl) {
     fmt::print("For test mode, RI cannot be higher than the number of DL antenna ports ({} > {})\n",
                config.test_mode_cfg.test_ue.ri,
-               config.common_cell_cfg.pdsch_cfg.nof_ports);
+               config.common_cell_cfg.nof_antennas_dl);
     return false;
   }
 
@@ -658,6 +705,84 @@ static bool validate_ntn_config(const ntn_config ntn_cfg)
     valid = false;
   }
   return valid;
+}
+
+static bool validate_hal_config(const optional<hal_appconfig>& config)
+{
+#ifdef DPDK_FOUND
+  if (config && config->eal_args.empty()) {
+    fmt::print("It is mandatory to fill the EAL configuration arguments to initialize DPDK correctly\n");
+    return false;
+  }
+#else
+  if (config) {
+    fmt::print("Unable to use DPDK as the application was not compiled with DPDK support\n");
+    return false;
+  }
+#endif
+  return true;
+}
+
+static bool validate_upper_phy_threads_appconfig(const upper_phy_threads_appconfig& config,
+                                                 unsigned                           max_processing_delay_slots)
+{
+  static const interval<unsigned, true> nof_ul_dl_threads_range(1, std::thread::hardware_concurrency());
+  static const interval<unsigned, true> nof_pdsch_threads_range(2, std::thread::hardware_concurrency());
+
+  bool valid = true;
+
+  if (!nof_ul_dl_threads_range.contains(config.nof_ul_threads)) {
+    fmt::print(
+        "Number of PHY UL threads (i.e., {}) must be in range {}.\n", config.nof_ul_threads, nof_ul_dl_threads_range);
+    valid = false;
+  }
+
+  if ((config.pdsch_processor_type != "auto") && (config.pdsch_processor_type != "concurrent") &&
+      config.pdsch_processor_type != "generic" && (config.pdsch_processor_type != "lite")) {
+    fmt::print("Invalid PDSCH processor type. Valid types are: auto, generic, concurrent and lite.\n");
+    valid = false;
+  }
+
+  if ((config.pdsch_processor_type == "concurrent") && !nof_pdsch_threads_range.contains(config.nof_pdsch_threads)) {
+    fmt::print("For concurrent PDSCH processor. Number of PHY PDSCH threads (i.e., {}) must be in range {}.\n",
+               config.nof_pdsch_threads,
+               nof_pdsch_threads_range);
+    valid = false;
+  } else if ((config.pdsch_processor_type == "auto") && !nof_ul_dl_threads_range.contains(config.nof_pdsch_threads)) {
+    fmt::print("For auto PDSCH processor. Number of PHY PDSCH threads (i.e., {}) must be in range {}.\n",
+               config.nof_pdsch_threads,
+               nof_ul_dl_threads_range);
+    valid = false;
+  } else if ((config.pdsch_processor_type != "auto") && (config.pdsch_processor_type != "concurrent") &&
+             (config.nof_pdsch_threads > 1)) {
+    fmt::print("Number of PHY PDSCH threads (i.e., {}) is ignored.\n", config.nof_pdsch_threads);
+  }
+
+  if (!nof_ul_dl_threads_range.contains(config.nof_dl_threads)) {
+    fmt::print(
+        "Number of PHY DL threads (i.e., {}) must be in range {}.\n", config.nof_dl_threads, nof_ul_dl_threads_range);
+    valid = false;
+  }
+
+  if (config.nof_dl_threads > max_processing_delay_slots) {
+    fmt::print("Number of PHY DL threads (i.e., {}) cannot be larger than the maximum processing delay in slots "
+               "(i.e., {}).\n",
+               config.nof_dl_threads,
+               max_processing_delay_slots);
+    valid = false;
+  }
+
+  return valid;
+}
+
+static bool validate_expert_execution_appconfig(const gnb_appconfig& config)
+{
+  if (!validate_upper_phy_threads_appconfig(config.expert_execution_cfg.threads.upper_threads,
+                                            config.expert_phy_cfg.max_processing_delay_slots)) {
+    return false;
+  }
+
+  return true;
 }
 
 bool srsran::validate_appconfig(const gnb_appconfig& config)
@@ -732,6 +857,19 @@ bool srsran::validate_appconfig(const gnb_appconfig& config)
   }
 
   if (!validate_test_mode_appconfig(config)) {
+    return false;
+  }
+
+  if (!validate_hal_config(config.hal_config)) {
+    return false;
+  }
+
+  if (config.hal_config && config.cells_cfg.size() > 1) {
+    fmt::print("As a temporary limitation, DPDK can only be used with a single cell\n");
+    return false;
+  }
+
+  if (!validate_expert_execution_appconfig(config)) {
     return false;
   }
 

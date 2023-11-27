@@ -132,7 +132,9 @@ SRSASN_CODE bit_ref::pack(uint64_t val, uint32_t n_bits)
   srsran_assert(n_bits < 64, "Invalid number of bits passed to pack()");
   while (n_bits > 0) {
     if (offset == 0) {
-      writer.append(0);
+      if (not writer.append(0)) {
+        return SRSASN_ERROR;
+      }
     }
     uint64_t mask = ((1ul << n_bits) - 1ul); // bitmap of n_bits ones.
     val           = val & mask;
@@ -212,6 +214,10 @@ SRSASN_CODE cbit_ref::unpack(T& val, uint32_t n_bits)
   srsran_assert(n_bits <= sizeof(T) * 8, "unpack_bits() only supports up to {} bits", sizeof(T) * 8);
   val = 0;
   while (n_bits > 0) {
+    if (it == buffer.end()) {
+      log_error("{}: Buffer size limit {} was reached.", __FUNCTION__, buffer.length());
+      return SRSASN_ERROR_DECODE_FAIL;
+    }
     if ((uint32_t)(8 - offset) > n_bits) {
       uint8_t mask = (uint8_t)(1u << (8u - offset)) - (uint8_t)(1u << (8u - offset - n_bits));
       val += ((uint32_t)((*it) & mask)) >> (8u - offset - n_bits);
@@ -222,10 +228,6 @@ SRSASN_CODE cbit_ref::unpack(T& val, uint32_t n_bits)
       val += ((uint64_t)((*it) & mask)) << (n_bits - 8 + offset);
       n_bits -= 8 - offset;
       offset = 0;
-      if (it == buffer.end()) {
-        log_error("{}: Buffer size limit {} was achieved.", __FUNCTION__, buffer.length());
-        return SRSASN_ERROR_DECODE_FAIL;
-      }
       ++it;
     }
   }

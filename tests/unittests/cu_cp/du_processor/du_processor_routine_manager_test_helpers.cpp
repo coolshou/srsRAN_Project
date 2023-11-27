@@ -21,7 +21,8 @@
  */
 
 #include "du_processor_routine_manager_test_helpers.h"
-#include "srsran/support/async/async_test_utils.h"
+#include "tests/unittests/rrc/rrc_ue_test_messages.h"
+#include <memory>
 
 using namespace srsran;
 using namespace srs_cu_cp;
@@ -32,7 +33,8 @@ du_processor_routine_manager_test::du_processor_routine_manager_test()
   cu_cp_logger.set_level(srslog::basic_levels::debug);
   srslog::init();
 
-  ue_task_sched = std::make_unique<dummy_du_processor_ue_task_scheduler>(timers, ctrl_worker);
+  ue_task_sched  = std::make_unique<dummy_du_processor_ue_task_scheduler>(timers, ctrl_worker);
+  cu_cp_notifier = std::make_unique<dummy_du_processor_cu_cp_notifier>(ngap_ue_removal_handler, &ue_mng);
 
   drb_cfg                                                    = {};
   drb_cfg.five_qi_config[uint_to_five_qi(9)]                 = {};
@@ -46,7 +48,7 @@ du_processor_routine_manager_test::du_processor_routine_manager_test()
   rrc_ue_up_resource_manager = std::make_unique<up_resource_manager_impl>(drb_cfg);
   // create routine manager
   routine_mng = std::make_unique<du_processor_routine_manager>(
-      e1ap_ctrl_notifier, f1ap_ue_ctxt_notifier, rrc_du_notifier, ue_mng, cu_cp_logger);
+      e1ap_ctrl_notifier, f1ap_ue_ctxt_notifier, ue_mng, default_security_indication, cu_cp_logger);
 
   init_security_config();
 }

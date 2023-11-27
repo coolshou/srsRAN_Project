@@ -42,6 +42,7 @@ public:
                       gtpu_tunnel_tx_upper_layer_notifier& gtpu_tx_notifier_,
                       gtpu_demux_ctrl&                     gtpu_rx_demux_,
                       gtpu_teid_pool&                      f1u_teid_allocator_,
+                      dlt_pcap&                            gtpu_pcap_,
                       task_executor&                       ue_exec_,
                       srslog::basic_logger&                logger_);
 
@@ -51,7 +52,7 @@ public:
   ue_context* add_ue(const ue_context_cfg& cfg) override;
   void        remove_ue(ue_index_t ue_index) override;
   ue_context* find_ue(ue_index_t ue_index) override;
-  size_t      get_nof_ues() override;
+  size_t      get_nof_ues() const override { return ue_db.size(); };
 
 private:
   /// \brief Get the next available UE index.
@@ -64,6 +65,7 @@ private:
   gtpu_tunnel_tx_upper_layer_notifier& gtpu_tx_notifier;
   gtpu_demux_ctrl&                     gtpu_rx_demux;
   gtpu_teid_pool&                      f1u_teid_allocator;
+  dlt_pcap&                            gtpu_pcap;
   timer_manager&                       timers;
   ue_db_t                              ue_db;
   task_executor&                       ue_exec;

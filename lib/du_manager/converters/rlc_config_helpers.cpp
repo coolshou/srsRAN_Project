@@ -27,16 +27,18 @@ using namespace srs_du;
 
 rlc_config srsran::srs_du::make_default_srb_rlc_config()
 {
-  rlc_config cfg;
+  rlc_config cfg              = {};
   cfg.mode                    = rlc_mode::am;
   cfg.am.tx.sn_field_length   = rlc_am_sn_size::size12bits;
   cfg.am.tx.t_poll_retx       = 45;
   cfg.am.tx.poll_pdu          = -1;
   cfg.am.tx.poll_byte         = -1;
   cfg.am.tx.max_retx_thresh   = 8;
+  cfg.am.tx.queue_size        = 256;
   cfg.am.rx.sn_field_length   = rlc_am_sn_size::size12bits;
   cfg.am.rx.t_reassembly      = 35;
   cfg.am.rx.t_status_prohibit = 0;
+  cfg.metrics_period          = std::chrono::milliseconds(0); // disable metrics reporting for SRBs
   return cfg;
 }
 
@@ -56,7 +58,7 @@ static void fill_rlc_entity_creation_message_common(rlc_entity_creation_message&
   msg.tx_lower_dn    = &bearer.connector.rlc_tx_buffer_state_notif;
   msg.timers         = &du_services.timers;
   msg.pcell_executor = &du_services.cell_execs.executor(pcell_index);
-  msg.ue_executor    = &du_services.ue_execs.executor(ue_index);
+  msg.ue_executor    = &du_services.ue_execs.ctrl_executor(ue_index);
 }
 
 // for SRBs
@@ -79,10 +81,12 @@ srsran::srs_du::make_rlc_entity_creation_message(du_ue_index_t                  
                                                  du_cell_index_t                          pcell_index,
                                                  du_ue_drb&                               bearer,
                                                  const du_manager_params::service_params& du_services,
-                                                 rlc_tx_upper_layer_control_notifier&     rlc_rlf_notifier)
+                                                 rlc_tx_upper_layer_control_notifier&     rlc_rlf_notifier,
+                                                 rlc_metrics_notifier*                    rlc_metrics_notifier_)
 {
   rlc_entity_creation_message msg;
   fill_rlc_entity_creation_message_common(msg, ue_index, pcell_index, bearer, du_services, rlc_rlf_notifier);
-  msg.rb_id = bearer.drb_id;
+  msg.rb_id             = bearer.drb_id;
+  msg.rlc_metrics_notif = rlc_metrics_notifier_;
   return msg;
 }

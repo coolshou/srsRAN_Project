@@ -30,15 +30,15 @@ using namespace asn1::ngap;
 ngap_handover_resource_allocation_procedure::ngap_handover_resource_allocation_procedure(
     const ngap_handover_request&       request_,
     const amf_ue_id_t                  amf_ue_id_,
+    ngap_ue_context_list&              ue_ctxt_list_,
     ngap_cu_cp_du_repository_notifier& du_repository_notif_,
     ngap_message_notifier&             amf_notif_,
-    ngap_ue_manager&                   ue_manager_,
     srslog::basic_logger&              logger_) :
   request(request_),
   amf_ue_id(amf_ue_id_),
+  ue_ctxt_list(ue_ctxt_list_),
   du_repository_notifier(du_repository_notif_),
   amf_notifier(amf_notif_),
-  ue_manager(ue_manager_),
   logger(logger_)
 {
 }
@@ -47,28 +47,28 @@ void ngap_handover_resource_allocation_procedure::operator()(coro_context<async_
 {
   CORO_BEGIN(ctx);
 
-  logger.debug("ue={}: \"{}\" initialized.", request.ue_index, name());
+  logger.debug("ue={}: \"{}\" initialized", request.ue_index, name());
 
   // Notify DU repository about handover request and await requst ack
   CORO_AWAIT_VALUE(response, du_repository_notifier.on_ngap_handover_request(request));
 
   if (response.success) {
-    // UE is created when ho request returns success
-    ue = ue_manager.find_ngap_ue(response.ue_index);
     // Update UE with AMF UE ID
-    ue_manager.set_amf_ue_id(response.ue_index, amf_ue_id);
+    ngap_ue_context& ue_ctxt = ue_ctxt_list[response.ue_index];
+    ue_ctxt.ue_ids.amf_ue_id = amf_ue_id;
 
-    send_handover_request_ack();
+    send_handover_request_ack(ue_ctxt.ue_ids.ue_index, ue_ctxt.ue_ids.ran_ue_id);
+    logger.debug("ue={}: \"{}\" finalized", response.ue_index, name());
   } else {
     send_handover_failure();
+    logger.debug("ue={}: \"{}\" failed", response.ue_index, name());
     CORO_EARLY_RETURN();
   }
 
-  logger.debug("ue={}: \"{}\" finished.", request.ue_index, name());
   CORO_RETURN();
 }
 
-void ngap_handover_resource_allocation_procedure::send_handover_request_ack()
+void ngap_handover_resource_allocation_procedure::send_handover_request_ack(ue_index_t ue_index, ran_ue_id_t ran_ue_id)
 {
   ngap_message ngap_msg;
 
@@ -78,10 +78,10 @@ void ngap_handover_resource_allocation_procedure::send_handover_request_ack()
   fill_asn1_handover_resource_allocation_response(ngap_msg.pdu.successful_outcome().value.ho_request_ack(), response);
 
   auto& ho_request_ack           = ngap_msg.pdu.successful_outcome().value.ho_request_ack();
-  ho_request_ack->amf_ue_ngap_id = amf_ue_id_to_uint(ue->get_amf_ue_id());
-  ho_request_ack->ran_ue_ngap_id = ran_ue_id_to_uint(ue->get_ran_ue_id());
+  ho_request_ack->amf_ue_ngap_id = amf_ue_id_to_uint(amf_ue_id);
+  ho_request_ack->ran_ue_ngap_id = ran_ue_id_to_uint(ran_ue_id);
 
-  logger.info("ue={} Sending HoRequestAck", ue->get_ue_index());
+  logger.info("ue={} ran_ue_id={} amf_ue_id={}: Sending HoRequestAck", ue_index, ran_ue_id, amf_ue_id);
   amf_notifier.on_new_message(ngap_msg);
 }
 
@@ -96,6 +96,6 @@ void ngap_handover_resource_allocation_procedure::send_handover_failure()
   auto& ho_fail           = ngap_msg.pdu.unsuccessful_outcome().value.ho_fail();
   ho_fail->amf_ue_ngap_id = amf_ue_id_to_uint(amf_ue_id);
 
-  logger.info("ue={} Sending HoFailure", request.ue_index);
+  logger.info("ue={} amf_ue_id={}: Sending HoFailure", request.ue_index, amf_ue_id);
   amf_notifier.on_new_message(ngap_msg);
 }

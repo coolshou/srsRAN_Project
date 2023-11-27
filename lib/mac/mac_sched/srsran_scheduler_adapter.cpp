@@ -34,6 +34,7 @@ static sched_ue_creation_request_message make_scheduler_ue_creation_request(cons
   ret.crnti              = request.crnti;
   ret.starts_in_fallback = true;
   ret.cfg                = request.sched_cfg;
+  ret.tag_config         = request.mac_cell_group_cfg.tag_config;
   return ret;
 }
 
@@ -48,11 +49,9 @@ make_scheduler_ue_reconfiguration_request(const mac_ue_reconfiguration_request& 
   return ret;
 }
 
-srsran_scheduler_adapter::srsran_scheduler_adapter(const mac_config& params,
-                                                   rnti_manager&     rnti_mng_,
-                                                   rlf_detector&     rlf_handler_) :
+srsran_scheduler_adapter::srsran_scheduler_adapter(const mac_config& params, rnti_manager& rnti_mng_) :
   rnti_mng(rnti_mng_),
-  rlf_handler(rlf_handler_),
+  rlf_handler(params.mac_cfg.max_consecutive_dl_kos, params.mac_cfg.max_consecutive_ul_kos),
   ctrl_exec(params.ctrl_exec),
   logger(srslog::fetch_basic_logger("MAC")),
   notifier(*this),
@@ -73,6 +72,9 @@ async_task<bool> srsran_scheduler_adapter::handle_ue_creation_request(const mac_
 {
   return launch_async([this, msg](coro_context<async_task<bool>>& ctx) {
     CORO_BEGIN(ctx);
+
+    // Add UE to RLF handler.
+    rlf_handler.add_ue(msg.ue_index, *msg.rlf_notifier);
 
     // Create UE in the Scheduler.
     sched_impl->handle_ue_creation_request(make_scheduler_ue_creation_request(msg));
@@ -112,6 +114,10 @@ async_task<bool> srsran_scheduler_adapter::handle_ue_removal_request(const mac_u
     // Await Scheduler notification.
     CORO_AWAIT(sched_cfg_notif_map[msg.ue_index].ue_config_ready);
     sched_cfg_notif_map[msg.ue_index].ue_config_ready.reset();
+
+    // Remove UE from RLF handler.
+    rlf_handler.rem_ue(msg.ue_index);
+
     CORO_RETURN(true);
   });
 }
@@ -192,6 +198,11 @@ void srsran_scheduler_adapter::handle_ul_phr_indication(const mac_phr_ce_info& p
   ind.rnti       = phr.rnti;
   ind.phr        = phr.phr;
   sched_impl->handle_ul_phr_indication(ind);
+}
+
+void srsran_scheduler_adapter::handle_crnti_ce_indication(du_ue_index_t old_ue_index)
+{
+  rlf_handler.handle_crnti_ce(old_ue_index);
 }
 
 const sched_result& srsran_scheduler_adapter::slot_indication(slot_point slot_tx, du_cell_index_t cell_idx)
@@ -291,6 +302,7 @@ void srsran_scheduler_adapter::cell_handler::handle_crc(const mac_crc_indication
     pdu.harq_id                    = to_harq_id(mac_pdu.harq_id);
     pdu.tb_crc_success             = mac_pdu.tb_crc_success;
     pdu.ul_sinr_metric             = mac_pdu.ul_sinr_metric;
+    pdu.time_advance_offset        = mac_pdu.time_advance_offset;
   }
 
   // Forward CRC indication to the scheduler.

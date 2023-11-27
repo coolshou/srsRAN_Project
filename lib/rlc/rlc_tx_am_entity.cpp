@@ -21,15 +21,14 @@
  */
 
 #include "rlc_tx_am_entity.h"
+#include "srsran/adt/scope_exit.h"
+#include "srsran/instrumentation/traces/du_traces.h"
 #include "srsran/ran/pdsch/pdsch_constants.h"
 #include "srsran/support/event_tracing.h"
 #include "srsran/support/srsran_assert.h"
 #include <set>
 
 using namespace srsran;
-
-/// RLC event tracing.
-static file_event_tracer<false> rlc_tracer;
 
 rlc_tx_am_entity::rlc_tx_am_entity(du_ue_index_t                        du_index,
                                    rb_id_t                              rb_id,
@@ -42,6 +41,7 @@ rlc_tx_am_entity::rlc_tx_am_entity(du_ue_index_t                        du_index
                                    task_executor&                       ue_executor_) :
   rlc_tx_entity(du_index, rb_id, upper_dn_, upper_cn_, lower_dn_),
   cfg(config),
+  sdu_queue(cfg.queue_size),
   retx_queue(window_size(to_number(cfg.sn_field_length))),
   mod(cardinality(to_number(cfg.sn_field_length))),
   am_window_size(window_size(to_number(cfg.sn_field_length))),
@@ -64,6 +64,7 @@ rlc_tx_am_entity::rlc_tx_am_entity(du_ue_index_t                        du_index
     poll_retransmit_timer.set(std::chrono::milliseconds(cfg.t_poll_retx),
                               [this](timer_id_t tid) { on_expired_poll_retransmit_timer(); });
   }
+
   logger.log_info("RLC AM configured. {}", cfg);
 }
 
@@ -77,7 +78,7 @@ void rlc_tx_am_entity::handle_sdu(rlc_sdu sdu)
     metrics.metrics_add_sdus(1, sdu_length);
     handle_changed_buffer_state();
   } else {
-    logger.log_info("Dropped SDU. sdu_len={} pdcp_sn={} {}", sdu_length, sdu.pdcp_sn, sdu_queue);
+    logger.log_warning("Dropped SDU. sdu_len={} pdcp_sn={} {}", sdu_length, sdu.pdcp_sn, sdu_queue);
     metrics.metrics_add_lost_sdus(1);
   }
 }
@@ -119,11 +120,14 @@ byte_buffer_chain rlc_tx_am_entity::pull_pdu(uint32_t grant_len)
       logger.log_debug("Trimmed status PDU. {}", status_pdu);
     }
     byte_buffer pdu;
-    status_pdu.pack(pdu);
+    if (not status_pdu.pack(pdu)) {
+      logger.log_error("Could not pack status pdu. {}", status_pdu);
+      return {};
+    }
     logger.log_info(pdu.begin(), pdu.end(), "TX status PDU. pdu_len={} grant_len={}", pdu.length(), grant_len);
 
     // Update metrics
-    metrics.metrics_add_pdus(1, pdu.length());
+    metrics.metrics_add_ctrl_pdus(1, pdu.length());
 
     // Log state
     log_state(srslog::basic_levels::debug);
@@ -141,11 +145,10 @@ byte_buffer_chain rlc_tx_am_entity::pull_pdu(uint32_t grant_len)
   if (sn_under_segmentation != INVALID_RLC_SN) {
     if (tx_window->has_sn(sn_under_segmentation)) {
       return build_continued_sdu_segment((*tx_window)[sn_under_segmentation], grant_len);
-    } else {
-      sn_under_segmentation = INVALID_RLC_SN;
-      logger.log_error("SDU under segmentation does not exist in tx_window. sn={}", sn_under_segmentation);
-      // attempt to send next SDU
     }
+    sn_under_segmentation = INVALID_RLC_SN;
+    logger.log_error("SDU under segmentation does not exist in tx_window. sn={}", sn_under_segmentation);
+    // attempt to send next SDU
   }
 
   // Check whether there is something to TX
@@ -165,7 +168,7 @@ byte_buffer_chain rlc_tx_am_entity::build_new_pdu(uint32_t grant_len)
   }
 
   // do not build any more PDU if window is already full
-  if (tx_window->full()) {
+  if (is_tx_window_full()) {
     logger.log_warning("Cannot build data PDU, tx_window is full. grant_len={}", grant_len);
     return {};
   }
@@ -206,7 +209,10 @@ byte_buffer_chain rlc_tx_am_entity::build_new_pdu(uint32_t grant_len)
 
   // Pack header
   byte_buffer header_buf = {};
-  rlc_am_write_data_pdu_header(hdr, header_buf);
+  if (not rlc_am_write_data_pdu_header(hdr, header_buf)) {
+    logger.log_error("Could not pack RLC header. hdr={}", hdr);
+    return {};
+  }
 
   // Assemble PDU
   byte_buffer_chain pdu_buf = {};
@@ -261,7 +267,10 @@ byte_buffer_chain rlc_tx_am_entity::build_first_sdu_segment(rlc_tx_am_sdu_info& 
 
   // Pack header
   byte_buffer header_buf = {};
-  rlc_am_write_data_pdu_header(hdr, header_buf);
+  if (not rlc_am_write_data_pdu_header(hdr, header_buf)) {
+    logger.log_error("Could not pack RLC header. hdr={}", hdr);
+    return {};
+  }
 
   // Assemble PDU
   byte_buffer_chain pdu_buf = {};
@@ -342,7 +351,10 @@ byte_buffer_chain rlc_tx_am_entity::build_continued_sdu_segment(rlc_tx_am_sdu_in
 
   // Pack header
   byte_buffer header_buf = {};
-  rlc_am_write_data_pdu_header(hdr, header_buf);
+  if (not rlc_am_write_data_pdu_header(hdr, header_buf)) {
+    logger.log_error("Could not pack RLC header. hdr={}", hdr);
+    return {};
+  }
 
   // Assemble PDU
   byte_buffer_chain pdu_buf = {};
@@ -465,7 +477,10 @@ byte_buffer_chain rlc_tx_am_entity::build_retx_pdu(uint32_t grant_len)
 
   // Pack header
   byte_buffer header_buf = {};
-  rlc_am_write_data_pdu_header(hdr, header_buf);
+  if (not rlc_am_write_data_pdu_header(hdr, header_buf)) {
+    logger.log_error("Could not pack RLC header. hdr={}", hdr);
+    return {};
+  }
   srsran_assert(header_buf.length() == expected_hdr_len,
                 "RETX hdr_len={} differs from expected_hdr_len={}",
                 header_buf.length(),
@@ -482,7 +497,7 @@ byte_buffer_chain rlc_tx_am_entity::build_retx_pdu(uint32_t grant_len)
   log_state(srslog::basic_levels::debug);
 
   // Update metrics
-  metrics.metrics_add_retx_pdus(1);
+  metrics.metrics_add_retx_pdus(1, pdu_buf.length());
 
   return pdu_buf;
 }
@@ -498,10 +513,10 @@ void rlc_tx_am_entity::on_status_pdu(rlc_am_status_pdu status)
 
 void rlc_tx_am_entity::handle_status_pdu(rlc_am_status_pdu status)
 {
-  trace_point status_tp = rlc_tracer.now();
+  trace_point status_tp = l2_tracer.now();
+  auto        t_start   = std::chrono::high_resolution_clock::now();
 
   std::lock_guard<std::mutex> lock(mutex);
-  logger.log_info("Handling status report. {}", status);
 
   /*
    * Sanity check the received status report.
@@ -532,6 +547,12 @@ void rlc_tx_am_entity::handle_status_pdu(rlc_am_status_pdu status)
       }
     }
   }
+
+  auto on_function_exit = make_scope_exit([&]() {
+    auto t_end    = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_start);
+    logger.log_info("Handled status report. t={}us {}", duration.count(), status);
+  });
 
   /**
    * Section 5.3.3.3: Reception of a STATUS report
@@ -639,7 +660,7 @@ void rlc_tx_am_entity::handle_status_pdu(rlc_am_status_pdu status)
     }
   }
 
-  rlc_tracer << trace_event{"handle_status", status_tp};
+  l2_tracer << trace_event{"handle_status", status_tp};
 
   update_mac_buffer_state(/* is_locked = */ true);
 
@@ -842,7 +863,7 @@ uint8_t rlc_tx_am_entity::get_polling_bit(uint32_t sn, bool is_retx, uint32_t pa
    * - if no new RLC SDU can be transmitted after the transmission of the AMD PDU (e.g. due to window stalling);
    *   - include a poll in the AMD PDU as described below.
    */
-  if ((sdu_queue.is_empty() && retx_queue.empty() && sn_under_segmentation == INVALID_RLC_SN) || tx_window->full()) {
+  if ((sdu_queue.is_empty() && retx_queue.empty() && sn_under_segmentation == INVALID_RLC_SN) || is_tx_window_full()) {
     logger.log_debug("Setting poll bit due to empty buffers/inablity to TX. sn={} poll_sn={}", sn, st.poll_sn);
     poll = 1;
   }
@@ -906,7 +927,7 @@ void rlc_tx_am_entity::on_expired_poll_retransmit_timer()
    *   retransmission; or
    *   - consider any RLC SDU which has not been positively acknowledged for retransmission.
    */
-  if ((sdu_queue.is_empty() && retx_queue.empty() && sn_under_segmentation == INVALID_RLC_SN) || tx_window->full()) {
+  if ((sdu_queue.is_empty() && retx_queue.empty() && sn_under_segmentation == INVALID_RLC_SN) || is_tx_window_full()) {
     if (tx_window->empty()) {
       logger.log_info(
           "Poll retransmit timer expired, but the TX window is empty. {} tx_window_size={}", st, tx_window->size());
@@ -975,6 +996,12 @@ bool rlc_tx_am_entity::inside_tx_window(uint32_t sn) const
 {
   // TX_Next_Ack <= SN < TX_Next_Ack + AM_Window_Size
   return tx_mod_base(sn) < am_window_size;
+}
+
+bool rlc_tx_am_entity::is_tx_window_full() const
+{
+  // TX window is full, or we reached our virtual max window size
+  return tx_window->full() || (cfg.max_window != 0 && tx_mod_base(st.tx_next) > cfg.max_window);
 }
 
 bool rlc_tx_am_entity::valid_ack_sn(uint32_t sn) const

@@ -21,6 +21,7 @@
  */
 
 #include "../../../../lib/ofh/receiver/ofh_message_receiver.h"
+#include "../../../../lib/ofh/receiver/ofh_rx_window_checker.h"
 #include "../compression/ofh_iq_decompressor_test_doubles.h"
 #include "srsran/ofh/ofh_factories.h"
 #include <gtest/gtest.h>
@@ -114,8 +115,8 @@ protected:
                                                                    0xaefe};
   static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC> ul_prach_eaxc = {0, 1};
   static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC> ul_eaxc       = {4, 5};
+  rx_window_checker                               window_checker;
   ecpri::packet_parameters                        ecpri_params;
-  iq_decompressor_dummy                           decomp;
   data_flow_uplane_uplink_data_spy*               df_uplink;
   data_flow_uplane_uplink_prach_spy*              df_prach;
   ecpri_packet_decoder_spy*                       ecpri_decoder;
@@ -123,39 +124,49 @@ protected:
   message_receiver                                ul_handler;
 
 public:
-  ofh_message_receiver_fixture() : ul_handler(generate_config(), generate_dependencies()) {}
+  ofh_message_receiver_fixture() :
+    window_checker(srslog::fetch_basic_logger("TEST"), {}, {}), ul_handler(generate_config(), generate_dependencies())
+  {
+    window_checker.handle_new_ota_symbol({{1, 0}, 0, 14});
+  }
 
   message_receiver_config generate_config()
   {
     message_receiver_config config;
-    config.vlan_params   = vlan_params;
-    config.ul_eaxc       = ul_eaxc;
-    config.ul_prach_eaxc = ul_prach_eaxc;
+    config.vlan_params = vlan_params;
+    config.ul_eaxc     = ul_eaxc;
+    config.prach_eaxc  = ul_prach_eaxc;
 
     return config;
   }
 
   message_receiver_dependencies generate_dependencies()
   {
-    message_receiver_dependencies depen;
-    depen.logger         = &srslog::fetch_basic_logger("TEST");
-    depen.uplane_decoder = create_dynamic_comp_method_ofh_user_plane_packet_decoder(
-        *depen.logger, srsran::subcarrier_spacing::kHz30, cyclic_prefix::NORMAL, MAX_NOF_PRBS, decomp);
+    message_receiver_dependencies dependencies;
+    dependencies.logger         = &srslog::fetch_basic_logger("TEST");
+    dependencies.window_checker = &window_checker;
+
+    dependencies.uplane_decoder =
+        create_dynamic_compr_method_ofh_user_plane_packet_decoder(*dependencies.logger,
+                                                                  srsran::subcarrier_spacing::kHz30,
+                                                                  cyclic_prefix::NORMAL,
+                                                                  MAX_NOF_PRBS,
+                                                                  std::make_unique<iq_decompressor_dummy>());
 
     {
-      auto temp             = std::make_unique<data_flow_uplane_uplink_prach_spy>();
-      df_prach              = temp.get();
-      depen.data_flow_prach = std::move(temp);
+      auto temp                    = std::make_unique<data_flow_uplane_uplink_prach_spy>();
+      df_prach                     = temp.get();
+      dependencies.data_flow_prach = std::move(temp);
     }
     {
-      auto temp              = std::make_unique<data_flow_uplane_uplink_data_spy>();
-      df_uplink              = temp.get();
-      depen.data_flow_uplink = std::move(temp);
+      auto temp                     = std::make_unique<data_flow_uplane_uplink_data_spy>();
+      df_uplink                     = temp.get();
+      dependencies.data_flow_uplink = std::move(temp);
     }
     {
-      auto temp               = std::make_unique<vlan_frame_decoder_spy>(vlan_params);
-      vlan_decoder            = temp.get();
-      depen.eth_frame_decoder = std::move(temp);
+      auto temp                      = std::make_unique<vlan_frame_decoder_spy>(vlan_params);
+      vlan_decoder                   = temp.get();
+      dependencies.eth_frame_decoder = std::move(temp);
     }
     {
       ecpri_params.header.msg_type       = ecpri::message_type::iq_data;
@@ -164,11 +175,11 @@ public:
       ecpri_params.header.revision       = 1U;
       ecpri_params.type_params.emplace<ecpri::iq_data_parameters>(ecpri::iq_data_parameters{1, 2});
 
-      auto temp           = std::make_unique<ecpri_packet_decoder_spy>(ecpri_params);
-      ecpri_decoder       = temp.get();
-      depen.ecpri_decoder = std::move(temp);
+      auto temp                  = std::make_unique<ecpri_packet_decoder_spy>(ecpri_params);
+      ecpri_decoder              = temp.get();
+      dependencies.ecpri_decoder = std::move(temp);
     }
-    return depen;
+    return dependencies;
   }
 };
 
@@ -269,9 +280,20 @@ TEST_F(ofh_message_receiver_fixture, discard_frames_with_unexpected_prach_eacx)
   ASSERT_FALSE(df_prach->has_decode_function_been_called());
 }
 
+TEST_F(ofh_message_receiver_fixture, invalid_slot_point_peek_does_not_call_data_flows)
+{
+  static_vector<uint8_t, 3> msg = {1, 0, 0};
+  ul_handler.on_new_frame(msg);
+
+  ASSERT_TRUE(vlan_decoder->has_decode_function_been_called());
+  ASSERT_TRUE(ecpri_decoder->has_decode_function_been_called());
+  ASSERT_FALSE(df_uplink->has_decode_function_been_called());
+  ASSERT_FALSE(df_prach->has_decode_function_been_called());
+}
+
 TEST_F(ofh_message_receiver_fixture, valid_uplink_message_gets_processed_by_data_flow)
 {
-  static_vector<uint8_t, 1> msg = {0};
+  static_vector<uint8_t, 4> msg = {0, 0, 0, 0};
   ul_handler.on_new_frame(msg);
 
   ASSERT_TRUE(vlan_decoder->has_decode_function_been_called());
@@ -282,7 +304,7 @@ TEST_F(ofh_message_receiver_fixture, valid_uplink_message_gets_processed_by_data
 
 TEST_F(ofh_message_receiver_fixture, valid_long_prach_message_gets_processed_by_data_flow)
 {
-  static_vector<uint8_t, 1> msg = {1};
+  static_vector<uint8_t, 4> msg = {1, 0, 0, 0};
   ul_handler.on_new_frame(msg);
 
   ASSERT_TRUE(vlan_decoder->has_decode_function_been_called());
@@ -293,7 +315,7 @@ TEST_F(ofh_message_receiver_fixture, valid_long_prach_message_gets_processed_by_
 
 TEST_F(ofh_message_receiver_fixture, valid_short_prach_message_gets_processed_by_data_flow)
 {
-  static_vector<uint8_t, 1> msg = {3};
+  static_vector<uint8_t, 4> msg = {3, 0, 0, 0};
   ul_handler.on_new_frame(msg);
 
   ASSERT_TRUE(vlan_decoder->has_decode_function_been_called());

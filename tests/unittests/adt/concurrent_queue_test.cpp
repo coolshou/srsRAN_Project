@@ -61,6 +61,8 @@ using concurrent_queue_types = ::testing::Types<
                      concurrent_queue_wait_policy::condition_variable>,
     concurrent_queue<int, concurrent_queue_policy::lockfree_spsc, concurrent_queue_wait_policy::sleep>,
     concurrent_queue<moveonly_test_object, concurrent_queue_policy::lockfree_spsc, concurrent_queue_wait_policy::sleep>,
+    concurrent_queue<int, concurrent_queue_policy::lockfree_mpmc, concurrent_queue_wait_policy::sleep>,
+    concurrent_queue<moveonly_test_object, concurrent_queue_policy::lockfree_mpmc, concurrent_queue_wait_policy::sleep>,
     concurrent_queue<int, concurrent_queue_policy::locking_mpsc, concurrent_queue_wait_policy::sleep>,
     concurrent_queue<moveonly_test_object, concurrent_queue_policy::locking_mpsc, concurrent_queue_wait_policy::sleep>,
     concurrent_queue<int, concurrent_queue_policy::locking_mpsc, concurrent_queue_wait_policy::condition_variable>,
@@ -78,9 +80,6 @@ TYPED_TEST(concurrent_queue_test, checks_for_empty_queue)
   auto val = this->queue.try_pop();
   ASSERT_FALSE(val.has_value());
   ASSERT_TRUE(this->queue.empty());
-
-  this->queue.clear();
-  ASSERT_TRUE(this->queue.empty());
 }
 
 TYPED_TEST(concurrent_queue_test, checks_for_non_empty_queue)
@@ -97,19 +96,6 @@ TYPED_TEST(concurrent_queue_test, checks_for_non_empty_queue)
 
   val = this->queue.try_pop();
   ASSERT_FALSE(val.has_value());
-}
-
-TYPED_TEST(concurrent_queue_test, clear_of_non_empty_queue)
-{
-  ASSERT_TRUE(this->queue.try_push(5));
-  ASSERT_TRUE(this->queue.try_push(6));
-
-  this->queue.clear();
-  ASSERT_TRUE(this->queue.empty());
-  ASSERT_EQ(this->queue.size(), 0);
-
-  this->queue.clear();
-  ASSERT_TRUE(this->queue.empty());
 }
 
 TYPED_TEST(concurrent_queue_test, try_push_to_full_queue_fails)

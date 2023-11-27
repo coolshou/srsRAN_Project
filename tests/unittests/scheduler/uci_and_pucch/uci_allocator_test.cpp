@@ -489,7 +489,7 @@ protected:
   test_tdd_uci_allocator() : test_uci_allocator(test_bench_params{.is_tdd = true}) {}
 };
 
-TEST_F(test_tdd_uci_allocator, when_tdd_cfg_then_dai_increases_with_number_of_allocs_and_wraps_around)
+TEST_F(test_tdd_uci_allocator, when_tdd_cfg_then_harq_bit_index_increases_with_number_of_allocs)
 {
   const std::vector<uint8_t> k1_candidates = {static_cast<uint8_t>(t_bench.k1)};
   for (unsigned i = 0; i != DAI_MOD * 2; ++i) {
@@ -500,7 +500,7 @@ TEST_F(test_tdd_uci_allocator, when_tdd_cfg_then_dai_increases_with_number_of_al
                                                                k1_candidates);
 
     if (alloc.alloc_successful) {
-      ASSERT_EQ(alloc.dai, i % DAI_MOD);
+      ASSERT_EQ(alloc.harq_bit_idx, i);
     }
   }
 }
@@ -579,14 +579,4 @@ TEST_F(test_tdd_uci_allocator, test_tdd_harq_ack_multiplexing)
   ASSERT_TRUE(slot_grid_4.result.ul.puschs.back().uci.has_value());
   ASSERT_EQ(3, slot_grid_4.result.ul.puschs.back().uci.value().harq_ack_nof_bits);
   ASSERT_EQ(4, slot_grid_4.result.ul.puschs.back().uci.value().csi_part1_nof_bits);
-}
-
-int main(int argc, char** argv)
-{
-  srslog::fetch_basic_logger("TEST").set_level(srslog::basic_levels::info);
-  srslog::init();
-
-  ::testing::InitGoogleTest(&argc, argv);
-
-  return RUN_ALL_TESTS();
 }

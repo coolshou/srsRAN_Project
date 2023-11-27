@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "metrics_plotter_json.h"
 #include "metrics_plotter_stdout.h"
 #include "srsran/du/du_cell_config.h"
 #include "srsran/scheduler/scheduler_metrics.h"
@@ -47,10 +48,11 @@ public:
 class gnb_console_helper : public app_state_notifier
 {
 public:
-  gnb_console_helper(io_broker& io_broker_);
+  gnb_console_helper(io_broker& io_broker_, srslog::log_channel& log_chan_);
   ~gnb_console_helper();
 
-  scheduler_ue_metrics_notifier& get_metrics_notifier() { return metrics_plotter; };
+  scheduler_ue_metrics_notifier& get_stdout_metrics_notifier() { return metrics_plotter; };
+  scheduler_ue_metrics_notifier& get_json_metrics_notifier() { return metrics_json; };
 
   void on_app_starting() override;
   void on_app_running() override;
@@ -59,14 +61,14 @@ public:
   void set_cells(const span<du_cell_config>& cells_);
 
 private:
-  void     stdin_handler(int fd);
-  void     handle_command(const std::string& command);
-  void     print_help();
-  unsigned derive_ssb_arfcn(const du_cell_config& cell);
+  void stdin_handler(int fd);
+  void handle_command(const std::string& command);
+  void print_help();
 
   srslog::basic_logger&       logger;
   io_broker&                  io_broker_handle;
   metrics_plotter_stdout      metrics_plotter;
+  metrics_plotter_json        metrics_json;
   std::vector<du_cell_config> cells;
 };
 

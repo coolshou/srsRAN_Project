@@ -24,13 +24,15 @@
 
 #include "srsran/gateways/network_gateway.h"
 #include <netdb.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
 #include <sys/types.h>
+
+struct sockaddr_storage;
 
 namespace srsran {
 
-struct udp_network_gateway_config : common_network_gateway_config {};
+struct udp_network_gateway_config : common_network_gateway_config {
+  unsigned rx_max_mmsg = 256;
+};
 
 /// Interface to inject PDUs into gateway entity.
 class udp_network_gateway_data_handler
@@ -40,7 +42,7 @@ public:
 
   /// \brief Handle the incoming PDU.
   /// \param[in]  put Byte-buffer with new PDU.
-  virtual void handle_pdu(const byte_buffer& pdu, const ::sockaddr* dest_addr, ::socklen_t dest_len) = 0;
+  virtual void handle_pdu(const byte_buffer& pdu, const sockaddr_storage& dest_addr) = 0;
 };
 
 /// Interface to trigger bind/listen/connect operations on gateway socket.

@@ -26,12 +26,12 @@
 #include "../adapters/f1ap_adapters.h"
 #include "../adapters/rrc_ue_adapters.h"
 #include "../routine_managers/du_processor_routine_manager.h"
+#include "srsran/cu_cp/cell_meas_manager.h"
 #include "srsran/cu_cp/cu_cp_types.h"
 #include "srsran/cu_cp/du_processor_config.h"
 #include "srsran/cu_cp/du_processor_context.h"
 #include "srsran/f1ap/cu_cp/f1ap_cu.h"
 #include "srsran/ran/nr_cgi.h"
-#include "srsran/rrc/rrc_du_factory.h"
 #include "srsran/support/executors/task_executor.h"
 #include <string>
 
@@ -47,6 +47,7 @@ public:
                     f1ap_message_notifier&              f1ap_notifier_,
                     du_processor_e1ap_control_notifier& e1ap_ctrl_notifier_,
                     du_processor_ngap_control_notifier& ngap_ctrl_notifier_,
+                    f1ap_ue_removal_notifier&           f1ap_cu_cp_notifier_,
                     rrc_ue_nas_notifier&                rrc_ue_nas_pdu_notifier_,
                     rrc_ue_control_notifier&            rrc_ue_ngap_ctrl_notifier_,
                     rrc_ue_reestablishment_notifier&    rrc_ue_cu_cp_notifier_,
@@ -64,7 +65,7 @@ public:
   f1ap_statistics_handler&    get_f1ap_statistics_handler() override { return *f1ap; }
   rrc_amf_connection_handler& get_rrc_amf_connection_handler() override { return *rrc; };
 
-  size_t get_nof_ues() override { return ue_manager.get_nof_du_ues(context.du_index); };
+  size_t get_nof_ues() const override { return ue_manager.get_nof_du_ues(context.du_index); };
 
   // du_processor_f1ap_interface
   void                         handle_f1_setup_request(const f1ap_f1_setup_request& request) override;
@@ -74,9 +75,8 @@ public:
   ue_update_complete_message handle_ue_update_request(const ue_update_message& msg) override;
 
   // du_processor_rrc_ue_interface
-  /// \brief Create SRB entry in bearer list and add adapter handle.
-  void             create_srb(const srb_creation_message& msg) override;
-  void             handle_ue_context_release_command(const rrc_ue_context_release_command& cmd) override;
+  async_task<cu_cp_ue_context_release_complete>
+                   handle_ue_context_release_command(const cu_cp_ue_context_release_command& cmd) override;
   async_task<bool> handle_rrc_reestablishment_context_modification_required(ue_index_t ue_index) override;
 
   // du_processor_ngap_interface
@@ -86,8 +86,8 @@ public:
   handle_new_pdu_session_resource_modify_request(const cu_cp_pdu_session_resource_modify_request& msg) override;
   async_task<cu_cp_pdu_session_resource_release_response>
   handle_new_pdu_session_resource_release_command(const cu_cp_pdu_session_resource_release_command& msg) override;
-  cu_cp_ue_context_release_complete
-  handle_new_ue_context_release_command(const cu_cp_ngap_ue_context_release_command& cmd) override;
+  async_task<cu_cp_ue_context_release_complete>
+  handle_ue_context_release_command(const cu_cp_ngap_ue_context_release_command& cmd) override;
 
   // du_processor_mobility_manager_interface
   optional<nr_cell_global_id_t> get_cgi(pci_t pci) override;
@@ -104,9 +104,6 @@ public:
 
   // du_processor inactivity handler
   void handle_inactivity_notification(const cu_cp_inactivity_notification& msg) override;
-
-  // du_processor ue handler
-  void remove_ue(ue_index_t ue_index) override;
 
   // du_processor_cell_info_interface
   bool has_cell(pci_t pci) override;
@@ -128,7 +125,6 @@ public:
   du_processor_paging_handler&           get_du_processor_paging_handler() override { return *this; }
   du_processor_inactivity_handler&       get_du_processor_inactivity_handler() override { return *this; }
   du_processor_statistics_handler&       get_du_processor_statistics_handler() override { return *this; }
-  du_processor_ue_handler&               get_du_processor_ue_handler() override { return *this; }
   du_processor_mobility_handler&         get_du_processor_mobility_handler() override { return *this; }
   du_processor_f1ap_ue_context_notifier& get_du_processor_f1ap_ue_context_notifier() override
   {
@@ -138,7 +134,11 @@ public:
 private:
   /// \brief Create RRC UE object for given UE.
   /// \return True on success, falso otherwise.
-  bool create_rrc_ue(du_ue& ue, rnti_t c_rnti, const nr_cell_global_id_t& cgi, byte_buffer du_to_cu_rrc_container);
+  bool create_rrc_ue(du_ue&                     ue,
+                     rnti_t                     c_rnti,
+                     const nr_cell_global_id_t& cgi,
+                     byte_buffer                du_to_cu_rrc_container,
+                     bool                       is_inter_cu_handover = false);
 
   /// \brief Lookup the cell based on a given NR cell ID.
   /// \param[in] packed_nr_cell_id The packed NR cell ID received over F1AP.
@@ -170,6 +170,7 @@ private:
   f1ap_message_notifier&               f1ap_notifier;
   du_processor_e1ap_control_notifier&  e1ap_ctrl_notifier;
   du_processor_ngap_control_notifier&  ngap_ctrl_notifier;
+  f1ap_ue_removal_notifier&            f1ap_cu_cp_notifier;
   rrc_ue_nas_notifier&                 rrc_ue_nas_pdu_notifier;
   rrc_ue_control_notifier&             rrc_ue_ngap_ctrl_notifier;
   rrc_ue_reestablishment_notifier&     rrc_ue_cu_cp_notifier;
@@ -194,6 +195,12 @@ private:
 
   // F1AP to DU processor adapter
   f1ap_du_processor_adapter f1ap_ev_notifier;
+
+  // F1AP to RRC UE adapters
+  std::unordered_map<ue_index_t, f1ap_rrc_ue_adapter> f1ap_rrc_ue_adapters;
+
+  // RRC UE to F1AP adapters
+  std::unordered_map<ue_index_t, rrc_ue_f1ap_pdu_adapter> rrc_ue_f1ap_adapters;
 
   // RRC UE to DU processor adapter
   rrc_ue_du_processor_adapter rrc_ue_ev_notifier;

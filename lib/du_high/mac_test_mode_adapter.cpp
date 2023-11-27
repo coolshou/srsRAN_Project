@@ -91,6 +91,7 @@ public:
         // It is not the test UE.
         continue;
       }
+      srsran_assert(ue_cfg_req.cells.has_value(), "CRC received for test mode which is not yet created");
 
       // Force CRC=OK for test UE.
       crc.tb_crc_success = true;
@@ -113,6 +114,7 @@ public:
         // It is not the test UE.
         continue;
       }
+      srsran_assert(ue_cfg_req.cells.has_value(), "UCI received for test mode which is not yet created");
 
       // In case of test UE, set HARQ-Info always equal to ACK.
       if (variant_holds_alternative<mac_uci_pdu::pucch_f0_or_f1_type>(uci.pdu)) {
@@ -173,12 +175,13 @@ private:
   {
     static constexpr size_t CQI_BITLEN = 4;
 
-    if (ue_cfg_req.cells.empty() or not ue_cfg_req.cells[0].serv_cell_cfg.csi_meas_cfg.has_value()) {
+    if (ue_cfg_req.cells->empty() or not(*ue_cfg_req.cells)[0].serv_cell_cfg.csi_meas_cfg.has_value()) {
       return;
     }
     payload.resize(0);
 
-    unsigned nof_ports = ue_cfg_req.cells[0].serv_cell_cfg.csi_meas_cfg->nzp_csi_rs_res_list[0].res_mapping.nof_ports;
+    unsigned nof_ports =
+        (*ue_cfg_req.cells)[0].serv_cell_cfg.csi_meas_cfg->nzp_csi_rs_res_list[0].res_mapping.nof_ports;
     if (nof_ports == 2) {
       const size_t RI_BITLEN  = 1;
       const size_t PMI_BITLEN = 2;
@@ -206,7 +209,7 @@ private:
   mac_cell_control_information_handler&         adapted;
   mac_pdu_handler&                              pdu_handler;
   std::function<void()>                         dl_bs_notifier;
-  sched_ue_config_request                       ue_cfg_req;
+  const sched_ue_config_request&                ue_cfg_req;
   bool                                          msg4_rx_flag = false;
 };
 
@@ -268,22 +271,25 @@ mac_test_mode_adapter::adapt_bearers(const std::vector<mac_logical_channel_confi
 
 async_task<mac_ue_create_response> mac_test_mode_adapter::handle_ue_create_request(const mac_ue_create_request& cfg)
 {
-  mac_ue_create_request cfg_adapted = cfg;
-  if (cfg_adapted.crnti == test_ue.rnti) {
+  if (cfg.crnti == test_ue.rnti) {
     // It is the test UE.
+    mac_ue_create_request cfg_copy = cfg;
 
     // Save UE index.
-    test_ue_index = cfg_adapted.ue_index;
+    test_ue_index = cfg_copy.ue_index;
 
     // Add adapters to the UE config bearers before passing it to MAC.
-    cfg_adapted.bearers = adapt_bearers(cfg.bearers);
+    cfg_copy.bearers = adapt_bearers(cfg.bearers);
 
     // Save config of test mode UE.
-    test_ue_cfg = cfg_adapted.sched_cfg;
+    test_ue_cfg = cfg_copy.sched_cfg;
+
+    // Forward test UE creation request to MAC.
+    return mac_adapted->get_ue_configurator().handle_ue_create_request(cfg_copy);
   }
 
-  // Forward UE creation request to MAC.
-  return mac_adapted->get_ue_configurator().handle_ue_create_request(cfg_adapted);
+  // Forward normal UE creation request to MAC.
+  return mac_adapted->get_ue_configurator().handle_ue_create_request(cfg);
 }
 
 async_task<mac_ue_reconfiguration_response>
@@ -308,7 +314,7 @@ async_task<mac_ue_delete_response> mac_test_mode_adapter::handle_ue_delete_reque
   return mac_adapted->get_ue_configurator().handle_ue_delete_request(cfg);
 }
 
-void mac_test_mode_adapter::handle_ul_ccch_msg(du_ue_index_t ue_index, byte_buffer pdu)
+bool mac_test_mode_adapter::handle_ul_ccch_msg(du_ue_index_t ue_index, byte_buffer pdu)
 {
-  mac_adapted->get_ue_configurator().handle_ul_ccch_msg(ue_index, std::move(pdu));
+  return mac_adapted->get_ue_configurator().handle_ul_ccch_msg(ue_index, std::move(pdu));
 }

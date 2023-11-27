@@ -22,9 +22,12 @@
 
 #pragma once
 
+#include "srsran/mac/bsr_format.h"
+#include "srsran/mac/phr_config.h"
 #include "srsran/ran/carrier_configuration.h"
 #include "srsran/ran/nr_cgi.h"
 #include "srsran/ran/pci.h"
+#include "srsran/ran/sib/system_info_config.h"
 #include "srsran/ran/ssb_configuration.h"
 #include "srsran/ran/tdd/tdd_ul_dl_config.h"
 #include "srsran/scheduler/config/bwp_configuration.h"
@@ -92,20 +95,21 @@ struct pucch_builder_params {
   pucch_f2_params f2_params;
 };
 
-struct cell_selection_info {
-  /// \brief \c q-RxLevMin, part of \c cellSelectionInfo, \c SIB1, TS 38.311, in dBm.
-  /// Indicates the required minimum received RSRP level for cell selection/re-selection (see \c Q-RxLevMin, TS 38.311).
-  bounded_integer<int, -70, -22> q_rx_lev_min = -70;
-  /// \brief \c q-QualMin, part of \c cellSelectionInfo, \c SIB1, TS 38.311, in dB.
-  /// Indicates the required minimum received RSRQ level for cell selection/re-selection (see \c Q-QualMin, TS 38.311).
-  bounded_integer<int, -43, -12> q_qual_min = -20;
-};
-
 /// Parameters that are used to initialize or build the \c PhysicalCellGroupConfig, TS 38.331.
 struct phy_cell_group_params {
   /// \brief \c p-NR-FR1, part \c PhysicalCellGroupConfig, TS 38.331.
   /// The maximum total TX power to be used by the UE in this NR cell group across all serving cells in FR1.
   optional<bounded_integer<int, -30, 33>> p_nr_fr1;
+};
+
+/// Parameters that are used to initialize or build the \c MAC-CellGroupConfig, TS 38.331.
+struct mac_cell_group_params {
+  periodic_bsr_timer                       periodic_timer = periodic_bsr_timer::sf10;
+  retx_bsr_timer                           retx_timer     = retx_bsr_timer::sf80;
+  optional<logical_channel_sr_delay_timer> lc_sr_delay_timer;
+  optional<sr_prohib_timer>                sr_prohibit_timer;
+  sr_max_tx                                max_tx           = sr_max_tx::n64;
+  phr_prohibit_timer                       phr_prohib_timer = phr_prohibit_timer::sf10;
 };
 
 /// Cell Configuration, including common and UE-dedicated configs, that the DU will use to generate other configs for
@@ -114,9 +118,6 @@ struct du_cell_config {
   pci_t               pci;
   uint32_t            tac;
   nr_cell_global_id_t nr_cgi;
-
-  /// \c cellSelectionInfo, \c SIB1, as per TS 38.311.
-  cell_selection_info cell_sel_info;
 
   carrier_configuration dl_carrier;
   carrier_configuration ul_carrier;
@@ -139,6 +140,15 @@ struct du_cell_config {
   /// "intraFreqReselection" as per MIB, TS 38.331. true = allowed; false = notAllowed.
   bool intra_freq_resel;
 
+  /// \c cellSelectionInfo, \c SIB1, as per TS 38.331.
+  cell_selection_info cell_sel_info;
+
+  /// Content and scheduling information of SI-messages.
+  optional<si_scheduling_info_config> si_config;
+
+  /// \c ueTimersAndConstants, sent in \c SIB1, as per TS 38.331.
+  ue_timers_and_constants_config ue_timers_and_constants;
+
   /// Cell-specific DL and UL configuration used by common searchSpaces.
   dl_config_common dl_cfg_common;
   ul_config_common ul_cfg_common;
@@ -151,6 +161,9 @@ struct du_cell_config {
 
   /// Parameters to initialize/build the \c phy_cell_group.
   phy_cell_group_params pcg_params;
+
+  /// Parameters to initialize/build the \c mac_cell_group_config.
+  mac_cell_group_params mcg_params;
 
   /// Parameters for PUCCH-Config generation.
   pucch_builder_params pucch_cfg;

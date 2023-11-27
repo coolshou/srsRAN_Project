@@ -48,6 +48,12 @@ public:
     cu_cp_task_sched->handle_ue_async_task(ue_index, std::move(task));
   }
 
+  void clear_pending_tasks(ue_index_t ue_index) override
+  {
+    srsran_assert(cu_cp_task_sched != nullptr, "CU-CP task scheduler handler must not be nullptr");
+    cu_cp_task_sched->clear_pending_tasks(ue_index);
+  }
+
   unique_timer make_unique_timer() override
   {
     srsran_assert(cu_cp_task_sched != nullptr, "CU-CP task scheduler handler must not be nullptr");
@@ -67,21 +73,42 @@ private:
 class du_processor_cu_cp_adapter : public du_processor_cu_cp_notifier
 {
 public:
-  void connect_cu_cp(cu_cp_du_event_handler& cu_cp_mng_, ngap_du_processor_control_notifier& ngap_du_notifier_)
+  void connect_cu_cp(cu_cp_du_event_handler&             cu_cp_mng_,
+                     cu_cp_ue_removal_handler&           ue_removal_handler_,
+                     ngap_du_processor_control_notifier& ngap_du_notifier_)
   {
-    cu_cp_handler    = &cu_cp_mng_;
-    ngap_du_notifier = &ngap_du_notifier_;
+    cu_cp_handler      = &cu_cp_mng_;
+    ue_removal_handler = &ue_removal_handler_;
+    ngap_du_notifier   = &ngap_du_notifier_;
   }
 
-  void on_rrc_ue_created(du_index_t du_index, ue_index_t ue_index, rrc_ue_interface& rrc_ue) override
+  void on_du_processor_created(du_index_t                       du_index,
+                               f1ap_ue_context_removal_handler& f1ap_handler,
+                               f1ap_statistics_handler&         f1ap_statistic_handler,
+                               rrc_ue_removal_handler&          rrc_handler,
+                               rrc_du_statistics_handler&       rrc_statistic_handler) override
   {
     srsran_assert(cu_cp_handler != nullptr, "CU-CP handler must not be nullptr");
-    cu_cp_handler->handle_rrc_ue_creation(du_index, ue_index, rrc_ue, *ngap_du_notifier);
+    cu_cp_handler->handle_du_processor_creation(
+        du_index, f1ap_handler, f1ap_statistic_handler, rrc_handler, rrc_statistic_handler);
+  }
+
+  void on_rrc_ue_created(ue_index_t ue_index, rrc_ue_interface& rrc_ue) override
+  {
+    srsran_assert(cu_cp_handler != nullptr, "CU-CP handler must not be nullptr");
+    cu_cp_handler->handle_rrc_ue_creation(ue_index, rrc_ue, *ngap_du_notifier);
+  }
+
+  void on_ue_removal_required(ue_index_t ue_index) override
+  {
+    srsran_assert(ue_removal_handler != nullptr, "CU-CP UE Removal handler must not be nullptr");
+    ue_removal_handler->handle_ue_removal_request(ue_index);
   }
 
 private:
-  cu_cp_du_event_handler*             cu_cp_handler    = nullptr;
-  ngap_du_processor_control_notifier* ngap_du_notifier = nullptr;
+  cu_cp_du_event_handler*             cu_cp_handler      = nullptr;
+  cu_cp_ue_removal_handler*           ue_removal_handler = nullptr;
+  ngap_du_processor_control_notifier* ngap_du_notifier   = nullptr;
 };
 
 /// Adapter between DU processor and E1AP
@@ -128,11 +155,11 @@ public:
 
   void connect_f1(f1ap_ue_context_manager& handler_) { handler = &handler_; }
 
-  async_task<f1ap_ue_context_setup_response>
-  on_ue_context_setup_request(const f1ap_ue_context_setup_request& request) override
+  async_task<f1ap_ue_context_setup_response> on_ue_context_setup_request(const f1ap_ue_context_setup_request& request,
+                                                                         bool is_inter_cu_handover = false) override
   {
     srsran_assert(handler != nullptr, "F1AP handler must not be nullptr");
-    return handler->handle_ue_context_setup_request(request);
+    return handler->handle_ue_context_setup_request(request, is_inter_cu_handover);
   }
 
   async_task<ue_index_t> on_ue_context_release_command(const f1ap_ue_context_release_command& msg) override
@@ -141,11 +168,17 @@ public:
     return handler->handle_ue_context_release_command(msg);
   }
 
-  virtual async_task<f1ap_ue_context_modification_response>
+  async_task<f1ap_ue_context_modification_response>
   on_ue_context_modification_request(const f1ap_ue_context_modification_request& request) override
   {
     srsran_assert(handler != nullptr, "F1AP handler must not be nullptr");
     return handler->handle_ue_context_modification_request(request);
+  }
+
+  bool on_intra_du_reestablishment(ue_index_t ue_index, ue_index_t old_ue_index) override
+  {
+    srsran_assert(handler != nullptr, "F1AP handler must not be nullptr");
+    return handler->handle_ue_id_update(ue_index, old_ue_index);
   }
 
 private:
@@ -198,12 +231,6 @@ public:
     return rrc_du_handler->add_ue(resource_mng, msg);
   }
 
-  virtual void on_ue_context_release_command(ue_index_t ue_index) override
-  {
-    srsran_assert(rrc_du_handler != nullptr, "RRC DU UE handler must not be nullptr");
-    return rrc_du_handler->remove_ue(ue_index);
-  }
-
   virtual void on_release_ues() override
   {
     srsran_assert(rrc_du_handler != nullptr, "RRC DU UE handler must not be nullptr");
@@ -216,12 +243,17 @@ private:
 };
 
 // Adapter between DU processor and RRC UE
-class du_processor_rrc_ue_adapter : public du_processor_rrc_ue_control_message_notifier
+class du_processor_rrc_ue_adapter : public du_processor_rrc_ue_control_message_notifier,
+                                    public du_processor_rrc_ue_srb_control_notifier
 {
 public:
   du_processor_rrc_ue_adapter() = default;
 
-  void connect_rrc_ue(rrc_ue_control_message_handler& rrc_ue_handler_) { rrc_ue_handler = &rrc_ue_handler_; }
+  void connect_rrc_ue(rrc_ue_control_message_handler& rrc_ue_handler_, rrc_ue_srb_handler& srb_handler_)
+  {
+    rrc_ue_handler = &rrc_ue_handler_;
+    srb_handler    = &srb_handler_;
+  }
 
   virtual async_task<bool> on_ue_capability_transfer_request(const rrc_ue_capability_transfer_request& msg) override
   {
@@ -259,8 +291,40 @@ public:
     return rrc_ue_handler->get_rrc_ue_meas_config();
   }
 
+  byte_buffer get_packed_handover_preparation_message() override
+  {
+    srsran_assert(rrc_ue_handler != nullptr, "RRC UE handler must not be nullptr");
+    return rrc_ue_handler->get_packed_handover_preparation_message();
+  }
+
+  virtual bool on_new_security_context(const security::security_context& sec_context) override
+  {
+    srsran_assert(rrc_ue_handler != nullptr, "RRC UE handler must not be nullptr");
+    return rrc_ue_handler->handle_new_security_context(sec_context);
+  }
+
+  virtual byte_buffer on_rrc_handover_command_required(const rrc_reconfiguration_procedure_request& request,
+                                                       unsigned transaction_id) override
+  {
+    srsran_assert(rrc_ue_handler != nullptr, "RRC UE handler must not be nullptr");
+    return rrc_ue_handler->get_rrc_handover_command(request, transaction_id);
+  }
+
+  virtual void create_srb(const srb_creation_message& msg) override
+  {
+    srsran_assert(srb_handler != nullptr, "RRC UE SRB handler must not be nullptr");
+    return srb_handler->create_srb(msg);
+  }
+
+  virtual static_vector<srb_id_t, MAX_NOF_SRBS> get_srbs() override
+  {
+    srsran_assert(srb_handler != nullptr, "RRC UE SRB handler must not be nullptr");
+    return srb_handler->get_srbs();
+  }
+
 private:
   rrc_ue_control_message_handler* rrc_ue_handler = nullptr;
+  rrc_ue_srb_handler*             srb_handler    = nullptr;
 };
 
 // Adapter between DU processor and NGAP

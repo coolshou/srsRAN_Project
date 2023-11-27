@@ -25,24 +25,25 @@
 #include "../common/e1ap_asn1_helpers.h"
 #include "e1ap_cu_cp_asn1_helpers.h"
 #include "srsran/asn1/e1ap/e1ap.h"
+#include "srsran/ran/cause.h"
 
 using namespace srsran;
 using namespace asn1::e1ap;
 using namespace srs_cu_cp;
 
-e1ap_cu_cp_impl::e1ap_cu_cp_impl(timer_factory                  timers_,
-                                 e1ap_message_notifier&         e1ap_pdu_notifier_,
+e1ap_cu_cp_impl::e1ap_cu_cp_impl(e1ap_message_notifier&         e1ap_pdu_notifier_,
                                  e1ap_cu_up_processor_notifier& e1ap_cu_up_processor_notifier_,
                                  e1ap_cu_cp_notifier&           cu_cp_notifier_,
+                                 timer_manager&                 timers_,
                                  task_executor&                 ctrl_exec_) :
   logger(srslog::fetch_basic_logger("CU-CP-E1")),
-  timers(timers_),
-  ue_ctxt_list(timers),
-  ev_mng(timers),
   pdu_notifier(e1ap_pdu_notifier_),
   cu_up_processor_notifier(e1ap_cu_up_processor_notifier_),
   cu_cp_notifier(cu_cp_notifier_),
-  ctrl_exec(ctrl_exec_)
+  ctrl_exec(ctrl_exec_),
+  timers(timer_factory{timers_, ctrl_exec_}),
+  ue_ctxt_list(timers, logger),
+  ev_mng(timers)
 {
 }
 
@@ -87,12 +88,6 @@ void e1ap_cu_cp_impl::handle_cu_up_e1_setup_response(const cu_up_e1_setup_respon
   }
 }
 
-async_task<cu_cp_e1_setup_response>
-e1ap_cu_cp_impl::handle_cu_cp_e1_setup_request(const cu_cp_e1_setup_request& request)
-{
-  return launch_async<cu_cp_e1_setup_procedure>(request, pdu_notifier, ev_mng, timers, logger);
-}
-
 async_task<e1ap_bearer_context_setup_response>
 e1ap_cu_cp_impl::handle_bearer_context_setup_request(const e1ap_bearer_context_setup_request& request)
 {
@@ -134,7 +129,7 @@ e1ap_cu_cp_impl::handle_bearer_context_modification_request(const e1ap_bearer_co
       CORO_BEGIN(ctx);
       e1ap_bearer_context_modification_response res{};
       res.success = false;
-      res.cause   = cause_t::misc;
+      res.cause   = cause_misc_t::unspecified;
       CORO_RETURN(res);
     });
   }
@@ -202,6 +197,12 @@ void e1ap_cu_cp_impl::handle_message(const e1ap_message& msg)
     logger.debug("SDU \"{}.{}\"", msg.pdu.type().to_string(), get_message_type_str(msg.pdu));
   }
 
+  if (logger.debug.enabled()) {
+    asn1::json_writer js;
+    msg.pdu.to_json(js);
+    logger.debug("Rx E1AP PDU: {}", js.to_string());
+  }
+
   // Run E1AP protocols in Control executor.
   if (not ctrl_exec.execute([this, msg]() {
         switch (msg.pdu.type().value) {
@@ -219,7 +220,7 @@ void e1ap_cu_cp_impl::handle_message(const e1ap_message& msg)
             break;
         }
       })) {
-    logger.warning("Discarding E1AP PDU. Cause: CU-CP task queue is full.");
+    logger.warning("Discarding E1AP PDU. Cause: CU-CP task queue is full");
   }
 }
 
@@ -324,9 +325,8 @@ void e1ap_cu_cp_impl::handle_successful_outcome(const asn1::e1ap::successful_out
       }
 
       // Set transaction result and resume suspended procedure.
-      if (not ev_mng.transactions.set(transaction_id.value(), outcome)) {
-        logger.warning("Ignoring message. Cause: Transaction with id={} has already completed.",
-                       transaction_id.value());
+      if (not ev_mng.transactions.set_response(transaction_id.value(), outcome)) {
+        logger.warning("Ignoring message. Cause: Transaction with id={} has already completed", transaction_id.value());
       }
   }
 }
@@ -351,9 +351,8 @@ void e1ap_cu_cp_impl::handle_unsuccessful_outcome(const asn1::e1ap::unsuccessful
       }
 
       // Set transaction result and resume suspended procedure.
-      if (not ev_mng.transactions.set(transaction_id.value(), outcome)) {
-        logger.warning("Ignoring message. Cause: Transaction with id={} has already completed.",
-                       transaction_id.value());
+      if (not ev_mng.transactions.set_response(transaction_id.value(), outcome)) {
+        logger.warning("Ignoring message. Cause: Transaction with id={} has already completed", transaction_id.value());
       }
   }
 }
@@ -361,11 +360,21 @@ void e1ap_cu_cp_impl::handle_unsuccessful_outcome(const asn1::e1ap::unsuccessful
 void e1ap_cu_cp_impl::update_ue_context(ue_index_t ue_index, ue_index_t old_ue_index)
 {
   if (!ue_ctxt_list.contains(old_ue_index)) {
-    logger.debug("Ue context for ue={} not found.", old_ue_index);
+    logger.debug("ue={}: UE context not found", old_ue_index);
     return;
   }
 
   logger.debug("Updating UE Context from ue_index={} to ue_index={}", old_ue_index, ue_index);
 
   ue_ctxt_list.update_ue_index(ue_index, old_ue_index);
+}
+
+void e1ap_cu_cp_impl::remove_bearer_context(ue_index_t ue_index)
+{
+  if (!ue_ctxt_list.contains(ue_index)) {
+    logger.debug("ue={}: UE context not found", ue_index);
+    return;
+  }
+
+  ue_ctxt_list.remove_ue(ue_index);
 }

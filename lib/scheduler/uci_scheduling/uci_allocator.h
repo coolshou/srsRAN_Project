@@ -34,11 +34,8 @@ struct uci_allocation {
   pucch_harq_ack_grant pucch_grant;
   /// Delay in slots of the UE's PUCCH HARQ-ACK report with respect to the PDSCH.
   unsigned k1;
-  /// Downlink Assignment Index to be encoded in DL DCI when using the dynamic HARQ-ACK codebook, as per TS38.213
-  /// Section 9.1.3. This counter informs the UE of the accumulated number of transmissions which require acknowledgment
-  /// up to the PDCCH monitoring occasion respective to this UCI allocation. The values wrap from 3 to 0, so four
-  /// consecutive missed resource allocations would be undetected.
-  uint8_t dai{0};
+  /// Index of the HARQ-bit in the PUCCH/PUSCH HARQ report.
+  uint8_t harq_bit_idx{0};
 };
 
 /// \brief UCI allocator interface.
@@ -54,14 +51,20 @@ public:
   /// Allocate the common PUCCH resource for HARQ-ACK for a given UE.
   /// \param[out,in] res_alloc struct with scheduling results.
   /// \param[in] crnti RNTI of the UE.
-  /// \param[in] ue_cell_cfg user configuration.
-  /// \param[in] pdsch_time_domain_resource k0 value, or delay (in slots) of PDSCH slot vs the corresponding PDCCH slot.
+  /// \param[in] ue_cell_cfg user configuration. For the fallback mode case, this configuration is used to determine
+  /// whether the slot coincides with a CSI report opportunity; in which case, the allocation of the UCI on common PUCCH
+  /// resources will be skipped.
+  /// \param[in] k0 k0 value, or delay (in slots) of PDSCH slot vs the corresponding PDCCH slot.
   /// \param[in] k1_list List of k1 candidates configured for UE.
+  /// \param[in] fallback_dci_info pointer to the information with DL DCI, used for scheduling the UCI on common PUCCH
+  /// resources. If this is \c nullptr, it triggers the UCI scheduling using common PUCCH resources; else, if it is
+  /// \c nullptr, UCI will be scheduled either on dedicated PUCCH resources or on PUSCH.
   virtual uci_allocation alloc_uci_harq_ue(cell_resource_allocator&     res_alloc,
                                            rnti_t                       crnti,
                                            const ue_cell_configuration& ue_cell_cfg,
-                                           unsigned                     pdsch_time_domain_resource,
-                                           span<const uint8_t>          k1_list) = 0;
+                                           unsigned                     k0,
+                                           span<const uint8_t>          k1_list,
+                                           const pdcch_dl_information*  fallback_dci_info = nullptr) = 0;
 
   /// Multiplexes the UCI on PUSCH, by removing the UCI on the PUCCH (if present) and adding it to the PUSCH.
   /// \param[out,in] pusch_grant struct with PUSCH PDU where UCI need to be allocated.
@@ -77,17 +80,21 @@ public:
   /// \param[out,in] slot_alloc struct with scheduling results.
   /// \param[in] crnti C-RNTI of the UE.
   /// \param[in] ue_cell_cfg user configuration.
+  /// \param[in] is_fallback_mode Indicates whether the UE is in fallback mode.
   virtual void uci_allocate_sr_opportunity(cell_slot_resource_allocator& slot_alloc,
                                            rnti_t                        crnti,
-                                           const ue_cell_configuration&  ue_cell_cfg) = 0;
+                                           const ue_cell_configuration&  ue_cell_cfg,
+                                           bool                          is_fallback_mode = false) = 0;
 
   /// Allocates the CSI opportunities for a given UE.
   /// \param[out,in] slot_alloc struct with scheduling results.
   /// \param[in] crnti C-RNTI of the UE.
   /// \param[in] ue_cell_cfg user configuration.
+  /// \param[in] is_fallback_mode Indicates whether the UE is in fallback mode.
   virtual void uci_allocate_csi_opportunity(cell_slot_resource_allocator& slot_alloc,
                                             rnti_t                        crnti,
-                                            const ue_cell_configuration&  ue_cell_cfg) = 0;
+                                            const ue_cell_configuration&  ue_cell_cfg,
+                                            bool                          is_fallback_mode = false) = 0;
 
   /// Get the number of PDSCHs currently scheduled for a given UE UCI.
   /// \param[in] slot_alloc struct with scheduling results.

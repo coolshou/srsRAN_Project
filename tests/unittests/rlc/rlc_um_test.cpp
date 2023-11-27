@@ -92,11 +92,14 @@ protected:
 
     // Set Tx config
     config.tx.sn_field_length = sn_size;
+    config.tx.queue_size      = 4096;
 
     // Create RLC entities
     rlc1 = std::make_unique<rlc_um_entity>(du_ue_index_t::MIN_DU_UE_INDEX,
                                            srb_id_t::srb0,
                                            config,
+                                           std::chrono::milliseconds(1000),
+                                           nullptr,
                                            tester1,
                                            tester1,
                                            tester1,
@@ -107,6 +110,8 @@ protected:
     rlc2 = std::make_unique<rlc_um_entity>(du_ue_index_t::MIN_DU_UE_INDEX,
                                            srb_id_t::srb0,
                                            config,
+                                           std::chrono::milliseconds(1000),
+                                           nullptr,
                                            tester2,
                                            tester2,
                                            tester2,

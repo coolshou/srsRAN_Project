@@ -41,14 +41,6 @@ public:
   /// \param[in] msg The cu_up_e1_setup_response to transmit.
   /// \remark The CU-CP transmits the E1SetupResponse/E1SetupFailure as per TS 38.463 section 8.2.3.
   virtual void handle_cu_up_e1_setup_response(const cu_up_e1_setup_response& msg) = 0;
-
-  /// \brief Initiates the CU-CP E1 Setup procedure as per TS 38.463, Section 8.2.4.
-  /// \param[in] request The E1SetupRequest message to transmit.
-  /// \return Returns a cu_up_e1_setup_response struct with the success member set to 'true' in case of a
-  /// successful outcome, 'false' otherwise.
-  /// \remark The CU-CP transmits the E1SetupRequest as per TS 38.463 section 8.2.4
-  /// and awaits the response. If a E1SetupFailure is received the E1AP will handle the failure.
-  virtual async_task<cu_cp_e1_setup_response> handle_cu_cp_e1_setup_request(const cu_cp_e1_setup_request& request) = 0;
 };
 
 /// Handle E1AP bearer context management procedures as defined in TS 38.463 section 8.3.
@@ -91,15 +83,15 @@ public:
   virtual void on_cu_up_e1_setup_request_received(const cu_up_e1_setup_request& msg) = 0;
 };
 
-/// Methods used by E1AP to notify the CU-CP.
-class e1ap_cu_cp_notifier
+/// Handle bearer context removal
+class e1ap_bearer_context_removal_handler
 {
 public:
-  virtual ~e1ap_cu_cp_notifier() = default;
+  virtual ~e1ap_bearer_context_removal_handler() = default;
 
-  /// \brief Notifies about the reception of a Bearer Context Inactivity Notification message.
-  /// \param[in] msg The received Bearer Context Inactivity Notification message.
-  virtual void on_bearer_context_inactivity_notification_received(const cu_cp_inactivity_notification& msg) = 0;
+  /// \brief Remove the context of an UE.
+  /// \param[in] ue_index The index of the UE to remove.
+  virtual void remove_bearer_context(ue_index_t ue_index) = 0;
 };
 
 /// Methods used by E1AP to notify the NGAP.
@@ -122,12 +114,44 @@ public:
   virtual void update_ue_context(ue_index_t ue_index, ue_index_t old_ue_index) = 0;
 };
 
+/// \brief Interface to query statistics from the E1AP interface.
+class e1ap_statistics_handler
+{
+public:
+  virtual ~e1ap_statistics_handler() = default;
+
+  /// \brief Get the number of UEs registered at the E1AP.
+  /// \return The number of UEs.
+  virtual size_t get_nof_ues() const = 0;
+};
+
+/// Methods used by E1AP to notify the CU-CP.
+class e1ap_cu_cp_notifier
+{
+public:
+  virtual ~e1ap_cu_cp_notifier() = default;
+
+  /// \brief Notifies about the creation of an E1AP.
+  /// \param[in] bearer_context_manager The E1AP Bearer Context Manager interface.
+  /// \param[in] bearer_removal_handler The E1AP bearer context removal handler.
+  /// \param[in] e1ap_statistic_handler The E1AP statistic interface.
+  virtual void on_e1ap_created(e1ap_bearer_context_manager&         bearer_context_manager,
+                               e1ap_bearer_context_removal_handler& bearer_removal_handler,
+                               e1ap_statistics_handler&             e1ap_statistic_handler) = 0;
+
+  /// \brief Notifies about the reception of a Bearer Context Inactivity Notification message.
+  /// \param[in] msg The received Bearer Context Inactivity Notification message.
+  virtual void on_bearer_context_inactivity_notification_received(const cu_cp_inactivity_notification& msg) = 0;
+};
+
 /// Combined entry point for E1AP handling.
 class e1ap_interface : public e1ap_message_handler,
                        public e1ap_event_handler,
                        public e1ap_connection_manager,
                        public e1ap_bearer_context_manager,
-                       public e1ap_ue_handler
+                       public e1ap_ue_handler,
+                       public e1ap_bearer_context_removal_handler,
+                       public e1ap_statistics_handler
 {
 public:
   virtual ~e1ap_interface() = default;

@@ -30,15 +30,19 @@ markers = [
   "multiue",
   "zmq_valgrind",
   "rf_b200",
+  "rf_n300",
   "rf_not_crash",
   "reattach",
   "test",
+  "zmq_4x4_mimo",
+  "zmq_srsue",
 ]
 minversion = "6.0"
 python_files = [
   "tests/*.py",
 ]
 render_collapsed = true
+reruns_delay = 60
 
 [tool.black]
 line-length = 120

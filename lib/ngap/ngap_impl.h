@@ -24,6 +24,7 @@
 
 #include "ngap_context.h"
 #include "procedures/ngap_transaction_manager.h"
+#include "ue_context/ngap_ue_context.h"
 #include "srsran/asn1/ngap/ngap.h"
 #include "srsran/cu_cp/ue_manager.h"
 #include "srsran/ngap/ngap.h"
@@ -34,8 +35,6 @@
 namespace srsran {
 
 namespace srs_cu_cp {
-
-class ngap_event_manager;
 
 class ngap_impl final : public ngap_interface
 {
@@ -54,12 +53,14 @@ public:
                       ngap_rrc_ue_control_notifier&       rrc_ue_ctrl_notifier,
                       ngap_du_processor_control_notifier& du_processor_ctrl_notifier) override;
 
+  bool update_ue_index(ue_index_t new_ue_index, ue_index_t old_ue_index) override;
+
   // ngap connection manager functions
   async_task<ng_setup_response> handle_ng_setup_request(const ng_setup_request& request) override;
 
-  void handle_initial_ue_message(const ngap_initial_ue_message& msg) override;
+  void handle_initial_ue_message(const cu_cp_initial_ue_message& msg) override;
 
-  void handle_ul_nas_transport_message(const ngap_ul_nas_transport_message& msg) override;
+  void handle_ul_nas_transport_message(const cu_cp_ul_nas_transport& msg) override;
 
   // ngap message handler functions
   void handle_message(const ngap_message& msg) override;
@@ -68,18 +69,25 @@ public:
   // ngap control message handler functions
   void handle_ue_context_release_request(const cu_cp_ue_context_release_request& msg) override;
   async_task<ngap_handover_preparation_response>
-  handle_handover_preparation_request(const ngap_handover_preparation_request& msg) override;
+       handle_handover_preparation_request(const ngap_handover_preparation_request& msg) override;
+  void handle_inter_cu_ho_rrc_recfg_complete(const ue_index_t           ue_index,
+                                             const nr_cell_global_id_t& cgi,
+                                             const unsigned             tac) override;
 
-  // ngap_statistic_interface
-  size_t get_nof_ues() const override;
+  // ngap_statistics_handler
+  size_t get_nof_ues() const override { return ue_ctxt_list.size(); }
 
-  ngap_message_handler&         get_ngap_message_handler() override { return *this; }
-  ngap_event_handler&           get_ngap_event_handler() override { return *this; }
-  ngap_connection_manager&      get_ngap_connection_manager() override { return *this; }
-  ngap_nas_message_handler&     get_ngap_nas_message_handler() override { return *this; }
-  ngap_control_message_handler& get_ngap_control_message_handler() override { return *this; }
-  ngap_ue_control_manager&      get_ngap_ue_control_manager() override { return *this; }
-  ngap_statistic_interface&     get_ngap_statistic_interface() override { return *this; }
+  // ngap_ue_context_removal_handler
+  void remove_ue_context(ue_index_t ue_index) override;
+
+  ngap_message_handler&            get_ngap_message_handler() override { return *this; }
+  ngap_event_handler&              get_ngap_event_handler() override { return *this; }
+  ngap_connection_manager&         get_ngap_connection_manager() override { return *this; }
+  ngap_nas_message_handler&        get_ngap_nas_message_handler() override { return *this; }
+  ngap_control_message_handler&    get_ngap_control_message_handler() override { return *this; }
+  ngap_ue_control_manager&         get_ngap_ue_control_manager() override { return *this; }
+  ngap_statistics_handler&         get_ngap_statistics_handler() override { return *this; }
+  ngap_ue_context_removal_handler& get_ngap_ue_context_removal_handler() override { return *this; }
 
 private:
   /// \brief Notify about the reception of an initiating message.
@@ -118,7 +126,7 @@ private:
   /// \param[in] msg The received handover request message.
   void handle_ho_request(const asn1::ngap::ho_request_s& msg);
 
-  /// \brief Notify about the reception of a Error Indication message.
+  /// \brief Notify about the reception of an Error Indication message.
   /// \param[in] msg The received Error Indication message.
   void handle_error_indication(const asn1::ngap::error_ind_s& msg);
 
@@ -130,9 +138,29 @@ private:
   /// \param[in] outcome The unsuccessful outcome message.
   void handle_unsuccessful_outcome(const asn1::ngap::unsuccessful_outcome_s& outcome);
 
+  /// \brief Send an Error Indication message to the core.
+  /// \param[in] ue_index The index of the related UE.
+  /// \param[in] cause The cause of the Error Indication.
+  /// \param[in] amf_ue_id The AMF UE ID.
+  void send_error_indication(ue_index_t            ue_index  = ue_index_t::invalid,
+                             optional<cause_t>     cause     = {},
+                             optional<amf_ue_id_t> amf_ue_id = {});
+
+  /// \brief Schedule the transmission of an Error Indication message on the UE task executor.
+  /// \param[in] ue_index The index of the related UE.
+  /// \param[in] cause The cause of the Error Indication.
+  /// \param[in] amf_ue_id The AMF UE ID.
+  void schedule_error_indication(ue_index_t ue_index, cause_t cause, optional<amf_ue_id_t> amf_ue_id = {});
+
+  void on_ue_context_setup_timer_expired(ue_index_t ue_index);
+
   ngap_context_t context;
 
-  srslog::basic_logger&              logger;
+  srslog::basic_logger& logger;
+
+  /// Repository of UE Contexts.
+  ngap_ue_context_list ue_ctxt_list;
+
   ngap_cu_cp_du_repository_notifier& cu_cp_du_repository_notifier;
   ngap_ue_task_scheduler&            task_sched;
   ngap_ue_manager&                   ue_manager;

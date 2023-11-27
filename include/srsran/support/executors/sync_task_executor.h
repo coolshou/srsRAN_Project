@@ -51,7 +51,12 @@ public:
   {
     done = false;
     std::unique_ptr<bool, setter_deleter> unique_setter(&done, setter_deleter{this});
-    bool ret = get(exec).execute([task = std::move(task), token = std::move(unique_setter)]() { task(); });
+    bool ret = get(exec).execute([task = std::move(task), token = std::move(unique_setter)]() mutable {
+      task();
+      // We manually reset the token here, as the unique_task being popped may be deleted in an undetermined time (it
+      // is up to the caller).
+      token.reset();
+    });
 
     // wait for condition variable to be set.
     std::unique_lock<std::mutex> lock(mutex);
@@ -71,7 +76,7 @@ private:
   }
 
   template <typename U>
-  U& get(std::unique_ptr<U> u)
+  U& get(std::unique_ptr<U>& u)
   {
     return *u;
   }

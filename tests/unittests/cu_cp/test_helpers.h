@@ -31,11 +31,12 @@
 #include "srsran/cu_cp/cu_cp_types.h"
 #include "srsran/cu_cp/cu_up_processor.h"
 #include "srsran/cu_cp/du_processor.h"
-#include "srsran/support/async/async_task_loop.h"
 #include "srsran/support/async/async_test_utils.h"
+#include "srsran/support/async/fifo_async_task_scheduler.h"
 #include "srsran/support/test_utils.h"
 #include <cstdint>
 #include <list>
+#include <memory>
 
 namespace srsran {
 namespace srs_cu_cp {
@@ -49,44 +50,99 @@ byte_buffer generate_rrc_setup_complete();
 struct dummy_du_processor_ue_task_scheduler : public du_processor_ue_task_scheduler {
 public:
   dummy_du_processor_ue_task_scheduler(timer_manager& timers_, task_executor& exec_) : timer_db(timers_), exec(exec_) {}
+
   void schedule_async_task(ue_index_t ue_index, async_task<void>&& task) override
   {
     ctrl_loop.schedule(std::move(task));
   }
-  unique_timer   make_unique_timer() override { return timer_db.create_unique_timer(exec); }
+
+  void clear_pending_tasks(ue_index_t ue_index) override { ctrl_loop.clear_pending_tasks(); }
+
+  size_t get_nof_pending_tasks() { return ctrl_loop.nof_pending_tasks(); }
+
+  unique_timer make_unique_timer() override { return timer_db.create_unique_timer(exec); }
+
   timer_manager& get_timer_manager() override { return timer_db; }
 
   void tick_timer() { timer_db.tick(); }
 
 private:
-  async_task_sequencer ctrl_loop{16};
-  timer_manager&       timer_db;
-  task_executor&       exec;
+  fifo_async_task_scheduler ctrl_loop{16};
+  timer_manager&            timer_db;
+  task_executor&            exec;
 };
 
 struct dummy_du_processor_cu_cp_notifier : public du_processor_cu_cp_notifier {
 public:
-  dummy_ngap_du_processor_notifier ngap_notifier;
-
-  explicit dummy_du_processor_cu_cp_notifier(cu_cp_du_event_handler* cu_cp_handler_ = nullptr) :
-    cu_cp_handler(cu_cp_handler_)
+  explicit dummy_du_processor_cu_cp_notifier(ngap_ue_context_removal_handler& ngap_handler_,
+                                             ue_manager*                      ue_mng_ = nullptr) :
+    ngap_notifier(std::make_unique<dummy_ngap_du_processor_notifier>(ngap_handler_)), ue_mng(ue_mng_)
   {
   }
 
-  void attach_handler(cu_cp_du_event_handler* cu_cp_handler_) { cu_cp_handler = cu_cp_handler_; }
-
-  void on_rrc_ue_created(du_index_t du_index, ue_index_t ue_index, rrc_ue_interface& rrc_ue) override
+  void attach_handler(cu_cp_du_event_handler* cu_cp_handler_, cu_cp_ue_removal_handler* ue_removal_handler_)
   {
-    logger.info("Received a RRC UE creation notification");
+    cu_cp_handler      = cu_cp_handler_;
+    ue_removal_handler = ue_removal_handler_;
+  }
+
+  void on_du_processor_created(du_index_t                       du_index,
+                               f1ap_ue_context_removal_handler& f1ap_handler,
+                               f1ap_statistics_handler&         f1ap_statistic_handler,
+                               rrc_ue_removal_handler&          rrc_handler,
+                               rrc_du_statistics_handler&       rrc_statistic_handler) override
+  {
+    logger.info("du={}: Received a DU Processor creation notification", du_index);
 
     if (cu_cp_handler != nullptr) {
-      cu_cp_handler->handle_rrc_ue_creation(du_index, ue_index, rrc_ue, ngap_notifier);
+      cu_cp_handler->handle_du_processor_creation(
+          du_index, f1ap_handler, f1ap_statistic_handler, rrc_handler, rrc_statistic_handler);
+    } else {
+      rrc_removal_handler = &rrc_handler;
+    }
+  }
+
+  void on_rrc_ue_created(ue_index_t ue_index, rrc_ue_interface& rrc_ue) override
+  {
+    logger.info("ue={}: Received a RRC UE creation notification", ue_index);
+
+    if (cu_cp_handler != nullptr) {
+      cu_cp_handler->handle_rrc_ue_creation(ue_index, rrc_ue, *ngap_notifier);
+    }
+  }
+
+  void on_ue_removal_required(ue_index_t ue_index) override
+  {
+    logger.info("ue={}: Received a UE removal request", ue_index);
+
+    if (ue_removal_handler != nullptr) {
+      ue_removal_handler->handle_ue_removal_request(ue_index);
+    } else {
+      if (ue_mng != nullptr) {
+        ue_mng->remove_ue(ue_index);
+      }
+
+      if (rrc_removal_handler != nullptr) {
+        rrc_removal_handler->remove_ue(ue_index);
+      }
     }
   }
 
 private:
-  srslog::basic_logger&   logger        = srslog::fetch_basic_logger("TEST");
-  cu_cp_du_event_handler* cu_cp_handler = nullptr;
+  srslog::basic_logger&                             logger = srslog::fetch_basic_logger("TEST");
+  std::unique_ptr<dummy_ngap_du_processor_notifier> ngap_notifier;
+  ue_manager*                                       ue_mng              = nullptr;
+  cu_cp_du_event_handler*                           cu_cp_handler       = nullptr;
+  cu_cp_ue_removal_handler*                         ue_removal_handler  = nullptr;
+  rrc_ue_removal_handler*                           rrc_removal_handler = nullptr;
+};
+
+struct dummy_ngap_ue_context_removal_handler : public ngap_ue_context_removal_handler {
+public:
+  void remove_ue_context(ue_index_t ue_index) override { logger.info("ue={}: Removing UE", ue_index); }
+
+private:
+  srslog::basic_logger& logger = srslog::fetch_basic_logger("TEST");
 };
 
 // Configuration struct to parameterize the modification outcome
@@ -315,8 +371,8 @@ public:
 
   void set_ue_context_modification_outcome(ue_context_outcome_t outcome) { ue_context_modification_outcome = outcome; }
 
-  async_task<f1ap_ue_context_setup_response>
-  on_ue_context_setup_request(const f1ap_ue_context_setup_request& request) override
+  async_task<f1ap_ue_context_setup_response> on_ue_context_setup_request(const f1ap_ue_context_setup_request& request,
+                                                                         bool is_inter_cu_handover = false) override
   {
     logger.info("Received a new UE context setup request");
 
@@ -364,6 +420,8 @@ public:
       CORO_RETURN(msg.ue_index);
     });
   }
+
+  bool on_intra_du_reestablishment(ue_index_t ue_index, ue_index_t old_ue_index) override { return true; }
 
   const f1ap_ue_context_modification_request& get_ctxt_mod_request() { return ue_context_modifcation_request; }
 
@@ -436,10 +494,26 @@ public:
     // TODO: Add values
     return release_context;
   }
+
   optional<rrc_meas_cfg> get_rrc_ue_meas_config() override
   {
     optional<rrc_meas_cfg> meas_config;
     return meas_config;
+  }
+
+  byte_buffer get_packed_handover_preparation_message() override { return byte_buffer{}; }
+
+  bool on_new_security_context(const security::security_context& sec_context) override
+  {
+    logger.info("Received a new security context.");
+    return true;
+  }
+
+  byte_buffer on_rrc_handover_command_required(const rrc_reconfiguration_procedure_request& request,
+                                               unsigned                                     transaction_id_) override
+  {
+    logger.info("Received a new request to get a RRC Handover Command.");
+    return byte_buffer{};
   }
 
   optional<rrc_radio_bearer_config> last_radio_bearer_cfg;
@@ -453,6 +527,24 @@ private:
   bool                  ue_cap_transfer_outcome     = true;
   bool                  rrc_reconfiguration_outcome = false;
   unsigned              transaction_id;
+};
+
+struct dummy_du_processor_rrc_ue_srb_control_notifier : public du_processor_rrc_ue_srb_control_notifier {
+public:
+  void create_srb(const srb_creation_message& msg) override
+  {
+    logger.info("ue={} Creating {}", msg.ue_index, msg.srb_id);
+    last_srb_id = msg.srb_id;
+    srb_vec.push_back(msg.srb_id);
+  }
+
+  static_vector<srb_id_t, MAX_NOF_SRBS> get_srbs() override { return srb_vec; }
+
+  srb_id_t last_srb_id;
+
+private:
+  srslog::basic_logger&                 logger = srslog::fetch_basic_logger("TEST");
+  static_vector<srb_id_t, MAX_NOF_SRBS> srb_vec;
 };
 
 struct dummy_du_processor_rrc_du_ue_notifier : public du_processor_rrc_du_ue_notifier {
@@ -471,8 +563,6 @@ public:
     logger.info("Received a UE creation request");
     return nullptr;
   }
-
-  void on_ue_context_release_command(ue_index_t ue_index) override { logger.info("Received a UE Release Command"); }
 
   /// Send RRC Release to all UEs connected to this DU.
   void on_release_ues() override { logger.info("Releasing all UEs"); }
@@ -496,58 +586,6 @@ public:
   cu_up_index_t last_cu_up_index_to_remove;
 
 private:
-  srslog::basic_logger& logger = srslog::fetch_basic_logger("TEST");
-};
-
-struct dummy_cu_up_processor_task_scheduler : public cu_up_processor_task_scheduler {
-public:
-  dummy_cu_up_processor_task_scheduler(timer_manager& timers_, task_executor& exec_) : timer_db(timers_), exec(exec_) {}
-
-  void schedule_async_task(cu_up_index_t cu_up_index, async_task<void>&& task) override
-  {
-    ctrl_loop.schedule(std::move(task));
-  }
-  unique_timer   make_unique_timer() override { return timer_db.create_unique_timer(exec); }
-  timer_manager& get_timer_manager() override { return timer_db; }
-
-  void tick_timer() { timer_db.tick(); }
-
-private:
-  async_task_sequencer ctrl_loop{16};
-  timer_manager&       timer_db;
-  task_executor&       exec;
-};
-
-struct dummy_cu_up_processor_e1ap_control_notifier : public cu_up_processor_e1ap_control_notifier {
-public:
-  dummy_cu_up_processor_e1ap_control_notifier() = default;
-
-  void set_cu_cp_e1_setup_outcome(bool outcome) { cu_cp_e1_setup_outcome = outcome; }
-
-  async_task<cu_cp_e1_setup_response> on_cu_cp_e1_setup_request(const cu_cp_e1_setup_request& request) override
-  {
-    logger.info("Received a new CU-CP E1 setup request");
-
-    return launch_async([this](coro_context<async_task<cu_cp_e1_setup_response>>& ctx) mutable {
-      CORO_BEGIN(ctx);
-
-      cu_cp_e1_setup_response res;
-      res.success = cu_cp_e1_setup_outcome;
-      if (cu_cp_e1_setup_outcome) {
-        fill_e1ap_cu_cp_e1_setup_response(
-            res, generate_cu_cp_e1_setup_respose(0).pdu.successful_outcome().value.gnb_cu_cp_e1_setup_resp());
-      } else {
-        fill_e1ap_cu_cp_e1_setup_response(
-            res, generate_cu_cp_e1_setup_failure(0).pdu.unsuccessful_outcome().value.gnb_cu_cp_e1_setup_fail());
-      }
-
-      CORO_RETURN(res);
-    });
-  }
-
-private:
-  bool cu_cp_e1_setup_outcome = false;
-
   srslog::basic_logger& logger = srslog::fetch_basic_logger("TEST");
 };
 

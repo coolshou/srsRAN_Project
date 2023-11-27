@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "srsran/ofh/compression/iq_decompressor.h"
 #include "srsran/ofh/serdes/ofh_uplane_message_decoder.h"
 #include "srsran/srslog/logger.h"
 
@@ -35,17 +36,25 @@ class network_order_binary_deserializer;
 class uplane_message_decoder_impl : public uplane_message_decoder
 {
 public:
-  uplane_message_decoder_impl(srslog::basic_logger& logger_,
-                              subcarrier_spacing    scs_,
-                              unsigned              nof_symbols_,
-                              unsigned              ru_nof_prbs_,
-                              iq_decompressor&      decompressor_) :
-    logger(logger_), decompressor(decompressor_), scs(scs_), nof_symbols(nof_symbols_), ru_nof_prbs(ru_nof_prbs_)
+  uplane_message_decoder_impl(srslog::basic_logger&            logger_,
+                              subcarrier_spacing               scs_,
+                              unsigned                         nof_symbols_,
+                              unsigned                         ru_nof_prbs_,
+                              std::unique_ptr<iq_decompressor> decompressor_) :
+    logger(logger_),
+    decompressor(std::move(decompressor_)),
+    scs(scs_),
+    nof_symbols(nof_symbols_),
+    ru_nof_prbs(ru_nof_prbs_)
   {
+    srsran_assert(decompressor, "Invalid IQ decompressor");
   }
 
   // See interface for documentation.
   filter_index_type peek_filter_index(span<const uint8_t> message) const override;
+
+  // See interface for documentation.
+  slot_symbol_point peek_slot_symbol_point(span<const uint8_t> message) const override;
 
   // See interface for documentation.
   bool decode(uplane_message_decoder_results& results, span<const uint8_t> message) override;
@@ -79,11 +88,11 @@ private:
                                          bool                               is_a_prach_msg) = 0;
 
 protected:
-  srslog::basic_logger&    logger;
-  iq_decompressor&         decompressor;
-  const subcarrier_spacing scs;
-  const unsigned           nof_symbols;
-  const unsigned           ru_nof_prbs;
+  srslog::basic_logger&            logger;
+  std::unique_ptr<iq_decompressor> decompressor;
+  const subcarrier_spacing         scs;
+  const unsigned                   nof_symbols;
+  const unsigned                   ru_nof_prbs;
 };
 
 } // namespace ofh
