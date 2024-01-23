@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -48,7 +48,7 @@ public:
   bool handle_served_cell_list(const std::vector<cu_cp_du_served_cells_item>& served_cell_list) override;
 
   // rrc_du_ue_repository
-  rrc_ue_interface* add_ue(up_resource_manager& up_resource_mng, rrc_ue_creation_message msg) override;
+  rrc_ue_interface* add_ue(up_resource_manager& up_resource_mng, const rrc_ue_creation_message& msg) override;
   void              release_ues() override;
   void              handle_amf_connection() override;
   void              handle_amf_connection_drop() override;

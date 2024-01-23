@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -116,13 +116,14 @@ du_high_cu_test_simulator::du_high_cu_test_simulator(const du_high_cu_cp_test_si
 
   // Instatiate CU-CP.
   cu_cp_inst = create_cu_cp(cu_cfg);
-  cu_cp_inst->handle_amf_connection();
+  cu_cp_inst->get_cu_cp_ngap_handler().handle_amf_connection();
 
   // Start CU-CP.
   cu_cp_inst->start();
 
   // Connect AMF by injecting a ng_setup_response
-  cu_cp_inst->get_ngap_message_handler().handle_message(srs_cu_cp::generate_ng_setup_response());
+  cu_cp_inst->get_cu_cp_ngap_connection_interface().get_ngap_message_handler().handle_message(
+      srs_cu_cp::generate_ng_setup_response());
 
   // Connect F1-C to CU-CP.
   f1c_gw.attach_cu_cp_du_repo(cu_cp_inst->get_connected_dus());
@@ -179,7 +180,8 @@ void du_high_cu_test_simulator::start_dus()
     du_hi_cfg.sched_ue_metrics_notifier      = &du_ctxt.ue_metrics_notifier;
     du_hi_cfg.cells                          = cfg.dus[du_idx];
     du_hi_cfg.sched_cfg                      = config_helpers::make_default_scheduler_expert_config();
-    du_hi_cfg.pcap                           = &du_ctxt.mac_pcap;
+    du_hi_cfg.mac_p                          = &du_ctxt.mac_pcap;
+    du_hi_cfg.rlc_p                          = &du_ctxt.rlc_pcap;
     du_ctxt.du_high_inst                     = make_du_high(du_hi_cfg);
 
     du_ctxt.du_high_inst->start();

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,7 +23,7 @@
 #pragma once
 
 #include "srsran/adt/span.h"
-#include "srsran/phy/upper/channel_processors/uci_status.h"
+#include "srsran/phy/upper/channel_processors/uci/uci_status.h"
 #include "srsran/ran/uci/uci_constants.h"
 
 namespace srsran {
@@ -140,7 +140,7 @@ public:
 
 private:
   /// Payload data storage.
-  std::array<uint8_t, uci_constants::MAX_NOF_PAYLOAD_BITS> data = {};
+  std::array<uint8_t, uci_constants::MAX_NOF_PAYLOAD_BITS> data;
   /// Number of SR bits.
   unsigned nof_sr_bits = 0;
   /// Number of HARQ-ACK bits.

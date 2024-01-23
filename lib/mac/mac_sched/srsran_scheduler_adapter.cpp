@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -51,7 +51,9 @@ make_scheduler_ue_reconfiguration_request(const mac_ue_reconfiguration_request& 
 
 srsran_scheduler_adapter::srsran_scheduler_adapter(const mac_config& params, rnti_manager& rnti_mng_) :
   rnti_mng(rnti_mng_),
-  rlf_handler(params.mac_cfg.max_consecutive_dl_kos, params.mac_cfg.max_consecutive_ul_kos),
+  rlf_handler(params.mac_cfg.max_consecutive_dl_kos,
+              params.mac_cfg.max_consecutive_ul_kos,
+              params.mac_cfg.max_consecutive_csi_dtx),
   ctrl_exec(params.ctrl_exec),
   logger(srslog::fetch_basic_logger("MAC")),
   notifier(*this),
@@ -215,6 +217,17 @@ const sched_result& srsran_scheduler_adapter::slot_indication(slot_point slot_tx
   }
 
   return res;
+}
+
+void srsran_scheduler_adapter::handle_error_indication(slot_point                         slot_tx,
+                                                       du_cell_index_t                    cell_idx,
+                                                       mac_cell_slot_handler::error_event event)
+{
+  scheduler_slot_handler::error_outcome sched_err;
+  sched_err.pdcch_discarded           = event.pdcch_discarded;
+  sched_err.pdsch_discarded           = event.pdsch_discarded;
+  sched_err.pusch_and_pucch_discarded = event.pusch_and_pucch_discarded;
+  sched_impl->handle_error_indication(slot_tx, cell_idx, sched_err);
 }
 
 void srsran_scheduler_adapter::sched_config_notif_adapter::on_ue_config_complete(du_ue_index_t ue_index,

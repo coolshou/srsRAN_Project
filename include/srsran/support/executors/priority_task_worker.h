@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -93,6 +93,13 @@ public:
   /// Number of priority levels supported by this worker.
   static constexpr size_t nof_priority_levels() { return sizeof...(QueuePolicies); }
 
+  /// \brief Get enqueuer object for a given Priority.
+  template <task_priority Priority>
+  auto get_enqueuer()
+  {
+    return task_queue.template get_enqueuer<Priority>();
+  }
+
 private:
   void run_pop_task_loop()
   {
@@ -108,21 +115,26 @@ private:
   unique_thread t_handle;
 };
 
-/// \brief Task executor with \c Priority (lower is higher) for \c priority_multiqueue_task_worker.
-template <task_priority Priority, concurrent_queue_policy... QueuePolicies>
+/// \brief Task executor with \c Priority (lower is higher) for \c priority_task_worker.
+///
+/// This executor does not depend on the priorty_task_worker<QueuePolicies...> to avoid increases in template
+/// instantiations being proportional to all possible QueuePolicies... permutations.
+/// \tparam QueuePolicy Enqueueing policy for the given priority level.
+template <concurrent_queue_policy QueuePolicy>
 class priority_task_worker_executor : public task_executor
 {
 public:
-  constexpr static task_priority priority_level = Priority;
-
-  priority_task_worker_executor(priority_task_worker<QueuePolicies...>& worker_, bool report_on_push_failure = true) :
-    worker(&worker_), report_on_failure(report_on_push_failure)
+  priority_task_worker_executor(priority_enqueuer<unique_task, QueuePolicy> enqueuer_,
+                                task_priority                               prio_,
+                                std::thread::id                             tid_,
+                                const char*                                 worker_name_) :
+    enqueuer(std::move(enqueuer_)), prio(prio_), worker_tid(tid_), worker_name(worker_name_)
   {
   }
 
   SRSRAN_NODISCARD bool execute(unique_task task) override
   {
-    if (Priority == task_priority::max and worker->get_id() == std::this_thread::get_id()) {
+    if (can_run_task_inline()) {
       // If same thread and highest priority task, run task right away.
       task();
       return true;
@@ -130,39 +142,33 @@ public:
     return defer(std::move(task));
   }
 
-  SRSRAN_NODISCARD bool defer(unique_task task) override
-  {
-    if (not worker->template push_task<Priority>(std::move(task))) {
-      if (report_on_failure) {
-        srslog::fetch_basic_logger("ALL").warning(
-            "Cannot push more tasks into the {} worker queue with priority={}. Maximum size is {}",
-            worker->worker_name(),
-            Priority,
-            worker->template queue_capacity<Priority>());
-      }
-      return false;
-    }
-    return true;
-  }
+  SRSRAN_NODISCARD bool defer(unique_task task) override { return enqueuer.try_push(std::move(task)); }
+
+  // Check whether task can be run inline or it needs to be dispatched to a queue.
+  bool can_run_task_inline() const { return prio == task_priority::max and worker_tid == std::this_thread::get_id(); }
 
 private:
-  priority_task_worker<QueuePolicies...>* worker            = nullptr;
-  bool                                    report_on_failure = true;
+  /// Enqueuer interface with the provided Priority.
+  priority_enqueuer<unique_task, QueuePolicy> enqueuer;
+  task_priority                               prio;
+  std::thread::id                             worker_tid;
+  const char*                                 worker_name;
 };
 
 /// \brief Create task executor with \c Priority for \c priority_multiqueue_task_worker.
 template <task_priority Priority, concurrent_queue_policy... QueuePolicies>
-priority_task_worker_executor<Priority, QueuePolicies...>
-make_priority_task_worker_executor(priority_task_worker<QueuePolicies...>& worker)
+auto make_priority_task_worker_executor(priority_task_worker<QueuePolicies...>& worker)
 {
-  return priority_task_worker_executor<Priority, QueuePolicies...>(worker);
+  return priority_task_worker_executor<get_priority_queue_policy<QueuePolicies...>(Priority)>(
+      worker.template get_enqueuer<Priority>(), Priority, worker.get_id(), worker.worker_name());
 }
 
 /// \brief Create general task executor pointer with \c Priority for \c priority_multiqueue_task_worker.
 template <task_priority Priority, concurrent_queue_policy... QueuePolicies>
 std::unique_ptr<task_executor> make_priority_task_executor_ptr(priority_task_worker<QueuePolicies...>& worker)
 {
-  return std::make_unique<priority_task_worker_executor<Priority, QueuePolicies...>>(worker);
+  return std::make_unique<priority_task_worker_executor<get_priority_queue_policy<QueuePolicies...>(Priority)>>(
+      worker.template get_enqueuer<Priority>(), Priority, worker.get_id(), worker.worker_name());
 }
 
 namespace detail {

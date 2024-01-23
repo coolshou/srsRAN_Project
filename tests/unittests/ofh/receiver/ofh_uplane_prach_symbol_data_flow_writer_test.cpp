@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -41,8 +41,9 @@ protected:
   unsigned                                              preamble_length;
   unsigned                                              nof_symbols;
   uplane_message_decoder_results                        results;
-  std::shared_ptr<prach_context_repository>             repo = std::make_shared<prach_context_repository>(1);
-  uplane_prach_symbol_data_flow_writer                  writer;
+  std::shared_ptr<prach_context_repository>             repo =
+      std::make_shared<prach_context_repository>(1, srslog::fetch_basic_logger("TEST"));
+  uplane_prach_symbol_data_flow_writer writer;
 
 public:
   ofh_uplane_prach_symbol_data_flow_writer_fixture() :
@@ -54,7 +55,7 @@ public:
   {
     buffer_context.slot             = slot;
     buffer_context.format           = format;
-    buffer_context.port             = 0;
+    buffer_context.ports            = {0};
     buffer_context.nof_td_occasions = 1;
     buffer_context.nof_fd_occasions = 1;
     buffer_context.pusch_scs        = srsran::subcarrier_spacing::kHz30;

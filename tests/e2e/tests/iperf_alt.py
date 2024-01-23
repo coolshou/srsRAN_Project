@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # By using this file, you agree to the terms and conditions set
 # forth in the LICENSE file which can be found at the top level of
@@ -36,7 +36,7 @@ from .steps.stub import iperf, start_and_attach, stop
 )
 @mark.parametrize(
     "config",
-    (param("log --hex_max_size=32", id=""),),
+    (param("log --hex_max_size=32", id="hex_max_size"),),
 )
 @mark.zmq_single_ue
 # pylint: disable=too-many-arguments

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -20,11 +20,13 @@
  *
  */
 
+#include "lib/ngap/ngap_asn1_helpers.h"
 #include "lib/ngap/ngap_asn1_packer.h"
 #include "lib/ngap/ngap_asn1_utils.h"
 #include "ngap_test_messages.h"
 #include "test_helpers.h"
 #include "tests/unittests/gateways/test_helpers.h"
+#include "srsran/ngap/ngap_message.h"
 #include <gtest/gtest.h>
 
 using namespace srsran;
@@ -52,7 +54,7 @@ protected:
     gw   = std::make_unique<dummy_network_gateway_data_handler>();
     ngap = std::make_unique<dummy_ngap_message_handler>();
 
-    packer = std::make_unique<srsran::ngap_asn1_packer>(*gw, *ngap, pcap);
+    packer = std::make_unique<srsran::srs_cu_cp::ngap_asn1_packer>(*gw, *ngap, pcap);
   }
 
   void TearDown() override
@@ -61,11 +63,11 @@ protected:
     srslog::flush();
   }
 
-  std::unique_ptr<dummy_network_gateway_data_handler> gw;
-  std::unique_ptr<dummy_ngap_message_handler>         ngap;
-  std::unique_ptr<srsran::ngap_asn1_packer>           packer;
-  srslog::basic_logger&                               test_logger = srslog::fetch_basic_logger("TEST");
-  dummy_ngap_pcap                                     pcap;
+  std::unique_ptr<dummy_network_gateway_data_handler>  gw;
+  std::unique_ptr<dummy_ngap_message_handler>          ngap;
+  std::unique_ptr<srsran::srs_cu_cp::ngap_asn1_packer> packer;
+  srslog::basic_logger&                                test_logger = srslog::fetch_basic_logger("TEST");
+  null_dlt_pcap                                        pcap;
 };
 
 /// Test successful packing and compare with captured test vector
@@ -75,7 +77,7 @@ TEST_F(ngap_asn1_packer_test, when_packing_successful_then_pdu_matches_tv)
   ngap_message ngap_msg = {};
   ngap_msg.pdu.set_init_msg();
   ngap_msg.pdu.init_msg().load_info_obj(ASN1_NGAP_ID_NG_SETUP);
-  ngap_msg.pdu.init_msg().value.ng_setup_request() = generate_ng_setup_request().msg;
+  fill_asn1_ng_setup_request(ngap_msg.pdu.init_msg().value.ng_setup_request(), generate_ng_setup_request());
 
   // Pack message and forward to gateway
   packer->handle_message(ngap_msg);

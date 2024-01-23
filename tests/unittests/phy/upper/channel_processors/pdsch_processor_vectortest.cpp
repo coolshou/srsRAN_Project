@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,6 +26,9 @@
 #include "srsran/phy/support/support_factories.h"
 #include "srsran/phy/upper/channel_processors/channel_processor_factories.h"
 #include "srsran/phy/upper/channel_processors/channel_processor_formatters.h"
+#include "srsran/phy/upper/tx_buffer_pool.h"
+#include "srsran/phy/upper/unique_tx_buffer.h"
+#include "srsran/ran/pdsch/pdsch_constants.h"
 #include "srsran/support/executors/task_worker_pool.h"
 #include "fmt/ostream.h"
 #include <gtest/gtest.h>
@@ -110,8 +113,9 @@ private:
     }
 
     if (type == "concurrent") {
-      worker_pool = std::make_unique<task_worker_pool<>>(NOF_CONCURRENT_THREADS, 128, "pdsch_proc");
-      executor    = std::make_unique<task_worker_pool_executor<>>(*worker_pool);
+      worker_pool = std::make_unique<task_worker_pool<concurrent_queue_policy::locking_mpmc>>(
+          NOF_CONCURRENT_THREADS, 128, "pdsch_proc");
+      executor = std::make_unique<task_worker_pool_executor<concurrent_queue_policy::locking_mpmc>>(*worker_pool);
 
       return create_pdsch_concurrent_processor_factory_sw(crc_calc_factory,
                                                           ldpc_encoder_factory,
@@ -140,9 +144,11 @@ protected:
   std::unique_ptr<pdsch_processor> pdsch_proc;
   // PDSCH validator.
   std::unique_ptr<pdsch_pdu_validator> pdu_validator;
+  // PDSCH rate matcher buffer pool.
+  std::unique_ptr<tx_buffer_pool> rm_buffer_pool;
   // Worker pool.
-  std::unique_ptr<task_worker_pool<>>          worker_pool;
-  std::unique_ptr<task_worker_pool_executor<>> executor;
+  std::unique_ptr<task_worker_pool<concurrent_queue_policy::locking_mpmc>>          worker_pool;
+  std::unique_ptr<task_worker_pool_executor<concurrent_queue_policy::locking_mpmc>> executor;
 
   void SetUp() override
   {
@@ -160,6 +166,16 @@ protected:
     // Create actual PDSCH processor validator.
     pdu_validator = pdsch_proc_factory->create_validator();
     ASSERT_NE(pdu_validator, nullptr) << "Cannot create PDSCH validator";
+
+    // Create buffer pool.
+    tx_buffer_pool_config buffer_pool_config;
+    buffer_pool_config.max_codeblock_size   = ldpc::MAX_CODEBLOCK_SIZE;
+    buffer_pool_config.nof_buffers          = 1;
+    buffer_pool_config.nof_codeblocks       = pdsch_constants::CODEWORD_MAX_SIZE.value() / ldpc::MAX_MESSAGE_SIZE;
+    buffer_pool_config.expire_timeout_slots = 0;
+    buffer_pool_config.external_soft_bits   = false;
+    rm_buffer_pool                          = create_tx_buffer_pool(buffer_pool_config);
+    ASSERT_NE(rm_buffer_pool, nullptr) << "Cannot create buffer pool";
   }
 
   void TearDown() override
@@ -172,11 +188,12 @@ protected:
 
 TEST_P(PdschProcessorFixture, PdschProcessorVectortest)
 {
-  pdsch_processor_notifier_spy  notifier_spy;
-  const PdschProcessorParams&   param     = GetParam();
-  const test_case_t&            test_case = std::get<1>(param);
-  const test_case_context&      context   = test_case.context;
-  const pdsch_processor::pdu_t& config    = context.pdu;
+  pdsch_processor_notifier_spy notifier_spy;
+  const PdschProcessorParams&  param     = GetParam();
+  const test_case_t&           test_case = std::get<1>(param);
+  const test_case_context&     context   = test_case.context;
+  pdsch_processor::pdu_t       config    = context.pdu;
+  config.codewords.front().new_data      = true;
 
   unsigned max_symb  = context.rg_nof_symb;
   unsigned max_prb   = context.rg_nof_rb;
@@ -197,8 +214,15 @@ TEST_P(PdschProcessorFixture, PdschProcessorVectortest)
   // Make sure the configuration is valid.
   ASSERT_TRUE(pdu_validator->is_valid(config));
 
+  trx_buffer_identifier buffer_id(0, 0);
+
+  unsigned nof_codeblocks =
+      ldpc::compute_nof_codeblocks(units::bits(transport_block.size() * 8), config.ldpc_base_graph);
+
+  unique_tx_buffer rm_buffer = rm_buffer_pool->reserve(slot_point(), buffer_id, nof_codeblocks);
+
   // Process PDSCH.
-  pdsch_proc->process(*mapper, notifier_spy, transport_blocks, config);
+  pdsch_proc->process(*mapper, std::move(rm_buffer), notifier_spy, transport_blocks, config);
 
   // Waits for the processor to finish.
   notifier_spy.wait_for_finished();

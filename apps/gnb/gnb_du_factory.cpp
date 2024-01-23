@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,6 +27,7 @@
 #include "srsran/du/du_factory.h"
 #include "srsran/e2/e2_connection_client.h"
 #include "srsran/f1ap/du/f1c_connection_client.h"
+#include "srsran/pcap/rlc_pcap.h"
 
 using namespace srsran;
 
@@ -50,14 +51,12 @@ static du_low_configuration create_du_low_config(const gnb_appconfig&           
   const upper_phy_threads_appconfig& upper_phy_threads_cfg = params.expert_execution_cfg.threads.upper_threads;
 
   if ((upper_phy_threads_cfg.pdsch_processor_type == "lite") ||
-      ((upper_phy_threads_cfg.pdsch_processor_type == "auto") && (upper_phy_threads_cfg.nof_pdsch_threads == 1))) {
+      ((upper_phy_threads_cfg.pdsch_processor_type == "auto") && (upper_phy_threads_cfg.nof_dl_threads == 1))) {
     du_lo_cfg.dl_proc_cfg.pdsch_processor.emplace<pdsch_processor_lite_configuration>();
   } else if ((upper_phy_threads_cfg.pdsch_processor_type == "concurrent") ||
-             ((upper_phy_threads_cfg.pdsch_processor_type == "auto") &&
-              (upper_phy_threads_cfg.nof_pdsch_threads > 1))) {
+             ((upper_phy_threads_cfg.pdsch_processor_type == "auto") && (upper_phy_threads_cfg.nof_dl_threads > 1))) {
     pdsch_processor_concurrent_configuration pdsch_proc_config;
-    pdsch_proc_config.nof_pdsch_codeblock_threads = params.expert_execution_cfg.threads.upper_threads.nof_dl_threads +
-                                                    params.expert_execution_cfg.threads.upper_threads.nof_pdsch_threads;
+    pdsch_proc_config.nof_pdsch_codeblock_threads = params.expert_execution_cfg.threads.upper_threads.nof_dl_threads;
     pdsch_proc_config.max_nof_simultaneous_pdsch =
         (MAX_UE_PDUS_PER_SLOT + 1) * params.expert_phy_cfg.max_processing_delay_slots;
     pdsch_proc_config.pdsch_codeblock_task_executor = pdsch_codeblock_executor;
@@ -67,6 +66,7 @@ static du_low_configuration create_du_low_config(const gnb_appconfig&           
   } else {
     srsran_assert(false, "Invalid PDSCH processor type {}.", upper_phy_threads_cfg.pdsch_processor_type);
   }
+  du_lo_cfg.dl_proc_cfg.nof_concurrent_threads = params.expert_execution_cfg.threads.upper_threads.nof_dl_threads;
 
   du_lo_cfg.upper_phy = generate_du_low_config(params);
 
@@ -95,9 +95,11 @@ std::vector<std::unique_ptr<du>> srsran::make_gnb_dus(const gnb_appconfig&      
                                                       srs_du::f1u_du_gateway&               f1u_gw,
                                                       timer_manager&                        timer_mng,
                                                       mac_pcap&                             mac_p,
+                                                      rlc_pcap&                             rlc_p,
                                                       gnb_console_helper&                   console_helper,
                                                       e2_connection_client&                 e2_client_handler,
                                                       e2_metric_connector_manager&          e2_metric_connectors,
+                                                      rlc_metrics_notifier&                 rlc_json_metrics,
                                                       metrics_hub&                          metrics_hub)
 {
   // DU cell config
@@ -110,22 +112,22 @@ std::vector<std::unique_ptr<du>> srsran::make_gnb_dus(const gnb_appconfig&      
     metrics_hub.add_source(std::move(source));
 
     // Get DU Scheduler UE metrics source pointer.
-    auto source_ = metrics_hub.get_scheduler_ue_metrics_source(source_name);
-    if (source_ == nullptr) {
+    scheduler_ue_metrics_source* sched_source = metrics_hub.get_scheduler_ue_metrics_source(source_name);
+    if (sched_source == nullptr) {
       continue;
     }
 
     // Connect Console Aggregator to DU Scheduler UE metrics.
-    source_->add_subscriber(console_helper.get_stdout_metrics_notifier());
+    sched_source->add_subscriber(console_helper.get_stdout_metrics_notifier());
 
     // Connect JSON metrics reporter to DU Scheduler UE metrics.
     if (gnb_cfg.metrics_cfg.enable_json_metrics) {
-      source_->add_subscriber(console_helper.get_json_metrics_notifier());
+      sched_source->add_subscriber(console_helper.get_json_metrics_notifier());
     }
 
     // Connect E2 agent to DU Scheduler UE metrics.
     if (gnb_cfg.e2_cfg.enable_du_e2) {
-      source_->add_subscriber(e2_metric_connectors.get_e2_du_metric_notifier(i));
+      sched_source->add_subscriber(e2_metric_connectors.get_e2_du_metric_notifier(i));
     }
   }
 
@@ -135,9 +137,6 @@ std::vector<std::unique_ptr<du>> srsran::make_gnb_dus(const gnb_appconfig&      
     gnb_appconfig tmp_cfg = gnb_cfg;
     tmp_cfg.cells_cfg.resize(1);
     tmp_cfg.cells_cfg[0] = gnb_cfg.cells_cfg[i];
-
-    // DU QoS config
-    std::map<five_qi_t, du_qos_config> du_qos_cfg = generate_du_qos_config(gnb_cfg);
 
     du_config                   du_cfg = {};
     std::vector<task_executor*> du_low_dl_exec;
@@ -161,29 +160,41 @@ std::vector<std::unique_ptr<du>> srsran::make_gnb_dus(const gnb_appconfig&      
     du_hi_cfg.phy_adapter                    = nullptr;
     du_hi_cfg.timers                         = &timer_mng;
     du_hi_cfg.cells                          = {du_cells[i]};
-    du_hi_cfg.qos                            = du_qos_cfg;
-    du_hi_cfg.pcap                           = &mac_p;
+    du_hi_cfg.srbs                           = generate_du_srb_config(gnb_cfg);
+    du_hi_cfg.qos                            = generate_du_qos_config(gnb_cfg);
+    du_hi_cfg.mac_p                          = &mac_p;
+    du_hi_cfg.rlc_p                          = &rlc_p;
     du_hi_cfg.gnb_du_id                      = du_insts.size() + 1;
     du_hi_cfg.gnb_du_name                    = fmt::format("srsdu{}", du_hi_cfg.gnb_du_id);
     du_hi_cfg.du_bind_addr                   = {fmt::format("127.0.0.{}", du_hi_cfg.gnb_du_id)};
     du_hi_cfg.mac_cfg                        = generate_mac_expert_config(gnb_cfg);
     du_hi_cfg.sched_ue_metrics_notifier      = metrics_hub.get_scheduler_ue_metrics_source("DU " + std::to_string(i));
     du_hi_cfg.sched_cfg                      = generate_scheduler_expert_config(gnb_cfg);
-    if (gnb_cfg.e2_cfg.enable_du_e2) {
-      du_hi_cfg.e2_client          = &e2_client_handler;
-      du_hi_cfg.e2ap_config        = generate_e2_config(gnb_cfg);
-      du_hi_cfg.e2_du_metric_iface = &(e2_metric_connectors.get_e2_du_metrics_interface(i));
 
+    // Connect RLC metrics to sinks, if required
+    if (gnb_cfg.metrics_cfg.rlc.json_enabled || gnb_cfg.e2_cfg.enable_du_e2) {
       // This source aggregates the RLC metrics from all DRBs in a single DU.
       std::string source_name = "rlc_metric_aggr_du_" + std::to_string(i);
-      auto        source      = std::make_unique<rlc_metrics_source>(source_name);
-      // Connect E2 agent to RLC metric source.
-      source->add_subscriber(e2_metric_connectors.get_e2_du_metric_notifier(i));
-      metrics_hub.add_source(std::move(source));
+      auto        rlc_source  = std::make_unique<rlc_metrics_source>(source_name);
+
+      if (gnb_cfg.metrics_cfg.rlc.json_enabled) {
+        // Connect JSON metrics plotter to RLC metric source.
+        rlc_source->add_subscriber(rlc_json_metrics);
+      }
+      if (gnb_cfg.e2_cfg.enable_du_e2) {
+        // Connect E2 agent to RLC metric source.
+        du_hi_cfg.e2_client          = &e2_client_handler;
+        du_hi_cfg.e2ap_config        = generate_e2_config(gnb_cfg);
+        du_hi_cfg.e2_du_metric_iface = &(e2_metric_connectors.get_e2_du_metrics_interface(i));
+        rlc_source->add_subscriber(e2_metric_connectors.get_e2_du_metric_notifier(i));
+      }
       // Pass RLC metric source to the DU high.
+      metrics_hub.add_source(std::move(rlc_source));
       du_hi_cfg.rlc_metrics_notif = metrics_hub.get_rlc_metrics_source(source_name);
     }
-    if (gnb_cfg.test_mode_cfg.test_ue.rnti != INVALID_RNTI) {
+
+    // Configure test mode
+    if (gnb_cfg.test_mode_cfg.test_ue.rnti != rnti_t::INVALID_RNTI) {
       du_hi_cfg.test_cfg.test_ue = srs_du::du_test_config::test_ue_config{gnb_cfg.test_mode_cfg.test_ue.rnti,
                                                                           gnb_cfg.test_mode_cfg.test_ue.pdsch_active,
                                                                           gnb_cfg.test_mode_cfg.test_ue.pusch_active,
@@ -195,8 +206,9 @@ std::vector<std::unique_ptr<du>> srsran::make_gnb_dus(const gnb_appconfig&      
                                                                           gnb_cfg.test_mode_cfg.test_ue.i_2};
     }
     // FAPI configuration.
-    du_cfg.fapi.log_level = gnb_cfg.log_cfg.fapi_level;
-    du_cfg.fapi.sector    = i;
+    du_cfg.fapi.log_level   = gnb_cfg.log_cfg.fapi_level;
+    du_cfg.fapi.sector      = i;
+    du_cfg.fapi.prach_ports = tmp_cfg.cells_cfg.front().cell.prach_cfg.ports;
 
     du_insts.push_back(make_du(du_cfg));
     report_error_if_not(du_insts.back(), "Invalid Distributed Unit");

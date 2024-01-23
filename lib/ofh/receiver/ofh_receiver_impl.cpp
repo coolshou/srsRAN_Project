@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -58,6 +58,8 @@ static message_receiver_dependencies get_message_receiver_dependencies(receiver_
   srsran_assert(dependencies.data_flow_uplink, "Invalid uplink data flow decoder");
   dependencies.data_flow_prach = std::move(rx_dependencies.data_flow_prach);
   srsran_assert(dependencies.data_flow_prach, "Invalid PRACH data flow decoder");
+  dependencies.seq_id_checker = std::move(rx_dependencies.seq_id_checker);
+  srsran_assert(dependencies.seq_id_checker, "Invalid sequence id checker");
 
   return dependencies;
 }
@@ -68,7 +70,8 @@ receiver_impl::receiver_impl(const receiver_config& config, receiver_impl_depend
                  std::chrono::duration<double, std::nano>(
                      1e6 / (get_nsymb_per_slot(config.cp) * get_nof_slots_per_subframe(config.scs)))),
   msg_receiver(get_message_receiver_configuration(config),
-               get_message_receiver_dependencies(std::move(dependencies), window_checker))
+               get_message_receiver_dependencies(std::move(dependencies), window_checker)),
+  ctrl(msg_receiver)
 {
 }
 
@@ -77,7 +80,12 @@ ether::frame_notifier& receiver_impl::get_ethernet_frame_notifier()
   return msg_receiver;
 }
 
-ota_symbol_handler& receiver_impl::get_ota_symbol_handler()
+ota_symbol_boundary_notifier& receiver_impl::get_ota_symbol_boundary_notifier()
 {
   return window_checker;
+}
+
+controller& receiver_impl::get_controller()
+{
+  return ctrl;
 }

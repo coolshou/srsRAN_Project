@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,6 +23,7 @@
 #pragma once
 
 #include "srsran/ofh/ethernet/ethernet_mac_address.h"
+#include "srsran/support/units.h"
 
 namespace srsran {
 namespace ether {
@@ -33,6 +34,8 @@ struct gw_config {
   std::string interface;
   /// Promiscuous mode flag.
   bool is_promiscuous_mode_enabled;
+  /// MTU size.
+  units::bytes mtu_size;
   /// Destination MAC address.
   mac_address mac_dst_address;
 };

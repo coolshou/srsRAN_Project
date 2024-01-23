@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -33,8 +33,6 @@
 #include "cu_up_processor/cu_up_processor_repository.h"
 #include "du_processor/du_processor_repository.h"
 #include "routine_managers/cu_cp_routine_manager.h"
-#include "task_schedulers/cu_up_task_scheduler.h"
-#include "task_schedulers/du_task_scheduler.h"
 #include "task_schedulers/ue_task_scheduler.h"
 #include "ue_manager_impl.h"
 #include "srsran/cu_cp/cell_meas_manager.h"
@@ -47,7 +45,11 @@
 namespace srsran {
 namespace srs_cu_cp {
 
-class cu_cp_impl final : public cu_cp_interface, public cu_cp_impl_interface
+class cu_cp_impl final : public cu_cp_interface,
+                         public cu_cp_impl_interface,
+                         public cu_cp_ngap_connection_interface,
+                         public cu_cp_ngap_handler,
+                         public cu_cp_cu_up_connection_interface
 {
 public:
   explicit cu_cp_impl(const cu_cp_configuration& config_);
@@ -85,14 +87,15 @@ public:
   void handle_ue_removal_request(ue_index_t ue_index) override;
 
   // cu_cp interface
-  du_repository&                    get_connected_dus() override { return du_db; }
-  cu_up_repository&                 get_connected_cu_ups() override { return cu_up_db; }
-  cu_cp_cu_up_connection_interface& get_cu_cp_cu_up_connection_interface() override { return *this; }
-  cu_cp_e1ap_handler&               get_cu_cp_e1ap_handler() override { return *this; }
-  cu_cp_ngap_connection_interface&  get_cu_cp_ngap_connection_interface() override { return *this; }
-  cu_cp_ngap_handler&               get_cu_cp_ngap_handler() override { return *this; }
-  cu_cp_rrc_ue_interface&           get_cu_cp_rrc_ue_interface() override { return *this; }
-  cu_cp_ue_removal_handler&         get_cu_cp_ue_removal_handler() override { return *this; }
+  du_repository&                         get_connected_dus() override { return du_db; }
+  cu_up_repository&                      get_connected_cu_ups() override { return cu_up_db; }
+  cu_cp_cu_up_connection_interface&      get_cu_cp_cu_up_connection_interface() override { return *this; }
+  cu_cp_e1ap_handler&                    get_cu_cp_e1ap_handler() override { return *this; }
+  cu_cp_ngap_connection_interface&       get_cu_cp_ngap_connection_interface() override { return *this; }
+  cu_cp_ngap_handler&                    get_cu_cp_ngap_handler() override { return *this; }
+  cu_cp_rrc_ue_interface&                get_cu_cp_rrc_ue_interface() override { return *this; }
+  cu_cp_ue_removal_handler&              get_cu_cp_ue_removal_handler() override { return *this; }
+  cu_cp_ue_context_manipulation_handler& get_cu_cp_ue_context_handler() override { return *this; }
 
 private:
   // Handling of DU events.

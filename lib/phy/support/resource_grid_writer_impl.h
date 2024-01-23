@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -60,6 +60,9 @@ public:
 
   // See interface for documentation.
   void put(unsigned port, unsigned l, unsigned k_init, span<const cf_t> symbols) override;
+
+  // See interface for documentation.
+  void put(unsigned port, unsigned l, unsigned k_init, unsigned stride, span<const cf_t> symbols) override;
 
   /// Helper function to mark port as not empty.
   inline void clear_empty(unsigned i_port) { empty &= ~(1U << i_port); }

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -60,16 +60,16 @@ void ue_manager::remove_ue(ue_index_t ue_index)
     if (c_rnti != rnti_t::INVALID_RNTI) {
       pci_rnti_to_ue_index.erase(std::make_tuple(pci, c_rnti));
     } else {
-      logger.warning("ue={} RNTI not found", ue_index);
+      logger.warning("ue={}: RNTI not found", ue_index);
     }
   } else {
-    logger.debug("ue={} PCI not found", ue_index);
+    logger.debug("ue={}: PCI not found", ue_index);
   }
 
   // Remove CU-CP UE from database
   ues.erase(ue_index);
 
-  logger.info("ue={} removed", ue_index);
+  logger.debug("ue={}: Removed", ue_index);
   return;
 }
 
@@ -87,7 +87,7 @@ ue_index_t ue_manager::allocate_new_ue_index(du_index_t du_index)
   ues.emplace(
       std::piecewise_construct, std::forward_as_tuple(new_ue_index), std::forward_as_tuple(new_ue_index, up_config));
 
-  logger.debug("ue={} Allocated new UE index", new_ue_index);
+  logger.debug("ue={}: Allocated new UE index", new_ue_index);
 
   return new_ue_index;
 }
@@ -104,11 +104,11 @@ du_ue* ue_manager::add_ue(ue_index_t ue_index, pci_t pci, rnti_t rnti)
 {
   srsran_assert(ue_index != ue_index_t::invalid, "Invalid ue_index={}", ue_index);
   srsran_assert(pci != INVALID_PCI, "Invalid pci={}", pci);
-  srsran_assert(rnti != INVALID_RNTI, "Invalid rnti={}", rnti);
+  srsran_assert(rnti != rnti_t::INVALID_RNTI, "Invalid rnti={}", rnti);
 
   // check if ue_index is in db
   if (ues.find(ue_index) == ues.end()) {
-    logger.warning("UE with ue_index={} not found", ue_index);
+    logger.warning("ue={}: UE not found", ue_index);
     return nullptr;
   }
 
@@ -124,7 +124,7 @@ du_ue* ue_manager::add_ue(ue_index_t ue_index, pci_t pci, rnti_t rnti)
   // Add PCI and RNTI to lookup.
   pci_rnti_to_ue_index.emplace(std::make_tuple(pci, rnti), ue_index);
 
-  logger.debug("ue={} updated UE with pci={} and rnti={}", ue_index, pci, rnti);
+  logger.debug("ue={}: Updated UE with pci={} and rnti={}", ue_index, pci, rnti);
 
   return &ue;
 }
@@ -148,7 +148,7 @@ ngap_ue* ue_manager::add_ue(ue_index_t                          ue_index,
 
   // check if the UE is already present
   if (ues.find(ue_index) != ues.end() && ues.at(ue_index).ngap_ue_created()) {
-    logger.warning("ue={} already exists", ue_index);
+    logger.warning("ue={}: UE already exists", ue_index);
     return nullptr;
   }
 

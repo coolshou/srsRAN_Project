@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -264,13 +264,14 @@ static void pdsch_conversion_test()
                         TESTASSERT_EQ(slot, proc_pdu.slot.slot_index());
                         TESTASSERT_EQ(static_cast<unsigned>(cyclic_p), static_cast<unsigned>(proc_pdu.cp.value));
 
-                        TESTASSERT_EQ(rnti, proc_pdu.rnti);
+                        TESTASSERT_EQ(to_value(rnti), proc_pdu.rnti);
                         TESTASSERT_EQ(bwp_size, proc_pdu.bwp_size_rb);
                         TESTASSERT_EQ(bwp_start, proc_pdu.bwp_start_rb);
 
                         // Codeword.
                         TESTASSERT_EQ(static_cast<modulation_scheme>(qam_mod), proc_pdu.codewords[0].modulation);
                         TESTASSERT_EQ(rv_index, proc_pdu.codewords[0].rv);
+                        TESTASSERT_EQ(true, proc_pdu.codewords[0].new_data);
 
                         TESTASSERT_EQ(nid_pdsch, proc_pdu.n_id);
 

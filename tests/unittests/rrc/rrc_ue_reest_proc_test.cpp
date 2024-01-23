@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -64,6 +64,25 @@ TEST_F(rrc_ue_reest, when_valid_reestablishment_request_received_but_security_co
 {
   connect_amf();
   receive_valid_reestablishment_request(1, to_rnti(0x4601));
+
+  // check if the RRC Setup Request was generated
+  ASSERT_EQ(get_srb0_pdu_type(), asn1::rrc_nr::dl_ccch_msg_type_c::c1_c_::types::rrc_setup);
+
+  // check if SRB1 was created
+  check_srb1_exists();
+
+  receive_setup_complete();
+
+  check_initial_ue_message_sent();
+}
+
+/// Test the RRC Reestablishment
+TEST_F(rrc_ue_reest, when_reestablishment_request_with_cause_recfg_fail_received_then_rrc_setup_sent)
+{
+  connect_amf();
+  ue_index_t old_ue_index = uint_to_ue_index(0);
+  add_ue_reestablishment_context(old_ue_index);
+  receive_valid_reestablishment_request_with_cause_recfg_fail(1, to_rnti(0x4601));
 
   // check if the RRC Setup Request was generated
   ASSERT_EQ(get_srb0_pdu_type(), asn1::rrc_nr::dl_ccch_msg_type_c::c1_c_::types::rrc_setup);

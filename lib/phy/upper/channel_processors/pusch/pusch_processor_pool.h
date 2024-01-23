@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,8 +23,7 @@
 #pragma once
 
 #include "srsran/adt/concurrent_queue.h"
-#include "srsran/adt/ring_buffer.h"
-#include "srsran/phy/upper/channel_processors/channel_processor_formatters.h"
+#include "srsran/phy/upper/channel_processors/pusch/formatters.h"
 #include "srsran/phy/upper/channel_processors/pusch/pusch_processor.h"
 #include "srsran/srslog/logger.h"
 
@@ -58,7 +57,7 @@ public:
 
   // See pusch_processor interface for documentation.
   void process(span<uint8_t>                    data,
-               unique_rx_softbuffer             softbuffer,
+               unique_rx_buffer                 rm_buffer,
                pusch_processor_result_notifier& notifier_,
                const resource_grid_reader&      grid,
                const pdu_t&                     pdu) override
@@ -67,7 +66,7 @@ public:
     notifier = &notifier_;
 
     // Process.
-    processor->process(data, std::move(softbuffer), *this, grid, pdu);
+    processor->process(data, std::move(rm_buffer), *this, grid, pdu);
   }
 
 private:
@@ -121,7 +120,7 @@ public:
 
   // See interface for documentation.
   void process(span<uint8_t>                    data,
-               unique_rx_softbuffer             softbuffer,
+               unique_rx_buffer                 rm_buffer,
                pusch_processor_result_notifier& notifier,
                const resource_grid_reader&      grid,
                const pdu_t&                     pdu) override
@@ -136,7 +135,7 @@ public:
     }
 
     // Process pusch.
-    processors[index.value()].process(data, std::move(softbuffer), notifier, grid, pdu);
+    processors[index.value()].process(data, std::move(rm_buffer), notifier, grid, pdu);
   }
 
 private:

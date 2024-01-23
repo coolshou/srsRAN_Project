@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #include "sctp_network_gateway_impl.h"
 #include "srsran/gateways/addr_info.h"
+#include "srsran/support/error_handling.h"
 #include <fcntl.h>
 #include <srsran/support/sockets.h>
 #include <utility>

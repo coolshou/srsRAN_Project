@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,7 +22,6 @@
 
 #include "../rrc/rrc_ue_test_messages.h"
 #include "cu_cp_test_helpers.h"
-#include "lib/e1ap/common/e1ap_asn1_utils.h"
 #include "srsran/asn1/f1ap/f1ap.h"
 #include "srsran/ngap/ngap_types.h"
 #include "srsran/ran/cu_types.h"
@@ -195,10 +194,10 @@ TEST_F(cu_cp_test, when_amf_connected_then_ue_added)
   ASSERT_EQ(cu_cp_obj->get_connected_dus().get_nof_ues(), 1U);
 
   // check that the Initial UE Message was sent to the AMF
-  ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.type(), asn1::ngap::ngap_pdu_c::types_opts::options::init_msg);
-  ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.init_msg().value.type().value,
+  ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.type(), asn1::ngap::ngap_pdu_c::types_opts::options::init_msg);
+  ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.init_msg().value.type().value,
             asn1::ngap::ngap_elem_procs_o::init_msg_c::types_opts::init_ue_msg);
-  ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.init_msg().value.init_ue_msg()->ran_ue_ngap_id, 0);
+  ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.init_msg().value.init_ue_msg()->ran_ue_ngap_id, 0);
 }
 
 TEST_F(cu_cp_test, when_amf_not_connected_then_ue_rejected)
@@ -237,7 +236,7 @@ TEST_F(cu_cp_test, when_amf_not_connected_then_ue_rejected)
   ASSERT_EQ(cu_cp_obj->get_connected_dus().get_nof_ues(), 0U);
 
   // check that the Initial UE Message was not send to the AMF
-  ASSERT_NE(ngap_amf_notifier.last_ngap_msg.pdu.init_msg().value.type().value,
+  ASSERT_NE(ngap_amf_notifier.last_ngap_msgs.back().pdu.init_msg().value.type().value,
             asn1::ngap::ngap_elem_procs_o::init_msg_c::types_opts::init_ue_msg);
 }
 
@@ -446,10 +445,10 @@ TEST_F(cu_cp_test, when_ue_level_inactivity_message_received_then_ue_context_rel
   cu_cp_obj->handle_bearer_context_inactivity_notification(inactivity_notification);
 
   // check that the UE Context Release Request was sent to the AMF
-  ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.type(), asn1::ngap::ngap_pdu_c::types_opts::options::init_msg);
-  ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.init_msg().value.type().value,
+  ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.type(), asn1::ngap::ngap_pdu_c::types_opts::options::init_msg);
+  ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.init_msg().value.type().value,
             asn1::ngap::ngap_elem_procs_o::init_msg_c::types_opts::ue_context_release_request);
-  ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.init_msg().value.ue_context_release_request()->cause.type(),
+  ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.init_msg().value.ue_context_release_request()->cause.type(),
             asn1::ngap::cause_c::types::radio_network);
 }
 
@@ -474,8 +473,39 @@ TEST_F(cu_cp_test, when_unsupported_inactivity_message_received_then_ue_context_
   cu_cp_obj->handle_bearer_context_inactivity_notification(inactivity_notification);
 
   // check that the UE Context Release Request was not sent to the AMF
-  ASSERT_NE(ngap_amf_notifier.last_ngap_msg.pdu.init_msg().value.type().value,
+  ASSERT_NE(ngap_amf_notifier.last_ngap_msgs.back().pdu.init_msg().value.type().value,
             asn1::ngap::ngap_elem_procs_o::init_msg_c::types_opts::ue_context_release_request);
+}
+
+//////////////////////////////////////////////////////////////////////////////////////
+/* AMF initiated PDU Session Release                                                */
+//////////////////////////////////////////////////////////////////////////////////////
+
+TEST_F(cu_cp_test, when_pdu_session_resource_release_command_received_then_release_command_is_sent_to_cu_up_first)
+{
+  // Test preamble
+  du_index_t          du_index  = uint_to_du_index(0);
+  gnb_cu_ue_f1ap_id_t cu_ue_id  = int_to_gnb_cu_ue_f1ap_id(0);
+  gnb_du_ue_f1ap_id_t du_ue_id  = int_to_gnb_du_ue_f1ap_id(0);
+  rnti_t              crnti     = to_rnti(0x4601);
+  pci_t               pci       = 1;
+  amf_ue_id_t         amf_ue_id = uint_to_amf_ue_id(
+      test_rgen::uniform_int<uint64_t>(amf_ue_id_to_uint(amf_ue_id_t::min), amf_ue_id_to_uint(amf_ue_id_t::max)));
+  ran_ue_id_t            ran_ue_id        = uint_to_ran_ue_id(0);
+  gnb_cu_cp_ue_e1ap_id_t cu_cp_ue_e1ap_id = int_to_gnb_cu_cp_ue_e1ap_id(0);
+  gnb_cu_up_ue_e1ap_id_t cu_up_ue_e1ap_id = int_to_gnb_cu_up_ue_e1ap_id(0);
+
+  test_preamble_ue_full_attach(
+      du_index, du_ue_id, cu_ue_id, pci, crnti, amf_ue_id, ran_ue_id, cu_cp_ue_e1ap_id, cu_up_ue_e1ap_id);
+
+  // Inject PduSessionResourceReleaseCommand
+  cu_cp_obj->get_ngap_message_handler().handle_message(
+      generate_valid_pdu_session_resource_release_command(amf_ue_id, ran_ue_id, uint_to_pdu_session_id(1)));
+
+  // Check that the Bearer Context Release Command was sent to the CU-UP first
+  ASSERT_EQ(e1ap_gw.last_tx_pdus(0).back().pdu.type(), asn1::e1ap::e1ap_pdu_c::types_opts::options::init_msg);
+  ASSERT_EQ(e1ap_gw.last_tx_pdus(0).back().pdu.init_msg().value.type().value,
+            asn1::e1ap::e1ap_elem_procs_o::init_msg_c::types_opts::bearer_context_release_cmd);
 }
 
 //////////////////////////////////////////////////////////////////////////////////////
@@ -549,7 +579,7 @@ TEST_F(cu_cp_test,
       .handle_message(generate_ue_context_release_complete(cu_ue_id, du_ue_id));
 
   // check that the ErrorIndication was sent to the AMF
-  ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.init_msg().value.type().value,
+  ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.init_msg().value.type().value,
             asn1::ngap::ngap_elem_procs_o::init_msg_c::types_opts::error_ind);
 }
 
@@ -557,7 +587,7 @@ TEST_F(cu_cp_test,
 /* DU Initiated UE Context Release                                                  */
 //////////////////////////////////////////////////////////////////////////////////////
 
-/// Test the handling of a ue level inactivity notification
+/// Test the handling of a DU initiated release request
 TEST_F(cu_cp_test, when_du_initiated_ue_context_release_received_then_ue_context_release_request_is_sent)
 {
   // Test preamble
@@ -577,12 +607,56 @@ TEST_F(cu_cp_test, when_du_initiated_ue_context_release_received_then_ue_context
       .get_f1ap_message_handler()
       .handle_message(generate_ue_context_release_request(cu_ue_id, du_ue_id));
 
-  // check that the UE Context Release Request was sent to the AMF
-  ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.type(), asn1::ngap::ngap_pdu_c::types_opts::options::init_msg);
-  ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.init_msg().value.type().value,
+  // Check that the UE Context Release Request was sent to the AMF
+  ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.type(), asn1::ngap::ngap_pdu_c::types_opts::options::init_msg);
+  ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.init_msg().value.type().value,
             asn1::ngap::ngap_elem_procs_o::init_msg_c::types_opts::ue_context_release_request);
-  ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.init_msg().value.ue_context_release_request()->cause.type(),
+  ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.init_msg().value.ue_context_release_request()->cause.type(),
             asn1::ngap::cause_c::types_opts::options::radio_network);
+}
+
+/// Test the handling of a DU initiated release request
+TEST_F(
+    cu_cp_test,
+    when_du_initiated_ue_context_release_received_and_ue_unknown_to_amf_then_ue_is_released_without_release_request_to_amf)
+{
+  // Test preamble
+  du_index_t          du_index = uint_to_du_index(0);
+  gnb_cu_ue_f1ap_id_t cu_ue_id = int_to_gnb_cu_ue_f1ap_id(0);
+  gnb_du_ue_f1ap_id_t du_ue_id = int_to_gnb_du_ue_f1ap_id(0);
+  rnti_t              crnti    = to_rnti(0x4601);
+  pci_t               pci      = 0;
+
+  // Connect AMF, DU, CU-UP
+  test_preamble_all_connected(du_index, pci);
+
+  // Attach UE
+  attach_ue(du_ue_id, cu_ue_id, crnti, du_index);
+  ASSERT_EQ(cu_cp_obj->get_connected_dus().get_nof_ues(), 1U);
+
+  // Inject UE Context Release Request
+  cu_cp_obj->get_connected_dus()
+      .get_du(uint_to_du_index(0))
+      .get_f1ap_message_handler()
+      .handle_message(generate_ue_context_release_request(cu_ue_id, du_ue_id));
+
+  // Check that the UE Context Release Request was not sent to the AMF
+  ASSERT_NE(ngap_amf_notifier.last_ngap_msgs.back().pdu.init_msg().value.type().value,
+            asn1::ngap::ngap_elem_procs_o::init_msg_c::types_opts::ue_context_release_request);
+
+  // Check that the Ue Context Release Command was sent to the DU
+  ASSERT_EQ(f1c_gw.last_tx_pdus(0).back().pdu.type(), asn1::f1ap::f1ap_pdu_c::types_opts::options::init_msg);
+  ASSERT_EQ(f1c_gw.last_tx_pdus(0).back().pdu.init_msg().value.type().value,
+            asn1::f1ap::f1ap_elem_procs_o::init_msg_c::types_opts::ue_context_release_cmd);
+
+  // Inject UE Context Release Complete
+  cu_cp_obj->get_connected_dus()
+      .get_du(uint_to_du_index(0))
+      .get_f1ap_message_handler()
+      .handle_message(generate_ue_context_release_complete(cu_ue_id, du_ue_id));
+
+  // Check that the UE was removed
+  ASSERT_EQ(cu_cp_obj->get_connected_dus().get_nof_ues(), 0);
 }
 
 //////////////////////////////////////////////////////////////////////////////////////
@@ -626,10 +700,11 @@ TEST_F(cu_cp_test, when_reestablishment_fails_then_ue_released)
     cu_cp_obj->get_connected_dus().get_du(du_index).get_f1ap_message_handler().handle_message(ul_rrc_msg);
 
     // check that the UE Context Release Request was sent to the AMF
-    ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.type(), asn1::ngap::ngap_pdu_c::types_opts::options::init_msg);
-    ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.init_msg().value.type().value,
+    ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.type(),
+              asn1::ngap::ngap_pdu_c::types_opts::options::init_msg);
+    ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.init_msg().value.type().value,
               asn1::ngap::ngap_elem_procs_o::init_msg_c::types_opts::ue_context_release_request);
-    ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.init_msg().value.ue_context_release_request()->cause.type(),
+    ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.init_msg().value.ue_context_release_request()->cause.type(),
               asn1::ngap::cause_c::types_opts::options::radio_network);
   }
 
@@ -673,10 +748,11 @@ TEST_F(cu_cp_test, when_old_ue_not_fully_attached_then_reestablishment_rejected)
     cu_cp_obj->get_connected_dus().get_du(du_index).get_f1ap_message_handler().handle_message(ul_rrc_msg);
 
     // check that the UE Context Release Request was sent to the AMF
-    ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.type(), asn1::ngap::ngap_pdu_c::types_opts::options::init_msg);
-    ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.init_msg().value.type().value,
+    ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.type(),
+              asn1::ngap::ngap_pdu_c::types_opts::options::init_msg);
+    ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.init_msg().value.type().value,
               asn1::ngap::ngap_elem_procs_o::init_msg_c::types_opts::ue_context_release_request);
-    ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.init_msg().value.ue_context_release_request()->cause.type(),
+    ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.init_msg().value.ue_context_release_request()->cause.type(),
               asn1::ngap::cause_c::types_opts::options::radio_network);
   }
 
@@ -813,22 +889,22 @@ TEST_F(cu_cp_test, when_handover_request_received_then_handover_notify_is_sent)
   cu_cp_obj->get_e1ap_message_handler(uint_to_cu_up_index(0)).handle_message(bearer_ctxt_mod_resp);
 
   // Check that the Handover Request Ack was sent to the AMF
-  ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.type(),
+  ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.type(),
             asn1::ngap::ngap_pdu_c::types_opts::options::successful_outcome);
-  ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.successful_outcome().value.type().value,
+  ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.successful_outcome().value.type().value,
             asn1::ngap::ngap_elem_procs_o::successful_outcome_c::types_opts::ho_request_ack);
-  ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.successful_outcome().value.ho_request_ack()->amf_ue_ngap_id,
+  ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.successful_outcome().value.ho_request_ack()->amf_ue_ngap_id,
             amf_ue_id_to_uint(amf_ue_id));
 
   // Inject RRC Reconfiguration Complete with transaction_id=0
   f1ap_message rrc_recfg_complete = generate_ul_rrc_message_transfer(
-      int_to_gnb_cu_ue_f1ap_id(0), int_to_gnb_du_ue_f1ap_id(0), srb_id_t::srb1, make_byte_buffer("800008001e450a65"));
+      int_to_gnb_cu_ue_f1ap_id(0), int_to_gnb_du_ue_f1ap_id(0), srb_id_t::srb1, make_byte_buffer("800008004e17dae3"));
   cu_cp_obj->get_connected_dus().get_du(du_index).get_f1ap_message_handler().handle_message(rrc_recfg_complete);
 
   // Check that the Handover Notify was sent to the AMF
-  ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.type(), asn1::ngap::ngap_pdu_c::types_opts::options::init_msg);
-  ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.init_msg().value.type().value,
+  ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.type(), asn1::ngap::ngap_pdu_c::types_opts::options::init_msg);
+  ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.init_msg().value.type().value,
             asn1::ngap::ngap_elem_procs_o::init_msg_c::types_opts::ho_notify);
-  ASSERT_EQ(ngap_amf_notifier.last_ngap_msg.pdu.init_msg().value.ho_notify()->amf_ue_ngap_id,
+  ASSERT_EQ(ngap_amf_notifier.last_ngap_msgs.back().pdu.init_msg().value.ho_notify()->amf_ue_ngap_id,
             amf_ue_id_to_uint(amf_ue_id));
 }

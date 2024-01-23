@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -27,3 +27,5 @@ add_subdirectory(phy)
 add_subdirectory(scheduler)
 add_subdirectory(du_high)
 add_subdirectory(ofh)
+add_subdirectory(rlc)
+add_subdirectory(pdcp)

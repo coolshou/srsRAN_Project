@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -58,6 +58,8 @@ struct ru_ofh_sector_configuration {
   bool is_downlink_broadcast_enabled = false;
   /// If set to true, the payload size encoded in a eCPRI header is ignored.
   bool ignore_ecpri_payload_size_field = false;
+  /// If set to true, the sequence id encoded in a eCPRI packet is ignored.
+  bool ignore_ecpri_seq_id_field = false;
   /// Uplink compression parameters.
   ofh::ru_compression_params ul_compression_params;
   /// Downlink compression parameters.
@@ -71,17 +73,12 @@ struct ru_ofh_sector_configuration {
   /// IQ data scaling to be applied prior to Downlink data compression.
   float iq_scaling;
 
-  /// Downlink task executors.
-  std::vector<task_executor*> downlink_executors;
-  /// Receiver task executor.
-  task_executor* receiver_executor = nullptr;
-  /// Transmitter task executor.
-  task_executor* transmitter_executor = nullptr;
-
   /// Ethernet interface name.
   std::string interface;
   /// Promiscuous mode flag.
   bool is_promiscuous_mode_enabled;
+  /// MTU size.
+  units::bytes mtu_size;
   /// Destination MAC address, corresponds to Radio Unit MAC address.
   ether::mac_address mac_dst_address;
   /// Source MAC address, corresponds to Distributed Unit MAC address.
@@ -103,15 +100,6 @@ struct ru_ofh_sector_configuration {
 
 /// Radio Unit configuration for the Open Fronthaul implementation.
 struct ru_ofh_configuration {
-  /// Logger.
-  srslog::basic_logger* logger = nullptr;
-  /// Radio Unit timing notifier.
-  ru_timing_notifier* timing_notifier = nullptr;
-  /// Radio Unit received symbol notifier.
-  ru_uplink_plane_rx_symbol_notifier* rx_symbol_notifier = nullptr;
-  /// Realtime timing task executor.
-  task_executor* rt_timing_executor = nullptr;
-
   /// Individual Open Fronthaul sector configurations.
   std::vector<ru_ofh_sector_configuration> sector_configs;
 
@@ -128,6 +116,35 @@ struct ru_ofh_configuration {
 
   /// Indicates if DPDK should be used by the underlying implementation.
   bool uses_dpdk;
+};
+
+/// Radio Unit sector dependencies for the Open Fronthaul implementation.
+struct ru_ofh_sector_dependencies {
+  /// Logger.
+  srslog::basic_logger* logger = nullptr;
+  /// Downlink task executor.
+  task_executor* downlink_executor;
+  /// Receiver task executor.
+  task_executor* receiver_executor = nullptr;
+  /// Transmitter task executor.
+  task_executor* transmitter_executor = nullptr;
+  /// Ethernet gateway.
+  std::unique_ptr<ether::gateway> eth_gateway;
+};
+
+/// Radio Unit dependencies for the Open Fronthaul implementation.
+struct ru_ofh_dependencies {
+  /// Logger.
+  srslog::basic_logger* logger = nullptr;
+  /// Radio Unit timing notifier.
+  ru_timing_notifier* timing_notifier = nullptr;
+  /// Radio Unit received symbol notifier.
+  ru_uplink_plane_rx_symbol_notifier* rx_symbol_notifier = nullptr;
+  /// Realtime timing task executor.
+  task_executor* rt_timing_executor = nullptr;
+
+  /// Individual Open Fronthaul sector dependencies.
+  std::vector<ru_ofh_sector_dependencies> sector_dependencies;
 };
 
 /// Returns true if the given Open Fronthaul configuration is valid, otherwise false.

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -44,6 +44,16 @@ bool resource_grid_reader_impl::is_empty(unsigned port) const
 {
   srsran_assert(port < get_nof_ports(), "Port index {} is out of range (max {})", port, get_nof_ports());
   return is_port_empty(port);
+}
+
+bool resource_grid_reader_impl::is_empty() const
+{
+  for (unsigned i_port = 0, i_port_end = get_nof_ports(); i_port != i_port_end; ++i_port) {
+    if (!is_empty(i_port)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 span<cf_t> resource_grid_reader_impl::get(span<cf_t>       symbols,

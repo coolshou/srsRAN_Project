@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -30,7 +30,7 @@ struct du_cell_config;
 
 namespace srs_du {
 
-struct du_ue;
+class du_ue;
 
 /// Derives Scheduler Cell Configuration from DU Cell Configuration.
 sched_cell_configuration_request_message make_sched_cell_config_req(du_cell_index_t          cell_index,

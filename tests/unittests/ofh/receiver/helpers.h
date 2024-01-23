@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -103,6 +103,12 @@ public:
   {
     grid_written = true;
     nof_prbs_written += symbols.size() / NRE;
+  }
+
+  void put(unsigned port, unsigned l, unsigned k_init, unsigned stride, span<const cf_t> symbols) override
+  {
+    grid_written = true;
+    nof_prbs_written += divide_ceil(symbols.size() * stride, NRE);
   }
 
   /// Returns true if the gris has been written, otherise false.

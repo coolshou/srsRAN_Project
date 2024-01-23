@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,14 +22,9 @@
 
 #pragma once
 
-#include "procedures/ue_context_modification_procedure.h"
-#include "procedures/ue_context_release_procedure.h"
-#include "procedures/ue_context_setup_procedure.h"
 #include "ue_context/f1ap_cu_ue_context.h"
-#include "srsran/adt/slotted_array.h"
 #include "srsran/asn1/f1ap/f1ap.h"
 #include "srsran/f1ap/cu_cp/f1ap_cu.h"
-#include "srsran/ran/nr_cgi.h"
 #include "srsran/support/executors/task_executor.h"
 #include <memory>
 
@@ -58,7 +53,7 @@ public:
   // f1ap ue context manager functions
   async_task<f1ap_ue_context_setup_response>
   handle_ue_context_setup_request(const f1ap_ue_context_setup_request& request,
-                                  bool                                 is_inter_cu_handover = false) override;
+                                  optional<rrc_ue_transfer_context>    rrc_context) override;
 
   async_task<ue_index_t> handle_ue_context_release_command(const f1ap_ue_context_release_command& msg) override;
 

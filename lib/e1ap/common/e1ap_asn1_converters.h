@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -32,6 +32,7 @@
 #include "srsran/e1ap/cu_cp/e1ap_cu_cp_bearer_context_update.h"
 #include "srsran/ran/bcd_helpers.h"
 #include "srsran/ran/qos_prio_level.h"
+#include "srsran/support/error_handling.h"
 #include <string>
 #include <vector>
 

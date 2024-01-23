@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -53,7 +53,7 @@ public:
 
 private:
   struct uci_context {
-    rnti_t                   rnti = INVALID_RNTI;
+    rnti_t                   rnti = rnti_t::INVALID_RNTI;
     csi_report_configuration csi_rep_cfg;
   };
 

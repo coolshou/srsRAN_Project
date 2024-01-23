@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #include "../../../../lib/ofh/receiver/ofh_message_receiver.h"
 #include "../../../../lib/ofh/receiver/ofh_rx_window_checker.h"
+#include "../../../../lib/ofh/receiver/ofh_sequence_id_checker_dummy_impl.h"
 #include "../compression/ofh_iq_decompressor_test_doubles.h"
 #include "srsran/ofh/ofh_factories.h"
 #include <gtest/gtest.h>
@@ -127,7 +128,7 @@ public:
   ofh_message_receiver_fixture() :
     window_checker(srslog::fetch_basic_logger("TEST"), {}, {}), ul_handler(generate_config(), generate_dependencies())
   {
-    window_checker.handle_new_ota_symbol({{1, 0}, 0, 14});
+    window_checker.on_new_symbol({{1, 0}, 0, 14});
   }
 
   message_receiver_config generate_config()
@@ -179,6 +180,8 @@ public:
       ecpri_decoder              = temp.get();
       dependencies.ecpri_decoder = std::move(temp);
     }
+    dependencies.seq_id_checker = std::make_unique<sequence_id_checker_dummy_impl>();
+
     return dependencies;
   }
 };

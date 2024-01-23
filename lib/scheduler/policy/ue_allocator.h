@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -41,6 +41,7 @@ struct ue_pdsch_grant {
   crb_interval      crbs;
   aggregation_level aggr_lvl = aggregation_level::n4;
   sch_mcs_index     mcs;
+  unsigned          nof_layers = 1;
 };
 
 /// Information relative to a UE PUSCH grant.

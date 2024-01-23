@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -120,8 +120,8 @@ struct test_bench {
   // Add a UE to the RNTI table and UE context repository.
   void add_ue(rnti_t rnti, du_ue_index_t du_ue_idx)
   {
-    srsran_assert(not rnti_mng.has_rnti(rnti), "RNTI={:#x} already exists", rnti);
-    srsran_assert(not test_ues.contains(du_ue_idx), "ueId={:#x} already exists", rnti);
+    srsran_assert(not rnti_mng.has_rnti(rnti), "rnti={} already exists", rnti);
+    srsran_assert(not test_ues.contains(du_ue_idx), "ueId={} already exists", rnti);
     rnti_mng.add_ue(rnti, du_ue_idx);
     test_ues.emplace(du_ue_idx);
     test_ues[du_ue_idx].rnti     = rnti;
@@ -212,7 +212,7 @@ private:
   dummy_mac_event_indicator   du_mng_notifier;
   rnti_manager                rnti_mng;
   dummy_sched_ce_info_handler sched_ce_handler;
-  dummy_mac_pcap              pcap;
+  null_mac_pcap               pcap;
   mac_ul_config               cfg{task_exec, ul_exec_mapper, du_mng_notifier, sched_ce_handler, rnti_mng, pcap};
   // This is the RNTI of the UE that appears in the mac_rx_pdu created by send_rx_indication_msg()
   du_cell_index_t        cell_idx;
@@ -254,7 +254,7 @@ TEST(mac_ul_processor, decode_ul_ccch_48bit)
   ul_ccch_msg.slot_rx    = slot_point{0, 1};
   ul_ccch_msg.tc_rnti    = tc_rnti;
   // Remove R/R/LCID header (0x34) from PDU
-  ul_ccch_msg.subpdu.append({0x1e, 0x4f, 0xc0, 0x04, 0xa6, 0x06});
+  ASSERT_TRUE(ul_ccch_msg.subpdu.append({0x1e, 0x4f, 0xc0, 0x04, 0xa6, 0x06}));
 
   // Test if notification sent to DU manager has been received and it is correct.
   ASSERT_TRUE(t_bench.verify_du_ul_ccch_msg(ul_ccch_msg));
@@ -282,7 +282,7 @@ TEST(mac_ul_processor, decode_ul_ccch_64bit)
   ul_ccch_msg.slot_rx    = slot_point{0, 1};
   ul_ccch_msg.tc_rnti    = tc_rnti;
   // Remove R/R/LCID header (0x00) from PDU
-  ul_ccch_msg.subpdu.append({0x1e, 0x4f, 0xc0, 0x04, 0xa6, 0x06, 0x13, 0x54});
+  ASSERT_TRUE(ul_ccch_msg.subpdu.append({0x1e, 0x4f, 0xc0, 0x04, 0xa6, 0x06, 0x13, 0x54}));
 
   // Test if notification sent to DU manager has been received and it is correct.
   ASSERT_TRUE(t_bench.verify_du_ul_ccch_msg(ul_ccch_msg));

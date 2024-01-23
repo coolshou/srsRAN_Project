@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -61,7 +61,7 @@ public:
     /// Time domain allocation within a slot: number of symbols {1, ..., 14}.
     unsigned nof_symbols;
     /// OFDM symbols containing DM-RS: boolean mask.
-    std::array<bool, MAX_NSYMB_PER_SLOT> dmrs_symb_pos;
+    symbol_slot_mask dmrs_symb_pos;
     /// DM-RS configuration type.
     dmrs_type dmrs_config_type;
     /// Number of DM-RS CDM groups without data.

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -91,7 +91,7 @@ public:
   {
     du_cell_cfgs                                       = {config_helpers::make_default_du_cell_config(builder_params)};
     du_cell_cfgs[0].pucch_cfg.f2_params.max_code_rate  = max_pucch_code_rate::dot_35;
-    du_cell_cfgs[0].pucch_cfg.nof_csi_resources        = 2;
+    du_cell_cfgs[0].pucch_cfg.nof_csi_resources        = 4;
     du_cell_cfgs[0].pucch_cfg.nof_sr_resources         = 2;
     du_cell_cfgs[0].pucch_cfg.nof_ue_pucch_f1_res_harq = 3;
     du_cell_cfgs[0].pucch_cfg.nof_ue_pucch_f2_res_harq = 6;
@@ -103,9 +103,6 @@ public:
         du_cell_cfgs[0].pucch_cfg, cell_cfg_msg.ul_cfg_common.init_ul_bwp.generic_params.crbs.length());
     sch->handle_cell_configuration_request(cell_cfg_msg);
 
-    du_cell_cfgs                                      = {config_helpers::make_default_du_cell_config(builder_params)};
-    du_cell_cfgs[0].pucch_cfg.f2_params.max_code_rate = max_pucch_code_rate::dot_35;
-    du_cell_cfgs[0].pucch_cfg.nof_csi_resources       = 4;
     pucch_res_mng.emplace(du_cell_cfgs);
 
     logger.set_context(next_sl_tx.sfn(), next_sl_tx.slot_index());
@@ -207,7 +204,9 @@ public:
           pdu.ue_index = to_du_ue_index(static_cast<unsigned>(ul_grant.pusch_cfg.rnti) - 0x4601);
           pdu.crnti    = ul_grant.pusch_cfg.rnti;
           uci_indication::uci_pdu::uci_pusch_pdu pusch_pdu{};
-          pusch_pdu.harqs.resize(ul_grant.uci->harq_ack_nof_bits, mac_harq_ack_report_status::ack);
+          if (ul_grant.uci.value().harq.has_value()) {
+            pusch_pdu.harqs.resize(ul_grant.uci->harq.value().harq_ack_nof_bits, mac_harq_ack_report_status::ack);
+          }
           pusch_pdu.csi =
               csi_report_data{nullopt,
                               4,

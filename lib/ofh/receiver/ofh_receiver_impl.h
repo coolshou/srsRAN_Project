@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,6 +26,7 @@
 #include "../support/uplink_context_repository.h"
 #include "../support/uplink_cplane_context_repository.h"
 #include "ofh_message_receiver.h"
+#include "ofh_receiver_controller.h"
 #include "ofh_rx_window_checker.h"
 #include "srsran/ofh/receiver/ofh_receiver.h"
 #include "srsran/ofh/receiver/ofh_receiver_configuration.h"
@@ -47,6 +48,8 @@ struct receiver_impl_dependencies {
   std::unique_ptr<data_flow_uplane_uplink_data> data_flow_uplink;
   /// User-Plane uplink PRACH data flow.
   std::unique_ptr<data_flow_uplane_uplink_prach> data_flow_prach;
+  /// Sequence id checker.
+  std::unique_ptr<sequence_id_checker> seq_id_checker;
 };
 
 /// \brief Open Fronthaul receiver.
@@ -61,11 +64,21 @@ public:
   ether::frame_notifier& get_ethernet_frame_notifier() override;
 
   // See interface for documentation.
-  ota_symbol_handler& get_ota_symbol_handler() override;
+  ota_symbol_boundary_notifier& get_ota_symbol_boundary_notifier() override;
+
+  // See interface for documentation.
+  controller& get_controller() override;
+
+  /// Sets the Ethernet receiver for this Open Fronthaul receiver.
+  void set_ethernet_receiver(std::unique_ptr<ether::receiver> eth_rx)
+  {
+    msg_receiver.set_ethernet_receiver(std::move(eth_rx));
+  }
 
 private:
-  rx_window_checker window_checker;
-  message_receiver  msg_receiver;
+  rx_window_checker   window_checker;
+  message_receiver    msg_receiver;
+  receiver_controller ctrl;
 };
 
 } // namespace ofh

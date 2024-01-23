@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -109,7 +109,7 @@ TEST_F(du_processor_test, when_ue_creation_msg_valid_then_ue_added)
 
   // Generate ue_creation message
   ue_index_t                ue_index        = du_processor_obj->get_du_processor_f1ap_interface().get_new_ue_index();
-  cu_cp_ue_creation_message ue_creation_msg = generate_ue_creation_message(ue_index, MIN_CRNTI, 6576);
+  cu_cp_ue_creation_message ue_creation_msg = generate_ue_creation_message(ue_index, rnti_t::MIN_CRNTI, 6576);
 
   // Pass message to DU processor
   ue_creation_complete_message ue_creation_complete_msg = du_processor_obj->handle_ue_creation_request(ue_creation_msg);
@@ -129,7 +129,7 @@ TEST_F(du_processor_test, when_cell_id_invalid_then_ue_creation_fails)
 
   // Generate ue_creation message
   ue_index_t                ue_index        = du_processor_obj->get_du_processor_f1ap_interface().get_new_ue_index();
-  cu_cp_ue_creation_message ue_creation_msg = generate_ue_creation_message(ue_index, MIN_CRNTI, 1);
+  cu_cp_ue_creation_message ue_creation_msg = generate_ue_creation_message(ue_index, rnti_t::MIN_CRNTI, 1);
 
   // Pass message to DU processor
   ue_creation_complete_message ue_creation_complete_msg = du_processor_obj->handle_ue_creation_request(ue_creation_msg);
@@ -147,7 +147,7 @@ TEST_F(du_processor_test, when_ue_exists_then_ue_not_added)
 
   // Generate ue_creation message
   ue_index_t                ue_index        = du_processor_obj->get_du_processor_f1ap_interface().get_new_ue_index();
-  cu_cp_ue_creation_message ue_creation_msg = generate_ue_creation_message(ue_index, MIN_CRNTI, 6576);
+  cu_cp_ue_creation_message ue_creation_msg = generate_ue_creation_message(ue_index, rnti_t::MIN_CRNTI, 6576);
 
   // Pass message to DU processor
   ue_creation_complete_message ue_creation_complete_msg = du_processor_obj->handle_ue_creation_request(ue_creation_msg);
@@ -217,7 +217,7 @@ TEST_F(du_processor_test, when_ue_context_release_command_received_then_ue_delet
 
   // Generate ue_creation message
   ue_index_t                ue_index        = du_processor_obj->get_du_processor_f1ap_interface().get_new_ue_index();
-  cu_cp_ue_creation_message ue_creation_msg = generate_ue_creation_message(ue_index, MIN_CRNTI, 6576);
+  cu_cp_ue_creation_message ue_creation_msg = generate_ue_creation_message(ue_index, rnti_t::MIN_CRNTI, 6576);
 
   // Pass message to DU processor
   ue_creation_complete_message ue_creation_complete_msg = du_processor_obj->handle_ue_creation_request(ue_creation_msg);
@@ -271,7 +271,7 @@ TEST_F(du_processor_test, when_valid_ue_creation_request_received_after_ue_was_r
     srb_creation_message srb1_msg{};
     srb1_msg.ue_index = ue_index;
     srb1_msg.srb_id   = srb_id_t::srb1;
-    srb1_msg.pdcp_cfg = asn1::rrc_nr::pdcp_cfg_s{};
+    srb1_msg.pdcp_cfg = {};
     ue_mng.find_du_ue(ue_index)->get_rrc_ue_srb_notifier().create_srb(srb1_msg);
   }
 

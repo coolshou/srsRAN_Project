@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -70,11 +70,11 @@ cell_config_builder_params_extended::cell_config_builder_params_extended(const c
     }
     optional<band_helper::ssb_coreset0_freq_location> ssb_freq_loc;
     if (coreset0_index.has_value()) {
-      ssb_freq_loc = band_helper::get_ssb_coreset0_freq_location(
+      ssb_freq_loc = band_helper::get_ssb_coreset0_freq_location_for_cset0_idx(
           dl_arfcn, *band, cell_nof_crbs, scs_common, ssb_scs, search_space0_index, coreset0_index.value());
     } else {
       ssb_freq_loc = band_helper::get_ssb_coreset0_freq_location(
-          dl_arfcn, *band, cell_nof_crbs, scs_common, ssb_scs, search_space0_index);
+          dl_arfcn, *band, cell_nof_crbs, scs_common, ssb_scs, search_space0_index, max_coreset0_duration);
     }
     if (!ssb_freq_loc.has_value()) {
       report_error("Unable to derive a valid SSB pointA and k_SSB for cell id ({}).\n", pci);
@@ -171,10 +171,10 @@ srsran::config_helpers::make_default_coreset_config(const cell_config_builder_pa
   const unsigned       coreset_nof_resources = params.cell_nof_crbs / pdcch_constants::NOF_RB_PER_FREQ_RESOURCE;
   freq_resources.fill(0, coreset_nof_resources, true);
   cfg.set_freq_domain_resources(freq_resources);
-  // Number of symbols equal to max(CORESET#0, 2).
-  const pdcch_type0_css_coreset_description desc =
-      pdcch_type0_css_coreset_get(*params.band, params.scs_common, params.scs_common, *params.coreset0_index, 0);
-  cfg.duration             = std::max(2U, static_cast<unsigned>(desc.nof_symb_coreset));
+  // Number of symbols equal to CORESET#0 duration.
+  const pdcch_type0_css_coreset_description desc = pdcch_type0_css_coreset_get(
+      *params.band, params.ssb_scs, params.scs_common, *params.coreset0_index, params.k_ssb->value());
+  cfg.duration             = desc.nof_symb_coreset;
   cfg.precoder_granurality = coreset_configuration::precoder_granularity_type::same_as_reg_bundle;
   return cfg;
 }
@@ -274,17 +274,16 @@ srsran::config_helpers::make_default_dl_config_common(const cell_config_builder_
   cfg.init_dl_bwp.pdcch_common.coreset0.emplace(make_default_coreset0_config(params));
   cfg.init_dl_bwp.pdcch_common.search_spaces.push_back(make_default_search_space_zero_config(params));
   cfg.init_dl_bwp.pdcch_common.search_spaces.push_back(make_default_common_search_space_config(params));
-  cfg.init_dl_bwp.pdcch_common.sib1_search_space_id     = to_search_space_id(0);
-  cfg.init_dl_bwp.pdcch_common.other_si_search_space_id = MAX_NOF_SEARCH_SPACES;
-  cfg.init_dl_bwp.pdcch_common.paging_search_space_id   = to_search_space_id(1);
-  cfg.init_dl_bwp.pdcch_common.ra_search_space_id       = to_search_space_id(1);
-  cfg.init_dl_bwp.pdsch_common.pdsch_td_alloc_list      = make_pdsch_time_domain_resource(
+  cfg.init_dl_bwp.pdcch_common.sib1_search_space_id   = to_search_space_id(0);
+  cfg.init_dl_bwp.pdcch_common.paging_search_space_id = to_search_space_id(1);
+  cfg.init_dl_bwp.pdcch_common.ra_search_space_id     = to_search_space_id(1);
+  cfg.init_dl_bwp.pdsch_common.pdsch_td_alloc_list    = make_pdsch_time_domain_resource(
       params.search_space0_index,
       cfg.init_dl_bwp.pdcch_common,
-      nullopt,
+      make_ue_dedicated_pdcch_config(params),
       band_helper::get_duplex_mode(cfg.freq_info_dl.freq_band_list.back().band) == duplex_mode::TDD
-               ? *params.tdd_ul_dl_cfg_common
-               : optional<tdd_ul_dl_config_common>{});
+             ? *params.tdd_ul_dl_cfg_common
+             : optional<tdd_ul_dl_config_common>{});
 
   // Configure PCCH.
   cfg.pcch_cfg.default_paging_cycle = paging_cycle::rf128;
@@ -615,12 +614,14 @@ uplink_config srsran::config_helpers::make_default_ue_uplink_config(const cell_c
 
   // >>> SR Resources.
   // Use 40msec SR period by default.
-  const unsigned sr_period = get_nof_slots_per_subframe(params.scs_common) * 40;
+  const unsigned           sr_period = get_nof_slots_per_subframe(params.scs_common) * 40;
+  const optional<unsigned> sr_offset =
+      params.tdd_ul_dl_cfg_common.has_value() ? find_next_tdd_full_ul_slot(params.tdd_ul_dl_cfg_common.value()) : 0;
   pucch_cfg.sr_res_list.push_back(
       scheduling_request_resource_config{.sr_res_id    = 1,
                                          .sr_id        = uint_to_sched_req_id(0),
                                          .period       = (sr_periodicity)sr_period,
-                                         .offset       = 0,
+                                         .offset       = *sr_offset,
                                          .pucch_res_id = (unsigned)pucch_cfg.pucch_res_list.size() - 1U});
 
   pucch_cfg.format_1_common_param.emplace();
@@ -717,15 +718,9 @@ pdsch_config srsran::config_helpers::make_default_pdsch_config(const cell_config
   return pdsch_cfg;
 }
 
-serving_cell_config
-srsran::config_helpers::create_default_initial_ue_serving_cell_config(const cell_config_builder_params_extended& params)
+pdcch_config srsran::config_helpers::make_ue_dedicated_pdcch_config(const cell_config_builder_params_extended& params)
 {
-  serving_cell_config serv_cell;
-  serv_cell.cell_index = to_du_cell_index(0);
-
-  // > PDCCH-Config.
-  serv_cell.init_dl_bwp.pdcch_cfg.emplace();
-  pdcch_config& pdcch_cfg = serv_cell.init_dl_bwp.pdcch_cfg.value();
+  pdcch_config pdcch_cfg{};
   // >> Add CORESET#1.
   pdcch_cfg.coresets.push_back(make_default_coreset_config(params));
   pdcch_cfg.coresets[0].id = to_coreset_id(1);
@@ -733,6 +728,18 @@ srsran::config_helpers::create_default_initial_ue_serving_cell_config(const cell
   pdcch_cfg.search_spaces.push_back(make_default_ue_search_space_config());
   pdcch_cfg.search_spaces[0].set_non_ss0_nof_candidates(
       {0, 0, compute_max_nof_candidates(aggregation_level::n4, pdcch_cfg.coresets[0]), 0, 0});
+
+  return pdcch_cfg;
+}
+
+serving_cell_config
+srsran::config_helpers::create_default_initial_ue_serving_cell_config(const cell_config_builder_params_extended& params)
+{
+  serving_cell_config serv_cell;
+  serv_cell.cell_index = to_du_cell_index(0);
+
+  // > PDCCH-Config.
+  serv_cell.init_dl_bwp.pdcch_cfg.emplace(make_ue_dedicated_pdcch_config(params));
 
   // > PDSCH-Config.
   serv_cell.init_dl_bwp.pdsch_cfg = make_default_pdsch_config(params);
@@ -801,109 +808,91 @@ srsran::config_helpers::make_pdsch_time_domain_resource(uint8_t                 
   }
   std::set<ofdm_symbol_range> pdsch_symbols;
 
+  // Compute the maximum duration configured CORESETs can occupy.
+  uint8_t max_coreset_duration = 0;
+  if (coreset0.has_value() and coreset0->duration > max_coreset_duration) {
+    max_coreset_duration = coreset0->duration;
+  }
+  if (common_coreset.has_value() and common_coreset->duration > max_coreset_duration) {
+    max_coreset_duration = common_coreset->duration;
+  }
+  if (ded_pdcch_cfg.has_value()) {
+    for (const coreset_configuration& cs_cfg : ded_pdcch_cfg->coresets) {
+      if (cs_cfg.duration > max_coreset_duration) {
+        max_coreset_duration = cs_cfg.duration;
+      }
+    }
+  }
+
   // See TS 38.214, Table 5.1.2.1-1: Valid S and L combinations.
   static const unsigned pdsch_mapping_typeA_min_L_value = 3;
 
   // TODO: Consider SearchSpace periodicity while generating PDSCH OFDM symbol range. If there is no PDCCH, there is no
   //  PDSCH since we dont support k0 != 0 yet.
 
-  // NOTE1: Number of DL PDSCH symbols must be atleast greater than SearchSpace monitoring symbol index + CORESET
-  // duration for PDSCH allocation in partial slot. Otherwise, it can be used only for UL PDCCH allocations.
+  // NOTE1: Number of DL PDSCH symbols must be at least greater than SearchSpace monitoring symbol index + maximum
+  // CORESET duration for PDSCH allocation in partial slot. Otherwise, it can be used only for UL PDCCH allocations.
   // NOTE2: We don't support multiple monitoring occasions in a slot belonging to a SearchSpace.
   // NOTE3: It is assumed that a validator has ensured that a CORESET exists corresponding to the CORESET Id set in
   // SearchSpace configuration.
-  optional<unsigned> cs_duration;
-  unsigned           ss_start_symbol_idx;
+  unsigned ss_start_symbol_idx;
   // SearchSpaces in Common PDCCH configuration.
   for (const search_space_configuration& ss_cfg : common_pdcch_cfg.search_spaces) {
-    cs_duration         = {};
     ss_start_symbol_idx = 0;
     if (coreset0.has_value()) {
       if (ss_cfg.is_search_space0() and ss_cfg.get_coreset_id() == coreset0->id) {
-        cs_duration = coreset0->duration;
         // Fetch SearchSpace#0 configuration.
         const pdcch_type0_css_occasion_pattern1_description ss0_occasion =
             pdcch_type0_css_occasions_get_pattern1(pdcch_type0_css_occasion_pattern1_configuration{
-                .is_fr2 = false, .ss_zero_index = ss0_idx, .nof_symb_coreset = cs_duration.value()});
+                .is_fr2 = false, .ss_zero_index = ss0_idx, .nof_symb_coreset = coreset0->duration});
         // Consider the starting index of last PDCCH monitoring occasion to account for all SSB beams.
         ss_start_symbol_idx = *std::max_element(ss0_occasion.start_symbol.begin(), ss0_occasion.start_symbol.end());
       } else if (not ss_cfg.is_search_space0() and ss_cfg.get_coreset_id() == coreset0->id) {
-        cs_duration         = coreset0->duration;
         ss_start_symbol_idx = ss_cfg.get_first_symbol_index();
       }
     }
     if (common_coreset.has_value()) {
-      if (ss_cfg.is_search_space0() and ss_cfg.get_coreset_id() == common_coreset->id) {
-        cs_duration = common_coreset->duration;
-        // Fetch SearchSpace#0 configuration.
-        const pdcch_type0_css_occasion_pattern1_description ss0_occasion =
-            pdcch_type0_css_occasions_get_pattern1(pdcch_type0_css_occasion_pattern1_configuration{
-                .is_fr2 = false, .ss_zero_index = ss0_idx, .nof_symb_coreset = cs_duration.value()});
-        // Consider the starting index of last PDCCH monitoring occasion to account for all SSB beams.
-        ss_start_symbol_idx = *std::max_element(ss0_occasion.start_symbol.begin(), ss0_occasion.start_symbol.end());
-      } else if (not ss_cfg.is_search_space0() and ss_cfg.get_coreset_id() == common_coreset->id) {
-        cs_duration         = common_coreset->duration;
+      if (not ss_cfg.is_search_space0() and ss_cfg.get_coreset_id() == common_coreset->id) {
         ss_start_symbol_idx = ss_cfg.get_first_symbol_index();
       }
     }
 
     // For slots with all DL symbols. i.e. full DL slot.
-    pdsch_symbols.insert({ss_start_symbol_idx + cs_duration.value(), NOF_OFDM_SYM_PER_SLOT_NORMAL_CP});
+    pdsch_symbols.insert({ss_start_symbol_idx + max_coreset_duration, NOF_OFDM_SYM_PER_SLOT_NORMAL_CP});
     // For special slots with DL symbols in TDD pattern 1 if configured.
     if (pattern1_nof_dl_symbols_in_special_slot > 0 and
-        (pattern1_nof_dl_symbols_in_special_slot > (ss_start_symbol_idx + cs_duration.value())) and
-        (pattern1_nof_dl_symbols_in_special_slot - ss_start_symbol_idx - cs_duration.value()) >=
+        (pattern1_nof_dl_symbols_in_special_slot > (ss_start_symbol_idx + max_coreset_duration)) and
+        (pattern1_nof_dl_symbols_in_special_slot - ss_start_symbol_idx - max_coreset_duration) >=
             pdsch_mapping_typeA_min_L_value) {
-      pdsch_symbols.insert({ss_start_symbol_idx + cs_duration.value(), pattern1_nof_dl_symbols_in_special_slot});
+      pdsch_symbols.insert({ss_start_symbol_idx + max_coreset_duration, pattern1_nof_dl_symbols_in_special_slot});
     }
     // For special slots with DL symbols in TDD pattern 2 if configured.
     if (pattern2_nof_dl_symbols_in_special_slot > 0 and
-        (pattern2_nof_dl_symbols_in_special_slot > (ss_start_symbol_idx + cs_duration.value())) and
-        (pattern2_nof_dl_symbols_in_special_slot - ss_start_symbol_idx - cs_duration.value()) >=
+        (pattern2_nof_dl_symbols_in_special_slot > (ss_start_symbol_idx + max_coreset_duration)) and
+        (pattern2_nof_dl_symbols_in_special_slot - ss_start_symbol_idx - max_coreset_duration) >=
             pdsch_mapping_typeA_min_L_value) {
-      pdsch_symbols.insert({ss_start_symbol_idx + cs_duration.value(), pattern2_nof_dl_symbols_in_special_slot});
+      pdsch_symbols.insert({ss_start_symbol_idx + max_coreset_duration, pattern2_nof_dl_symbols_in_special_slot});
     }
   }
   // SearchSpaces in Dedicated PDCCH configuration.
   if (ded_pdcch_cfg.has_value()) {
     for (const search_space_configuration& ss_cfg : ded_pdcch_cfg->search_spaces) {
-      cs_duration         = {};
       ss_start_symbol_idx = ss_cfg.get_first_symbol_index();
-      if (coreset0.has_value()) {
-        if (ss_cfg.get_coreset_id() == coreset0->id) {
-          cs_duration = coreset0->duration;
-        }
-      }
-      if ((not cs_duration.has_value()) and common_coreset.has_value()) {
-        if (ss_cfg.get_coreset_id() == common_coreset->id) {
-          cs_duration = common_coreset->duration;
-        }
-      }
-
-      if (not cs_duration.has_value()) {
-        for (const coreset_configuration& cs_cfg : ded_pdcch_cfg->coresets) {
-          if (ss_cfg.get_coreset_id() == cs_cfg.id) {
-            cs_duration = cs_cfg.duration;
-            break;
-          }
-        }
-      }
-
       // For slots with all DL symbols. i.e. full DL slot.
-      pdsch_symbols.insert({ss_start_symbol_idx + cs_duration.value(), NOF_OFDM_SYM_PER_SLOT_NORMAL_CP});
+      pdsch_symbols.insert({ss_start_symbol_idx + max_coreset_duration, NOF_OFDM_SYM_PER_SLOT_NORMAL_CP});
       // For special slots with DL symbols in TDD pattern 1 if configured.
       if (pattern1_nof_dl_symbols_in_special_slot > 0 and
-          (pattern1_nof_dl_symbols_in_special_slot > (ss_start_symbol_idx + cs_duration.value())) and
-          (pattern1_nof_dl_symbols_in_special_slot - ss_start_symbol_idx - cs_duration.value()) >=
+          (pattern1_nof_dl_symbols_in_special_slot > (ss_start_symbol_idx + max_coreset_duration)) and
+          (pattern1_nof_dl_symbols_in_special_slot - ss_start_symbol_idx - max_coreset_duration) >=
               pdsch_mapping_typeA_min_L_value) {
-        pdsch_symbols.insert({ss_start_symbol_idx + cs_duration.value(), pattern1_nof_dl_symbols_in_special_slot});
+        pdsch_symbols.insert({ss_start_symbol_idx + max_coreset_duration, pattern1_nof_dl_symbols_in_special_slot});
       }
       // For special slots with DL symbols in TDD pattern 2 if configured.
       if (pattern2_nof_dl_symbols_in_special_slot > 0 and
-          (pattern2_nof_dl_symbols_in_special_slot > (ss_start_symbol_idx + cs_duration.value())) and
-          (pattern2_nof_dl_symbols_in_special_slot - ss_start_symbol_idx - cs_duration.value()) >=
+          (pattern2_nof_dl_symbols_in_special_slot > (ss_start_symbol_idx + max_coreset_duration)) and
+          (pattern2_nof_dl_symbols_in_special_slot - ss_start_symbol_idx - max_coreset_duration) >=
               pdsch_mapping_typeA_min_L_value) {
-        pdsch_symbols.insert({ss_start_symbol_idx + cs_duration.value(), pattern2_nof_dl_symbols_in_special_slot});
+        pdsch_symbols.insert({ss_start_symbol_idx + max_coreset_duration, pattern2_nof_dl_symbols_in_special_slot});
       }
     }
   }

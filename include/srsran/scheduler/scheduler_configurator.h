@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -98,6 +98,8 @@ struct sched_cell_configuration_request_message {
 
   /// List of nzp-CSI-RS resources common to all UEs.
   std::vector<nzp_csi_rs_resource> nzp_csi_rs_res_list;
+
+  unsigned ntn_cs_koffset = 0;
 };
 
 /// Parameters provided to the scheduler to configure the resource allocation of a specific UE.

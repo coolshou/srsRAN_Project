@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -74,11 +74,11 @@ static alloc_outcome alloc_dl_ue(const ue&                    u,
   if (not is_retx and not u.has_pending_dl_newtx_bytes()) {
     return alloc_outcome::skip_ue;
   }
-  const slot_point pdcch_slot = res_grid.get_pdcch_slot();
 
   // Prioritize PCell over SCells.
   for (unsigned i = 0; i != u.nof_cells(); ++i) {
-    const ue_cell& ue_cc = u.get_cell(to_ue_cell_index(i));
+    const ue_cell&   ue_cc      = u.get_cell(to_ue_cell_index(i));
+    const slot_point pdcch_slot = res_grid.get_pdcch_slot(ue_cc.cell_index);
 
     // UE is already allocated in the PDCCH for this slot (e.g. we should skip a newTx if a reTx has already been
     // allocated for this UE).
@@ -92,14 +92,14 @@ static alloc_outcome alloc_dl_ue(const ue&                    u,
       if (not is_retx) {
         if (ue_cc.harqs.find_dl_harq_waiting_ack() == nullptr) {
           // A HARQ is already being retransmitted, or all HARQs are waiting for a grant for a retransmission.
-          logger.debug("ue={} rnti={:#x} PDSCH allocation skipped. Cause: No available HARQs for new transmissions.",
+          logger.debug("ue={} rnti={} PDSCH allocation skipped. Cause: No available HARQs for new transmissions.",
                        ue_cc.ue_index,
                        ue_cc.rnti());
         } else {
           // All HARQs are waiting for their respective HARQ-ACK. This may be a symptom of a long RTT for the PDSCH
           // and HARQ-ACK.
           logger.warning(
-              "ue={} rnti={:#x} PDSCH allocation skipped. Cause: All the UE HARQs are busy waiting for their "
+              "ue={} rnti={} PDSCH allocation skipped. Cause: All the UE HARQs are busy waiting for their "
               "respective HARQ-ACK. Check if any HARQ-ACK went missing in the lower layers or is arriving too late to "
               "the scheduler.",
               ue_cc.ue_index,
@@ -117,13 +117,22 @@ static alloc_outcome alloc_dl_ue(const ue&                    u,
       const dci_dl_rnti_config_type                dci_type = param_candidate.dci_dl_rnti_cfg_type();
       const cell_slot_resource_grid&               grid     = res_grid.get_pdsch_grid(ue_cc.cell_index, pdsch.k0);
       const crb_bitmap used_crbs = grid.used_crbs(ss.bwp->dl_common->generic_params.scs, ss.dl_crb_lims, pdsch.symbols);
-      grant_prbs_mcs   mcs_prbs  = is_retx ? grant_prbs_mcs{h.last_alloc_params().tb.front().value().mcs,
+      if (used_crbs.all()) {
+        logger.debug(
+            "ue={} rnti={} PDSCH allocation skipped. Cause: No more RBs available", ue_cc.ue_index, ue_cc.rnti());
+        return alloc_outcome::skip_slot;
+      }
+      grant_prbs_mcs mcs_prbs = is_retx ? grant_prbs_mcs{h.last_alloc_params().tb.front().value().mcs,
                                                          h.last_alloc_params().rbs.type1().length()}
-                                           : ue_cc.required_dl_prbs(pdsch, u.pending_dl_newtx_bytes(), dci_type);
+                                        : ue_cc.required_dl_prbs(pdsch, u.pending_dl_newtx_bytes(), dci_type);
       if (mcs_prbs.n_prbs == 0) {
-        logger.debug("ue={} rnti={:#x} PDSCH allocation skipped. Cause: UE's CQI=0 ", ue_cc.ue_index, ue_cc.rnti());
+        logger.debug("ue={} rnti={} PDSCH allocation skipped. Cause: UE's CQI=0 ", ue_cc.ue_index, ue_cc.rnti());
         return alloc_outcome::skip_ue;
       }
+
+      // In case of retx, ensure the RI does not change.
+      const unsigned nof_dl_layers =
+          is_retx ? h.last_alloc_params().nof_layers : ue_cc.channel_state_manager().get_nof_dl_layers();
 
       // [Implementation-defined] In case of partial slots and nof. PRBs allocated equals to 1 probability of KO is
       // high due to code not being able to cope with interference. So the solution is to increase the PRB allocation
@@ -149,7 +158,8 @@ static alloc_outcome alloc_dl_ue(const ue&                    u,
                                                                                   param_candidate.pdsch_td_res_index(),
                                                                                   ue_grant_crbs,
                                                                                   aggr_lvl,
-                                                                                  mcs_prbs.mcs});
+                                                                                  mcs_prbs.mcs,
+                                                                                  nof_dl_layers});
         // If the allocation failed due to invalid parameters, we continue iteration.
         if (result != alloc_outcome::invalid_params) {
           return result;
@@ -178,11 +188,11 @@ static alloc_outcome alloc_ul_ue(const ue&                    u,
       return alloc_outcome::skip_ue;
     }
   }
-  const slot_point pdcch_slot = res_grid.get_pdcch_slot();
 
   // Prioritize PCell over SCells.
   for (unsigned i = 0; i != u.nof_cells(); ++i) {
-    const ue_cell& ue_cc = u.get_cell(to_ue_cell_index(i));
+    const ue_cell&   ue_cc      = u.get_cell(to_ue_cell_index(i));
+    const slot_point pdcch_slot = res_grid.get_pdcch_slot(ue_cc.cell_index);
 
     // UE is already allocated resources.
     if (res_grid.has_ue_ul_pdcch(ue_cc.cell_index, u.crnti)) {
@@ -196,12 +206,12 @@ static alloc_outcome alloc_ul_ue(const ue&                    u,
       if (not is_retx) {
         if (res_grid.has_ue_ul_pdcch(ue_cc.cell_index, u.crnti) or ue_cc.harqs.find_ul_harq_waiting_ack() == nullptr) {
           // A HARQ is already being retransmitted, or all HARQs are waiting for a grant for a retransmission.
-          logger.debug("ue={} rnti={:#x} PUSCH allocation skipped. Cause: No available HARQs for new transmissions.",
+          logger.debug("ue={} rnti={} PUSCH allocation skipped. Cause: No available HARQs for new transmissions.",
                        ue_cc.ue_index,
                        ue_cc.rnti());
         } else {
           // All HARQs are waiting for their respective CRC. This may be a symptom of a slow PUSCH processing chain.
-          logger.warning("ue={} rnti={:#x} PUSCH allocation skipped. Cause: All the UE HARQs are busy waiting for "
+          logger.warning("ue={} rnti={} PUSCH allocation skipped. Cause: All the UE HARQs are busy waiting for "
                          "their respective CRC result. Check if any CRC PDU went missing in the lower layers or is "
                          "arriving too late to the scheduler.",
                          ue_cc.ue_index,
@@ -225,10 +235,10 @@ static alloc_outcome alloc_ul_ue(const ue&                    u,
       // - [Implementation-defined] k2 value which is less than or equal to minimum value of k1(s) is used.
       // Assumes that first entry in the PUSCH Time Domain resource list contains the k2 value which is less than or
       // equal to minimum value of k1(s).
-      const unsigned                               time_res   = 0;
-      const pusch_time_domain_resource_allocation& pusch_td   = ss->pusch_time_domain_list[time_res];
-      const slot_point                             pusch_slot = pdcch_slot + pusch_td.k2;
-      const unsigned                               start_ul_symbols =
+      const unsigned                               time_res = 0;
+      const pusch_time_domain_resource_allocation& pusch_td = ss->pusch_time_domain_list[time_res];
+      const slot_point pusch_slot                           = pdcch_slot + pusch_td.k2 + cell_cfg_common.ntn_cs_koffset;
+      const unsigned   start_ul_symbols =
           NOF_OFDM_SYM_PER_SLOT_NORMAL_CP - cell_cfg_common.get_nof_ul_symbol_per_slot(pusch_slot);
       // If it is a retx, we need to ensure we use a time_domain_resource with the same number of symbols as used for
       // the first transmission.
@@ -240,13 +250,19 @@ static alloc_outcome alloc_ul_ue(const ue&                    u,
         continue;
       }
 
-      const cell_slot_resource_grid& grid = res_grid.get_pusch_grid(ue_cc.cell_index, pusch_td.k2);
-      if (res_grid.has_ue_ul_grant(ue_cc.cell_index, ue_cc.rnti(), pusch_td.k2)) {
+      const cell_slot_resource_grid& grid =
+          res_grid.get_pusch_grid(ue_cc.cell_index, pusch_td.k2 + cell_cfg_common.ntn_cs_koffset);
+      if (res_grid.has_ue_ul_grant(ue_cc.cell_index, ue_cc.rnti(), pusch_td.k2 + cell_cfg_common.ntn_cs_koffset)) {
         // only one PUSCH per UE per slot.
         continue;
       }
       const prb_bitmap used_crbs =
           grid.used_crbs(ss->bwp->ul_common->generic_params.scs, ss->ul_crb_lims, pusch_td.symbols);
+      if (used_crbs.all()) {
+        logger.debug(
+            "ue={} rnti={} PUSCH allocation skipped. Cause: No more RBs available", ue_cc.ue_index, ue_cc.rnti());
+        return alloc_outcome::skip_slot;
+      }
 
       // Compute the MCS and the number of PRBs, depending on the pending bytes to transmit.
       grant_prbs_mcs mcs_prbs = is_retx
@@ -259,7 +275,7 @@ static alloc_outcome alloc_ul_ue(const ue&                    u,
 
       // NOTE: this should never happen, but it's safe not to proceed if we get n_prbs == 0.
       if (mcs_prbs.n_prbs == 0) {
-        logger.debug("ue={} rnti={:#x} PUSCH allocation skipped. Cause: MCS and PRBs computation resulted in no PRBs "
+        logger.debug("ue={} rnti={} PUSCH allocation skipped. Cause: MCS and PRBs computation resulted in no PRBs "
                      "allocated to this UE",
                      ue_cc.ue_index,
                      ue_cc.rnti());
@@ -285,7 +301,7 @@ static alloc_outcome alloc_ul_ue(const ue&                    u,
       // make the effective code-rate exceed 0.95.
       // TODO: Remove this part and handle the problem with a loop that is general for any configuration.
       if (ue_grant_crbs.length() <= min_allocable_prbs and mcs_prbs.mcs < min_mcs_for_1_prb) {
-        logger.debug("ue={} rnti={:#x} PUSCH allocation skipped. Cause: the scheduler couldn't allocate the min. "
+        logger.debug("ue={} rnti={} PUSCH allocation skipped. Cause: the scheduler couldn't allocate the min. "
                      "number of PRBs={} for MCS={}",
                      ue_cc.ue_index,
                      ue_cc.rnti(),

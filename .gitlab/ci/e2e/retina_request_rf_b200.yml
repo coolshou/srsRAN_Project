@@ -21,19 +21,18 @@
 - name: amarisoft-ue
   type: ue
   image: ${RETINA_REGISTRY_PREFIX}/amarisoftue:${AMARISOFT_VERSION}_${RETINA_VERSION}
-  count: 4
+  nof_ports: 4
   requirements:
     arch: amd64
     cpu:
-      requests: 11
-      limits: 11
+      requests: 10
+      limits: 10
     memory:
       requests: "12G"
       limits: "12G"
     ephemeral-storage:
-      requests: "3G"
-      limit: "3G"
-  mode: grpc
+      requests: "6G"
+      limits: "6G"
   resources:
     - type: sdr
       model: b200
@@ -46,18 +45,19 @@
   requirements:
     arch: amd64
     cpu:
-      requests: 11
-      limits: 11
+      requests: 10
+      limits: 10
     memory:
       requests: "12G"
       limits: "12G"
     ephemeral-storage:
       requests: "9G"
-      limit: "9G"
-  mode: grpc
+      limits: "9G"
   resources:
     - type: sdr
       model: b200
+  environment:
+    - PATH: ${PATH}:/builds/softwareradiosystems/srsgnb/build/apps/gnb
   shared_files:
     - local_path: ../../build/apps/gnb/gnb
       remote_path: /usr/local/bin
@@ -75,6 +75,5 @@
       requests: "4G"
       limits: "4G"
     ephemeral-storage:
-      requests: "3G"
-      limit: "3G"
-  mode: grpc
+      requests: "6G"
+      limits: "6G"

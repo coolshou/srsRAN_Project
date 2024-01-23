@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,6 +25,7 @@
 #include "scoped_frame_buffer.h"
 #include "srsran/phy/support/resource_grid_context.h"
 #include "srsran/phy/support/resource_grid_reader.h"
+#include <thread>
 
 using namespace srsran;
 using namespace ofh;
@@ -67,19 +68,26 @@ static ecpri::iq_data_parameters generate_ecpri_data_parameters(uint16_t seq_id,
   return params;
 }
 
+/// Returns buffer for reading IQ data of a resource grid.
+static span<cf_t> get_temp_iq_data_buffer(unsigned nof_subcarriers)
+{
+  thread_local std::array<cf_t, MAX_NOF_PRBS * NOF_SUBCARRIERS_PER_RB> buffer;
+  return {buffer.data(), nof_subcarriers};
+}
+
 data_flow_uplane_downlink_data_impl::data_flow_uplane_downlink_data_impl(
-    data_flow_uplane_downlink_data_impl_config&& config) :
-  logger(*config.logger),
+    const data_flow_uplane_downlink_data_impl_config&  config,
+    data_flow_uplane_downlink_data_impl_dependencies&& dependencies) :
+  logger(*dependencies.logger),
   ru_nof_prbs(config.ru_nof_prbs),
   vlan_params(config.vlan_params),
   compr_params(config.compr_params),
-  frame_pool_ptr(config.frame_pool),
+  frame_pool_ptr(dependencies.frame_pool),
   frame_pool(*frame_pool_ptr),
-  compressor_sel(std::move(config.compressor_sel)),
-  eth_builder(std::move(config.eth_builder)),
-  ecpri_builder(std::move(config.ecpri_builder)),
-  up_builder(std::move(config.up_builder)),
-  iq_temp_data_buffer(ru_nof_prbs * NOF_SUBCARRIERS_PER_RB, {0, 0})
+  compressor_sel(std::move(dependencies.compressor_sel)),
+  eth_builder(std::move(dependencies.eth_builder)),
+  ecpri_builder(std::move(dependencies.ecpri_builder)),
+  up_builder(std::move(dependencies.up_builder))
 {
   srsran_assert(eth_builder, "Invalid Ethernet VLAN packet builder");
   srsran_assert(ecpri_builder, "Invalid eCPRI packet builder");
@@ -96,17 +104,17 @@ void data_flow_uplane_downlink_data_impl::enqueue_section_type_1_message(
 }
 
 span<const cf_t>
-data_flow_uplane_downlink_data_impl::read_grid(unsigned symbol, unsigned port, const resource_grid_reader& grid)
+data_flow_uplane_downlink_data_impl::read_grid(unsigned symbol, unsigned port, const resource_grid_reader& grid) const
 {
   if (ru_nof_prbs == grid.get_nof_subc()) {
     return grid.get_view(port, symbol);
   }
 
   // The DU grid is copied at the beginning (lowest frequencies) of the RU grid.
-  span<cf_t> grid_data = span<cf_t>(iq_temp_data_buffer).first(grid.get_nof_subc());
+  span<cf_t> grid_data = get_temp_iq_data_buffer(grid.get_nof_subc());
   grid.get(grid_data, port, symbol, 0);
 
-  return iq_temp_data_buffer;
+  return grid_data;
 }
 
 void data_flow_uplane_downlink_data_impl::enqueue_section_type_1_message_symbol_burst(
@@ -139,7 +147,9 @@ void data_flow_uplane_downlink_data_impl::enqueue_section_type_1_message_symbol_
 
       // Skip frame buffers so small that cannot carry one PRB.
       if (fragment_nof_prbs == 0) {
-        logger.warning("Skipping frame buffer as it cannot carry a PRB. Frame buffer size={}", data.size());
+        logger.warning(
+            "Skipped frame buffer as it cannot store data for a single PRB, required buffer size is '{}' bytes",
+            data.size());
 
         continue;
       }
@@ -181,13 +191,14 @@ unsigned data_flow_uplane_downlink_data_impl::enqueue_section_type_1_message_sym
   span<uint8_t> eth_buffer = span<uint8_t>(buffer).first(ether_header_size.value() + bytes_written);
   eth_builder->build_vlan_frame(eth_buffer, vlan_params);
 
-  logger.debug("Creating User-Plane message for downlink at slot={}, symbol_id={}, prbs={}:{}, size={}, eaxc={}",
+  logger.debug("Packing a downlink User-Plane message for slot '{}' and eAxC '{}', symbol_id '{}', PRB range '{}:{}', "
+               "size '{}' bytes",
                params.slot,
+               eaxc,
                params.symbol_id,
                params.start_prb,
                params.nof_prb,
-               eth_buffer.size(),
-               eaxc);
+               eth_buffer.size());
 
   return eth_buffer.size();
 }

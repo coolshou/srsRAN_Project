@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -76,7 +76,7 @@ protected:
 
     // Create RLC TM TX entity
     rlc = std::make_unique<rlc_tx_tm_entity>(
-        du_ue_index_t::MIN_DU_UE_INDEX, srb_id_t::srb0, *tester, *tester, *tester, pcell_worker);
+        0, du_ue_index_t::MIN_DU_UE_INDEX, srb_id_t::srb0, *tester, *tester, *tester, pcell_worker, true, pcap);
   }
 
   void TearDown() override
@@ -88,6 +88,7 @@ protected:
   srslog::basic_logger&                 logger = srslog::fetch_basic_logger("TEST", false);
   manual_task_worker                    pcell_worker{128};
   std::unique_ptr<rlc_tx_tm_test_frame> tester;
+  null_rlc_pcap                         pcap;
   std::unique_ptr<rlc_tx_tm_entity>     rlc;
 };
 
@@ -118,7 +119,9 @@ TEST_F(rlc_tx_tm_test, test_tx)
   byte_buffer_chain pdu;
 
   // read PDU from lower end
-  pdu = rlc->pull_pdu(sdu_size);
+  std::vector<uint8_t> tx_pdu(sdu_size);
+  unsigned             nwritten = rlc->pull_pdu(tx_pdu);
+  pdu                           = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
   EXPECT_EQ(pdu.length(), sdu_size);
   EXPECT_EQ(pdu, sdu_buf);
   pcell_worker.run_pending_tasks();
@@ -127,7 +130,9 @@ TEST_F(rlc_tx_tm_test, test_tx)
   EXPECT_EQ(tester->bsr_count, 1);
 
   // read another PDU from lower end but there is nothing to read
-  pdu = rlc->pull_pdu(sdu_size);
+  tx_pdu.resize(sdu_size);
+  nwritten = rlc->pull_pdu(tx_pdu);
+  pdu      = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
   EXPECT_EQ(pdu.length(), 0);
   pcell_worker.run_pending_tasks();
   EXPECT_EQ(rlc->get_buffer_state(), 0);
@@ -145,7 +150,9 @@ TEST_F(rlc_tx_tm_test, test_tx)
   EXPECT_EQ(tester->bsr_count, 2);
 
   // read PDU from lower end with insufficient space for the whole SDU
-  pdu = rlc->pull_pdu(sdu_size - 1);
+  tx_pdu.resize(sdu_size - 1);
+  nwritten = rlc->pull_pdu(tx_pdu);
+  pdu      = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
   EXPECT_EQ(pdu.length(), 0);
   pcell_worker.run_pending_tasks();
   EXPECT_EQ(rlc->get_buffer_state(), sdu_size);
@@ -165,7 +172,9 @@ TEST_F(rlc_tx_tm_test, test_tx)
   EXPECT_EQ(tester->bsr_count, 3);
 
   // read first PDU from lower end with oversized space
-  pdu = rlc->pull_pdu(3 * sdu_size);
+  tx_pdu.resize(3 * sdu_size);
+  nwritten = rlc->pull_pdu(tx_pdu);
+  pdu      = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
   EXPECT_EQ(pdu.length(), sdu_size);
   EXPECT_EQ(pdu, sdu_buf);
   pcell_worker.run_pending_tasks();
@@ -174,7 +183,9 @@ TEST_F(rlc_tx_tm_test, test_tx)
   EXPECT_EQ(tester->bsr_count, 3);
 
   // read second PDU from lower end with oversized space
-  pdu = rlc->pull_pdu(3 * sdu_size);
+  tx_pdu.resize(3 * sdu_size);
+  nwritten = rlc->pull_pdu(tx_pdu);
+  pdu      = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
   EXPECT_EQ(pdu.length(), sdu_size);
   EXPECT_EQ(pdu, sdu_buf2);
   pcell_worker.run_pending_tasks();
@@ -211,7 +222,9 @@ TEST_F(rlc_tx_tm_test, discard_sdu_increments_discard_failure_counter)
   byte_buffer_chain pdu;
 
   // read PDU from lower end
-  pdu = rlc->pull_pdu(sdu_size);
+  std::vector<uint8_t> tx_pdu(sdu_size);
+  unsigned             nwritten = rlc->pull_pdu(tx_pdu);
+  pdu                           = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
   EXPECT_EQ(pdu.length(), sdu_size);
   EXPECT_EQ(pdu, sdu_buf);
   pcell_worker.run_pending_tasks();
@@ -238,8 +251,10 @@ TEST_F(rlc_tx_tm_test, test_tx_metrics)
   EXPECT_EQ(tester->bsr_count, 1);
 
   // read PDU from lower end
-  byte_buffer_chain pdu;
-  pdu = rlc->pull_pdu(sdu_size - 1);
+  byte_buffer_chain    pdu;
+  std::vector<uint8_t> tx_pdu(sdu_size - 1);
+  unsigned             nwritten = rlc->pull_pdu(tx_pdu);
+  pdu                           = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
 
   rlc_tx_metrics m = rlc->get_metrics();
   ASSERT_EQ(m.mode, rlc_mode::tm);

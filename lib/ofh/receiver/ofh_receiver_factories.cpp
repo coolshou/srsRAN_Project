@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,6 +24,8 @@
 #include "ofh_data_flow_uplane_uplink_data_impl.h"
 #include "ofh_data_flow_uplane_uplink_prach_impl.h"
 #include "ofh_receiver_impl.h"
+#include "ofh_sequence_id_checker_dummy_impl.h"
+#include "ofh_sequence_id_checker_impl.h"
 #include "srsran/ofh/compression/compression_factory.h"
 #include "srsran/ofh/ecpri/ecpri_factories.h"
 #include "srsran/ofh/ethernet/ethernet_factories.h"
@@ -65,7 +67,7 @@ static std::unique_ptr<uplane_message_decoder> create_uplane_decoder(const recei
 static std::unique_ptr<data_flow_uplane_uplink_prach>
 create_uplink_prach_data_flow(const receiver_config&                            receiver_cfg,
                               srslog::basic_logger&                             logger,
-                              uplane_rx_symbol_notifier&                        notifier,
+                              std::shared_ptr<uplane_rx_symbol_notifier>        notifier,
                               std::shared_ptr<prach_context_repository>         prach_context_repo,
                               std::shared_ptr<uplink_cplane_context_repository> ul_cp_context_repo)
 {
@@ -75,7 +77,7 @@ create_uplink_prach_data_flow(const receiver_config&                            
 
   data_flow_uplane_uplink_prach_impl_dependencies dependencies;
   dependencies.logger                     = &logger;
-  dependencies.notifier                   = &notifier;
+  dependencies.notifier                   = notifier;
   dependencies.ul_cplane_context_repo_ptr = ul_cp_context_repo;
   dependencies.prach_context_repo         = prach_context_repo;
   dependencies.uplane_decoder             = create_uplane_decoder(receiver_cfg, logger);
@@ -86,7 +88,7 @@ create_uplink_prach_data_flow(const receiver_config&                            
 static std::unique_ptr<data_flow_uplane_uplink_data>
 create_uplink_data_flow(const receiver_config&                            receiver_cfg,
                         srslog::basic_logger&                             logger,
-                        uplane_rx_symbol_notifier&                        notifier,
+                        std::shared_ptr<uplane_rx_symbol_notifier>        notifier,
                         std::shared_ptr<uplink_context_repository>        ul_slot_context_repo,
                         std::shared_ptr<uplink_cplane_context_repository> ul_cp_context_repo)
 {
@@ -95,7 +97,7 @@ create_uplink_data_flow(const receiver_config&                            receiv
 
   data_flow_uplane_uplink_data_impl_dependencies dependencies;
   dependencies.logger                     = &logger;
-  dependencies.notifier                   = &notifier;
+  dependencies.notifier                   = notifier;
   dependencies.ul_cplane_context_repo_ptr = ul_cp_context_repo;
   dependencies.ul_context_repo            = ul_slot_context_repo;
   dependencies.uplane_decoder             = create_uplane_decoder(receiver_cfg, logger);
@@ -106,7 +108,7 @@ create_uplink_data_flow(const receiver_config&                            receiv
 static receiver_impl_dependencies
 resolve_receiver_dependencies(const receiver_config&                            receiver_cfg,
                               srslog::basic_logger&                             logger,
-                              uplane_rx_symbol_notifier&                        notifier,
+                              std::shared_ptr<uplane_rx_symbol_notifier>        notifier,
                               std::shared_ptr<prach_context_repository>         prach_context_repo,
                               std::shared_ptr<uplink_context_repository>        ul_slot_context_repo,
                               std::shared_ptr<uplink_cplane_context_repository> ul_cp_context_repo)
@@ -128,13 +130,18 @@ resolve_receiver_dependencies(const receiver_config&                            
   dependencies.data_flow_prach =
       create_uplink_prach_data_flow(receiver_cfg, logger, notifier, prach_context_repo, ul_cp_context_repo);
 
+  dependencies.seq_id_checker =
+      (receiver_cfg.ignore_ecpri_seq_id_field)
+          ? static_cast<std::unique_ptr<sequence_id_checker>>(std::make_unique<sequence_id_checker_dummy_impl>())
+          : static_cast<std::unique_ptr<sequence_id_checker>>(std::make_unique<sequence_id_checker_impl>());
+
   return dependencies;
 }
 
-std::unique_ptr<receiver>
+std::unique_ptr<receiver_impl>
 srsran::ofh::create_receiver(const receiver_config&                            receiver_cfg,
                              srslog::basic_logger&                             logger,
-                             uplane_rx_symbol_notifier&                        notifier,
+                             std::shared_ptr<uplane_rx_symbol_notifier>        notifier,
                              std::shared_ptr<prach_context_repository>         prach_context_repo,
                              std::shared_ptr<uplink_context_repository>        ul_slot_context_repo,
                              std::shared_ptr<uplink_cplane_context_repository> ul_cp_context_repo)

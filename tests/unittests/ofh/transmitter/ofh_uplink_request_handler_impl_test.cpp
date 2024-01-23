@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -87,23 +87,16 @@ class resource_grid_dummy : public resource_grid
   class resource_grid_mapper_dummy : public resource_grid_mapper
   {
   public:
-    void map(const re_buffer_reader&        input,
-             const re_pattern_list&         pattern,
-             const precoding_configuration& precoding) override
-    {
-    }
-
-    void map(const re_buffer_reader&        input,
-             const re_pattern_list&         pattern,
-             const re_pattern_list&         reserved,
-             const precoding_configuration& precoding) override
+    void
+    map(const re_buffer_reader& input, const re_pattern& pattern, const precoding_configuration& precoding) override
     {
     }
 
     void map(symbol_buffer&                 buffer,
              const re_pattern_list&         pattern,
              const re_pattern_list&         reserved,
-             const precoding_configuration& precoding) override
+             const precoding_configuration& precoding,
+             unsigned                       re_skip) override
     {
     }
   };
@@ -131,6 +124,7 @@ class resource_grid_dummy : public resource_grid
     }
 
     void put(unsigned port, unsigned l, unsigned k_init, span<const cf_t> symbols) override {}
+    void put(unsigned port, unsigned l, unsigned k_init, unsigned stride, span<const cf_t> symbols) override {}
   };
 
   class resource_grid_reader_dummy : public resource_grid_reader
@@ -140,6 +134,7 @@ class resource_grid_dummy : public resource_grid
     unsigned   get_nof_subc() const override { return 1; }
     unsigned   get_nof_symbols() const override { return 1; }
     bool       is_empty(unsigned port) const override { return true; }
+    bool       is_empty() const override { return true; }
     span<cf_t> get(span<cf_t> symbols, unsigned port, unsigned l, unsigned k_init, span<const bool> mask) const override
     {
       return {};
@@ -184,8 +179,8 @@ protected:
   uplink_request_handler_impl                handler_prach_cp_en;
 
   explicit ofh_uplink_request_handler_impl_fixture() :
-    ul_slot_repo(std::make_shared<uplink_context_repository>(REPOSITORY_SIZE)),
-    ul_prach_repo(std::make_shared<prach_context_repository>(REPOSITORY_SIZE)),
+    ul_slot_repo(std::make_shared<uplink_context_repository>(REPOSITORY_SIZE, srslog::fetch_basic_logger("TEST"))),
+    ul_prach_repo(std::make_shared<prach_context_repository>(REPOSITORY_SIZE, srslog::fetch_basic_logger("TEST"))),
     handler(get_config_prach_cp_disabled(), get_dependencies_prach_cp_disabled()),
     handler_prach_cp_en(get_config_prach_cp_enabled(), get_dependencies_prach_cp_enabled())
   {
@@ -194,6 +189,7 @@ protected:
   uplink_request_handler_impl_dependencies get_dependencies_prach_cp_disabled()
   {
     uplink_request_handler_impl_dependencies dependencies;
+    dependencies.logger        = &srslog::fetch_basic_logger("TEST");
     dependencies.ul_slot_repo  = ul_slot_repo;
     dependencies.ul_prach_repo = ul_prach_repo;
     auto temp                  = std::make_unique<data_flow_cplane_scheduling_commands_spy>();
@@ -206,6 +202,7 @@ protected:
   uplink_request_handler_impl_dependencies get_dependencies_prach_cp_enabled()
   {
     uplink_request_handler_impl_dependencies dependencies;
+    dependencies.logger        = &srslog::fetch_basic_logger("TEST");
     dependencies.ul_slot_repo  = ul_slot_repo;
     dependencies.ul_prach_repo = ul_prach_repo;
     auto temp                  = std::make_unique<data_flow_cplane_scheduling_commands_spy>();

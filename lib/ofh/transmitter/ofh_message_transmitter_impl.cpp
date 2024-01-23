@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -63,7 +63,7 @@ void message_transmitter_impl::transmit_enqueued_messages(slot_symbol_point symb
   }
 
   gateway->send(frames);
-  logger.debug("Sending Ethernet frame burst through gateway of size={} frames, in slot={}, symbol={}, type={}",
+  logger.debug("Sending an Ethernet frame burst of size '{}' frames through gateway in slot '{}_{}' and type '{}'",
                frames.size(),
                slot,
                symbol_index,
@@ -72,7 +72,7 @@ void message_transmitter_impl::transmit_enqueued_messages(slot_symbol_point symb
   pool.eth_frames_sent(context);
 }
 
-void message_transmitter_impl::handle_new_ota_symbol(slot_symbol_point symbol_point)
+void message_transmitter_impl::on_new_symbol(slot_symbol_point symbol_point)
 {
   // Transmit pending DL Control-Plane messages.
   transmit_enqueued_messages(
@@ -108,12 +108,12 @@ void message_transmitter_impl::log_late_messages(slot_symbol_point late_point,
   auto                            frame_buffers = pool.read_frame_buffers(context);
 
   if (!frame_buffers.empty()) {
-    logger.warning("Late Ethernet frames detected in the transmitter queue in slot={}, symbol={}, type={}, "
-                   "direction={}, nof_frames={}",
+    logger.warning("Detected '{}' late Ethernet frames in the transmitter queue for slot '{}', symbol '{}', type '{}', "
+                   "direction '{}'",
+                   frame_buffers.size(),
                    slot,
                    symbol_index,
                    (type == message_type::control_plane) ? "control" : "user",
-                   (direction == data_direction::downlink) ? "downlink" : "uplink",
-                   frame_buffers.size());
+                   (direction == data_direction::downlink) ? "downlink" : "uplink");
   }
 }

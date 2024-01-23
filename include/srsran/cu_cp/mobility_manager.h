@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -30,18 +30,6 @@
 
 namespace srsran {
 namespace srs_cu_cp {
-
-/// Methods used by the mobility manager to initiate handover procedures.
-class mobility_manager_cu_cp_notifier
-{
-public:
-  virtual ~mobility_manager_cu_cp_notifier() = default;
-
-  /// \brief Notify the CU-CP to perform a Inter DU handover
-  /// \param[in] ue_index The UE index to be handed over to the new cell.
-  /// \param[in] target_pci The PCI of the target cell.
-  virtual void on_inter_du_handover_request(ue_index_t ue_index, pci_t target_pci) = 0;
-};
 
 /// Handler for measurement related events.
 class mobility_manager_measurement_handler

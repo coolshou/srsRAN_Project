@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "srsran/asn1/ngap/ngap_ies.h"
 #include "srsran/cu_cp/cu_cp_types.h"
 #include "srsran/ngap/ngap.h"
 #include "srsran/ngap/ngap_types.h"
@@ -88,7 +89,7 @@ const static uint8_t ng_setup_request_packed[] = {
     0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0xf1, 0x10, 0x00, 0x00, 0x00, 0x08, 0x00, 0x15, 0x40, 0x01, 0x60};
 
 /// \brief Generate a dummy NG Setup Request.
-ng_setup_request generate_ng_setup_request();
+ngap_ng_setup_request generate_ng_setup_request();
 
 /// \brief Generate a dummy NG Setup Response.
 ngap_message generate_ng_setup_response();

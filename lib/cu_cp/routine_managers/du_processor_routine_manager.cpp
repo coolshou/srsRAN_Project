@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -110,20 +110,19 @@ async_task<bool> du_processor_routine_manager::start_reestablishment_context_mod
 }
 
 async_task<cu_cp_inter_du_handover_response> du_processor_routine_manager::start_inter_du_handover_routine(
-    const cu_cp_inter_du_handover_request&        command,
-    du_processor_cu_cp_notifier&                  cu_cp_notifier,
-    du_processor_f1ap_ue_context_notifier&        target_du_f1ap_ue_ctxt_notifier,
-    du_processor_rrc_ue_control_message_notifier& rrc_ue_ctrl_notifier,
-    up_resource_manager&                          ue_up_resource_manager)
+    const cu_cp_inter_du_handover_request& command,
+    du_processor_cu_cp_notifier&           cu_cp_notifier,
+    du_processor_f1ap_ue_context_notifier& target_du_f1ap_ue_ctxt_notifier,
+    du_processor_ue_context_notifier&      source_du_processor_notifier,
+    du_processor_ue_context_notifier&      target_du_processor_notifier)
 {
   return launch_async<inter_du_handover_routine>(command,
                                                  cu_cp_notifier,
-                                                 f1ap_ue_ctxt_notifier,
                                                  target_du_f1ap_ue_ctxt_notifier,
                                                  e1ap_ctrl_notifier,
+                                                 source_du_processor_notifier,
+                                                 target_du_processor_notifier,
                                                  ue_manager,
-                                                 rrc_ue_ctrl_notifier,
-                                                 ue_up_resource_manager,
                                                  logger);
 }
 

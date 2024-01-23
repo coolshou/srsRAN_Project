@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,17 +27,13 @@
 #include "f1ap_interface_management_types.h"
 #include "srsran/adt/byte_buffer.h"
 #include "srsran/cu_cp/cu_cp_types.h"
+#include "srsran/cu_cp/cu_cp_ue_messages.h"
 #include "srsran/f1ap/common/f1ap_common.h"
 #include "srsran/ran/lcid.h"
 #include "srsran/support/async/async_task.h"
 
 namespace srsran {
 namespace srs_cu_cp {
-
-struct f1ap_ul_rrc_message {
-  ue_index_t                        ue_index = ue_index_t::invalid;
-  asn1::f1ap::ul_rrc_msg_transfer_s msg;
-};
 
 struct f1ap_dl_rrc_message {
   ue_index_t  ue_index = ue_index_t::invalid;
@@ -74,10 +70,6 @@ struct f1ap_ue_context_release_command {
   optional<srb_id_t> srb_id;
 };
 
-struct f1ap_ue_context_release_complete {
-  asn1::f1ap::ue_context_release_complete_s msg;
-};
-
 /// Handle F1AP UE context management procedures as defined in TS 38.473 section 8.3.
 class f1ap_ue_context_manager
 {
@@ -86,7 +78,8 @@ public:
 
   /// Establish the UE context in F1.
   virtual async_task<f1ap_ue_context_setup_response>
-  handle_ue_context_setup_request(const f1ap_ue_context_setup_request& request, bool is_inter_cu_handover = false) = 0;
+  handle_ue_context_setup_request(const f1ap_ue_context_setup_request& request,
+                                  optional<rrc_ue_transfer_context>    rrc_context) = 0;
 
   /// \brief Initiates the UE Context Release procedure as per TS 38.473 section 8.3.3.
   /// \param[in] msg The UE Context Release message to transmit.
@@ -142,7 +135,7 @@ struct ue_creation_complete_message {
 struct ue_update_message {
   ue_index_t          ue_index = ue_index_t::invalid;
   nr_cell_global_id_t cgi;
-  rnti_t              c_rnti = INVALID_RNTI;
+  rnti_t              c_rnti = rnti_t::INVALID_RNTI;
   byte_buffer         cell_group_cfg;
   byte_buffer         meas_gap_cfg;
   byte_buffer         requested_p_max_fr1;

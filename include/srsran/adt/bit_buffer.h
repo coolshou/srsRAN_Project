@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -220,7 +220,7 @@ public:
   }
 
   /// Creates a read-only bit buffer pointing at the first \c count bits.
-  const bit_buffer first(unsigned count) const
+  bit_buffer first(unsigned count) const
   {
     srsran_assert(size() >= count,
                   "The buffer size (i.e., {}) must be greater than or equal to the number of bits (i.e., {}).",
@@ -242,7 +242,7 @@ public:
   }
 
   /// Creates a read-only bit buffer pointing at the first \c count bits.
-  const bit_buffer last(unsigned count) const
+  bit_buffer last(unsigned count) const
   {
     srsran_assert((size() - count) % bits_per_word == 0, "Only bit word boundaries are supported.");
 

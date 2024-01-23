@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,7 +27,7 @@
 #include "srsran/adt/optional.h"
 #include "srsran/du_high/du_high_executor_mapper.h"
 #include "srsran/mac/mac_cell_result.h"
-#include "srsran/pcap/pcap.h"
+#include "srsran/pcap/dlt_pcap.h"
 #include "srsran/scheduler/scheduler_metrics.h"
 #include "srsran/support/async/manual_event.h"
 #include "srsran/support/executors/task_executor.h"
@@ -116,6 +116,7 @@ public:
 
   task_executor& executor(du_cell_index_t cell_index) override { return *execs[cell_index % execs.size()]; }
   task_executor& slot_ind_executor(du_cell_index_t cell_index) override { return *execs[cell_index % execs.size()]; }
+  task_executor& error_ind_executor(du_cell_index_t cell_index) override { return *execs[cell_index % execs.size()]; }
 
   std::vector<task_executor*> execs;
 };

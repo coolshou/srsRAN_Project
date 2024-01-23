@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "srsran/asn1/f1ap/f1ap_ies.h"
 #include "srsran/f1ap/common/f1ap_ue_id.h"
 #include "srsran/f1ap/cu_cp/f1ap_cu.h"
 #include "srsran/ran/rnti.h"
@@ -53,9 +54,12 @@ f1ap_message generate_ue_context_release_complete(gnb_cu_ue_f1ap_id_t cu_ue_id, 
 f1ap_message generate_ue_context_setup_request(gnb_cu_ue_f1ap_id_t cu_ue_id, gnb_du_ue_f1ap_id_t du_ue_id);
 
 /// \brief Generates dummy F1AP UE CONTEXT SETUP RESPONSE message.
-f1ap_message generate_ue_context_setup_response(gnb_cu_ue_f1ap_id_t cu_ue_id,
-                                                gnb_du_ue_f1ap_id_t du_ue_id,
-                                                rnti_t              crnti = to_rnti(0x4601));
+f1ap_message
+generate_ue_context_setup_response(gnb_cu_ue_f1ap_id_t cu_ue_id,
+                                   gnb_du_ue_f1ap_id_t du_ue_id,
+                                   rnti_t              crnti             = to_rnti(0x4601),
+                                   byte_buffer         cell_group_config = make_byte_buffer(
+                                       "5c02b091117aec701061e000b1c03544cde4a20c7c080408c008241000100000"));
 
 /// \brief Generates dummy F1AP UE CONTEXT SETUP FAILURE message.
 f1ap_message generate_ue_context_setup_failure(gnb_cu_ue_f1ap_id_t cu_ue_id, gnb_du_ue_f1ap_id_t du_ue_id);

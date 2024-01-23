@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #include "ngap_handover_resource_allocation_procedure.h"
 #include "../ngap_asn1_helpers.h"
+#include "srsran/ngap/ngap_message.h"
 
 using namespace srsran;
 using namespace srsran::srs_cu_cp;
@@ -55,7 +56,7 @@ void ngap_handover_resource_allocation_procedure::operator()(coro_context<async_
   if (response.success) {
     // Update UE with AMF UE ID
     ngap_ue_context& ue_ctxt = ue_ctxt_list[response.ue_index];
-    ue_ctxt.ue_ids.amf_ue_id = amf_ue_id;
+    ue_ctxt_list.add_amf_ue_id(ue_ctxt.ue_ids.ran_ue_id, amf_ue_id);
 
     send_handover_request_ack(ue_ctxt.ue_ids.ue_index, ue_ctxt.ue_ids.ran_ue_id);
     logger.debug("ue={}: \"{}\" finalized", response.ue_index, name());

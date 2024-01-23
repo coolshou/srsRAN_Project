@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -139,13 +139,17 @@ rlc_metrics generate_rlc_metrics(uint32_t ue_idx, uint32_t bearer_id)
   rlc_metric.rx.num_lost_pdus      = 1;
   rlc_metric.rx.num_malformed_pdus = 0;
 
-  rlc_metric.tx.num_sdus             = 10;
-  rlc_metric.tx.num_sdu_bytes        = rlc_metric.tx.num_sdus * 1000;
-  rlc_metric.tx.num_dropped_sdus     = 1;
-  rlc_metric.tx.num_discarded_sdus   = 0;
-  rlc_metric.tx.num_discard_failures = 0;
-  rlc_metric.tx.num_pdus             = 10;
-  rlc_metric.tx.num_pdu_bytes        = rlc_metric.tx.num_pdus * 1000;
+  rlc_metric.tx.mode                                        = rlc_mode::am;
+  rlc_metric.tx.num_sdus                                    = 10;
+  rlc_metric.tx.num_sdu_bytes                               = rlc_metric.tx.num_sdus * 1000;
+  rlc_metric.tx.num_dropped_sdus                            = 1;
+  rlc_metric.tx.num_discarded_sdus                          = 0;
+  rlc_metric.tx.num_discard_failures                        = 0;
+  rlc_metric.tx.num_pdus_no_segmentation                    = 8;
+  rlc_metric.tx.num_pdu_bytes_no_segmentation               = rlc_metric.tx.num_pdus_no_segmentation * 1000;
+  rlc_metric.tx.mode_specific.am.num_pdus_with_segmentation = 2;
+  rlc_metric.tx.mode_specific.am.num_pdu_bytes_with_segmentation =
+      rlc_metric.tx.mode_specific.am.num_pdus_with_segmentation * 1000;
 
   return rlc_metric;
 }
@@ -167,7 +171,7 @@ TEST_F(e2_entity_test, e2sm_kpm_generates_ran_func_desc)
       .value.e2setup_resp()
       ->ra_nfunctions_accepted.value[0]
       ->ra_nfunction_id_item()
-      .ran_function_id = 147;
+      .ran_function_id = e2sm_kpm_asn1_packer::ran_func_id;
   test_logger.info("Injecting E2SetupResponse");
   e2->handle_message(e2_setup_response);
 }
@@ -183,7 +187,8 @@ TEST_F(e2sm_kpm_meas_provider_test, e2sm_kpm_ind_three_drb_rlc_metrics)
 
   uint32_t              expected_drop_rate       = 10;
   uint32_t              expected_ul_success_rate = 80;
-  uint32_t              expected_ul_throughput   = 5000;
+  uint32_t              expected_dl_throughput   = 10000 / 1e3 * 8;
+  uint32_t              expected_ul_throughput   = 5000 / 1e3 * 8;
   std::vector<uint32_t> expected_dl_vol;
   std::vector<uint32_t> expected_ul_vol;
 
@@ -220,6 +225,8 @@ TEST_F(e2sm_kpm_meas_provider_test, e2sm_kpm_ind_three_drb_rlc_metrics)
   meas_info_item.meas_type.set_meas_name().from_string("DRB.RlcSduTransmittedVolumeUL");
   subscript_info.meas_info_list.push_back(meas_info_item);
   meas_info_item.meas_type.set_meas_name().from_string("DRB.PacketSuccessRateUlgNBUu");
+  subscript_info.meas_info_list.push_back(meas_info_item);
+  meas_info_item.meas_type.set_meas_name().from_string("DRB.UEThpDl");
   subscript_info.meas_info_list.push_back(meas_info_item);
   meas_info_item.meas_type.set_meas_name().from_string("DRB.UEThpUl");
   subscript_info.meas_info_list.push_back(meas_info_item);
@@ -287,7 +294,10 @@ TEST_F(e2sm_kpm_meas_provider_test, e2sm_kpm_ind_three_drb_rlc_metrics)
         TESTASSERT_EQ(expected_ul_success_rate, meas_record[3].integer());
       }
       if (nof_records >= 5) {
-        TESTASSERT_EQ(expected_ul_throughput, meas_record[4].integer());
+        TESTASSERT_EQ(expected_dl_throughput, meas_record[4].integer());
+      }
+      if (nof_records >= 6) {
+        TESTASSERT_EQ(expected_ul_throughput, meas_record[5].integer());
       }
     }
   }

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -52,9 +52,9 @@ static slot_symbol_point calculate_ofh_slot_symbol_point(slot_symbol_point symbo
 static int calculate_slot_symbol_point_distance(slot_symbol_point lhs, slot_symbol_point rhs)
 {
   srsran_assert(rhs.get_numerology() == lhs.get_numerology(),
-                "Could not calculate distance of 2 slot symbol points with different numerology");
+                "Cannot calculate the distance of two slot symbol points that have different numerologies");
   srsran_assert(rhs.get_nof_symbols() == lhs.get_nof_symbols(),
-                "Could not calculate distance of 2 slot symbol points with different number of symbols");
+                "Cannot calculate the distance of two slot symbol points that have a different number of symbols");
 
   const int nof_symbols_per_slot_wrap = OFH_MAX_NOF_SFN * NOF_SUBFRAMES_PER_FRAME *
                                         get_nof_slots_per_subframe(to_subcarrier_spacing(rhs.get_numerology())) *
@@ -70,7 +70,7 @@ static int calculate_slot_symbol_point_distance(slot_symbol_point lhs, slot_symb
   return a;
 }
 
-void rx_window_checker::handle_new_ota_symbol(slot_symbol_point symbol_point)
+void rx_window_checker::on_new_symbol(slot_symbol_point symbol_point)
 {
   // Build a new slot symbol point that manages that the SFN values in OFH is 1 byte.
   slot_symbol_point ota_symbol_point = calculate_ofh_slot_symbol_point(symbol_point);

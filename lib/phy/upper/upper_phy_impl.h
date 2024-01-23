@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,9 +26,12 @@
 #include "upper_phy_pdu_validators.h"
 #include "upper_phy_rx_results_notifier_wrapper.h"
 #include "upper_phy_rx_symbol_handler_impl.h"
+#include "srsran/instrumentation/traces/du_traces.h"
 #include "srsran/phy/support/prach_buffer_pool.h"
 #include "srsran/phy/support/resource_grid_pool.h"
 #include "srsran/phy/upper/downlink_processor.h"
+#include "srsran/phy/upper/rx_buffer_pool.h"
+#include "srsran/phy/upper/tx_buffer_pool.h"
 #include "srsran/phy/upper/uplink_processor.h"
 #include "srsran/phy/upper/upper_phy.h"
 #include "srsran/phy/upper/upper_phy_timing_handler.h"
@@ -43,6 +46,8 @@ struct upper_phy_impl_config {
   unsigned sector_id;
   /// Uplink bandwidth in resource blocks.
   unsigned ul_bw_rb;
+  /// Number of receive antenna ports.
+  unsigned nof_rx_ports;
   /// Downlink processor pool.
   std::unique_ptr<downlink_processor_pool> dl_processor_pool;
   /// Downlink resource grid pool.
@@ -53,22 +58,26 @@ struct upper_phy_impl_config {
   std::unique_ptr<uplink_processor_pool> ul_processor_pool;
   /// PRACH buffer pool.
   std::unique_ptr<prach_buffer_pool> prach_pool;
-  /// Softbuffer pool.
-  std::unique_ptr<rx_softbuffer_pool> softbuffer_pool;
+  /// Transmit buffer pool.
+  std::unique_ptr<tx_buffer_pool> tx_buf_pool;
+  /// Receive buffer pool.
+  std::unique_ptr<rx_buffer_pool> rx_buf_pool;
   /// Symbol request notifier.
   upper_phy_rx_symbol_request_notifier* rx_symbol_request_notifier;
   /// Log level.
   srslog::basic_levels log_level;
   /// Receive symbol printer. Leave empty to disable.
   std::string rx_symbol_printer_filename;
+  /// Receive port the symbols are dumped from. Leave emtpy for all ports.
+  optional<unsigned> rx_symbol_printer_port;
+  /// Boolean flag for dumping PRACH symbols when set to true.
+  bool rx_symbol_printer_prach;
   /// Number of slots supported by the uplink PDU repository.
   size_t nof_slots_ul_pdu_repository;
   /// Downlink PDU validator.
   std::unique_ptr<downlink_pdu_validator> dl_pdu_validator;
   /// Uplink PDU validator.
   std::unique_ptr<uplink_pdu_validator> ul_pdu_validator;
-  /// Executor for handling full slot boundary event.
-  task_executor* timing_handler_executor = nullptr;
 };
 
 /// \brief Implementation of the upper PHY interface.
@@ -80,16 +89,9 @@ class upper_phy_impl : public upper_phy
   class upper_phy_timing_handler_impl : public upper_phy_timing_handler
   {
     std::reference_wrapper<upper_phy_timing_notifier> notifier;
-    rx_softbuffer_pool&                               softbuffer_pool;
-    task_executor&                                    executor;
 
   public:
-    upper_phy_timing_handler_impl(upper_phy_timing_notifier& notifier_,
-                                  rx_softbuffer_pool&        softbuffer_pool_,
-                                  task_executor*             executor_) :
-      notifier(notifier_), softbuffer_pool(softbuffer_pool_), executor(*executor_)
-    {
-    }
+    upper_phy_timing_handler_impl(upper_phy_timing_notifier& notifier_) : notifier(notifier_) {}
 
     // See interface for documentation.
     void handle_tti_boundary(const upper_phy_timing_context& context) override
@@ -102,13 +104,7 @@ class upper_phy_impl : public upper_phy
     void handle_ul_half_slot_boundary(const upper_phy_timing_context& context) override {}
 
     // See interface for documentation.
-    void handle_ul_full_slot_boundary(const upper_phy_timing_context& context) override
-    {
-      executor.execute([this, context]() {
-        // Advance the timing in the softbuffer pool.
-        softbuffer_pool.run_slot(context.slot);
-      });
-    }
+    void handle_ul_full_slot_boundary(const upper_phy_timing_context& context) override {}
 
     void set_upper_phy_notifier(upper_phy_timing_notifier& n) { notifier = std::ref(n); }
   };
@@ -128,6 +124,9 @@ public:
 
   // See interface for documentation.
   resource_grid_pool& get_downlink_resource_grid_pool() override;
+
+  // See interface for documentation.
+  tx_buffer_pool& get_tx_buffer_pool() override;
 
   // See interface for documentation.
   resource_grid_pool& get_uplink_resource_grid_pool() override;
@@ -165,8 +164,10 @@ private:
   std::unique_ptr<uplink_processor_pool> ul_processor_pool;
   /// PRACH buffer pool.
   std::unique_ptr<prach_buffer_pool> prach_pool;
-  /// Softbuffer pool.
-  std::unique_ptr<rx_softbuffer_pool> softbuffer_pool;
+  /// Transmit buffer pool.
+  std::unique_ptr<tx_buffer_pool> tx_buf_pool;
+  /// Receive buffer pool.
+  std::unique_ptr<rx_buffer_pool> rx_buf_pool;
   /// Downlink processor PDUs validator.
   std::unique_ptr<downlink_pdu_validator> dl_pdu_validator;
   /// Uplink processor PDUs validator.

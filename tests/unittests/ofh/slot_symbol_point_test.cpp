@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -20,7 +20,7 @@
  *
  */
 
-#include "srsran/ofh/slot_symbol_point.h"
+#include "srsran/ofh/timing/slot_symbol_point.h"
 #include <gtest/gtest.h>
 
 using namespace srsran;

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,11 +22,11 @@
 
 #pragma once
 
-#include "../converters/mac_config_helpers.h"
 #include "../du_ue/du_ue.h"
 #include "../du_ue/du_ue_manager_repository.h"
 #include "procedure_logger.h"
 #include "srsran/du_manager/du_manager_params.h"
+#include "srsran/mac/config/mac_config_helpers.h"
 #include "srsran/mac/mac.h"
 #include "srsran/support/async/async_task.h"
 

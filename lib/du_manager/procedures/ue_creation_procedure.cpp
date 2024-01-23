@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -30,90 +30,6 @@
 using namespace srsran;
 using namespace srsran::srs_du;
 
-namespace {
-
-/// \brief Adapter used by the MAC and RLC to notify the DU manager of a Radio Link Failure.
-class du_ue_rlf_notification_adapter final : public du_ue_rlf_handler
-{
-public:
-  du_ue_rlf_notification_adapter(du_ue_index_t             ue_index_,
-                                 std::chrono::milliseconds release_timeout_,
-                                 unique_timer              release_request_timer,
-                                 du_ue_manager_repository& du_ue_mng_) :
-    ue_index(ue_index_),
-    release_timeout(release_timeout_),
-    rel_timer(std::move(release_request_timer)),
-    du_ue_mng(du_ue_mng_),
-    logger(srslog::fetch_basic_logger("DU-MNG"))
-  {
-  }
-
-  // Called by DU manager to disconnect the adapter during UE removal.
-  void disconnect() override
-  {
-    std::lock_guard<std::mutex> lock(timer_mutex);
-    rel_timer.reset();
-  }
-
-  void on_rlf_detected() override { start_rlf_timer(rlf_cause::max_mac_kos_reached); }
-  void on_crnti_ce_received() override
-  {
-    bool timer_was_running = false;
-    {
-      std::lock_guard<std::mutex> lock(timer_mutex);
-      timer_was_running = rel_timer.is_running();
-      rel_timer.stop();
-    }
-    if (timer_was_running) {
-      logger.info("ue={}: RLF timer reset. Cause: C-RNTI CE was received for the UE", ue_index);
-    }
-  }
-
-  void on_protocol_failure() override { start_rlf_timer(rlf_cause::rlc_protocol_failure); }
-  void on_max_retx() override { start_rlf_timer(rlf_cause::max_rlc_retxs_reached); }
-
-private:
-  void start_rlf_timer(rlf_cause cause)
-  {
-    bool rlf_timer_start = false;
-    {
-      std::lock_guard<std::mutex> lock(timer_mutex);
-      if (is_connected_nolock() and not rel_timer.is_running()) {
-        rel_timer.set(release_timeout, [this, cause](timer_id_t tid) { trigger_ue_release(cause); });
-        rel_timer.run();
-        rlf_timer_start = true;
-      }
-    }
-    if (rlf_timer_start) {
-      logger.info("ue={}: RLF detected. Timer of {} msec to release UE started...", ue_index, release_timeout.count());
-    }
-  }
-
-  void trigger_ue_release(rlf_cause cause)
-  {
-    // Trigger UE release in the upper layers.
-    du_ue_mng.handle_rlf_ue_release(ue_index, cause);
-
-    // Release timer so no new RLF is triggered for the same UE, after is scheduled for release.
-    disconnect();
-
-    logger.info("ue={}: RLF timer expired. Requesting a UE release...", ue_index);
-  }
-
-  bool is_connected_nolock() const { return rel_timer.is_valid(); }
-
-  const du_ue_index_t             ue_index;
-  const std::chrono::milliseconds release_timeout;
-  unique_timer                    rel_timer;
-  du_ue_manager_repository&       du_ue_mng;
-  srslog::basic_logger&           logger;
-
-  // This class is accessed directly from the MAC, so potential race conditions apply when accessing the \c rel_timer.
-  std::mutex timer_mutex;
-};
-
-} // namespace
-
 ue_creation_procedure::ue_creation_procedure(const du_ue_creation_request& req_,
                                              du_ue_manager_repository&     ue_mng_,
                                              const du_manager_params&      du_params_,
@@ -135,7 +51,7 @@ void ue_creation_procedure::operator()(coro_context<async_task<void>>& ctx)
   // > Check if UE context was created in the DU manager.
   ue_ctx = create_du_ue_context();
   if (ue_ctx == nullptr) {
-    proc_logger.log_proc_failure("UE context not created because the RNTI is duplicated");
+    proc_logger.log_proc_failure("Failed to create DU UE context");
     CORO_AWAIT(clear_ue());
     CORO_EARLY_RETURN();
   }
@@ -149,7 +65,7 @@ void ue_creation_procedure::operator()(coro_context<async_task<void>>& ctx)
   // > Create F1AP UE context.
   f1ap_resp = create_f1ap_ue();
   if (not f1ap_resp.result) {
-    proc_logger.log_proc_failure("Failure to create F1AP UE context");
+    proc_logger.log_proc_failure("Failed to create F1AP UE context");
     CORO_AWAIT(clear_ue());
     CORO_EARLY_RETURN();
   }
@@ -162,8 +78,8 @@ void ue_creation_procedure::operator()(coro_context<async_task<void>>& ctx)
 
   // > Initiate MAC UE creation and await result.
   CORO_AWAIT_VALUE(mac_resp, create_mac_ue());
-  if (mac_resp.allocated_crnti == INVALID_RNTI) {
-    proc_logger.log_proc_failure("Failure to create MAC UE context");
+  if (mac_resp.allocated_crnti == rnti_t::INVALID_RNTI) {
+    proc_logger.log_proc_failure("Failed to create MAC UE context");
     CORO_AWAIT(clear_ue());
     CORO_EARLY_RETURN();
   }
@@ -174,7 +90,7 @@ void ue_creation_procedure::operator()(coro_context<async_task<void>>& ctx)
   // > Start Initial UL RRC Message Transfer by signalling MAC to notify CCCH to upper layers.
   if (not req.ul_ccch_msg.empty()) {
     if (not du_params.mac.ue_cfg.handle_ul_ccch_msg(ue_ctx->ue_index, req.ul_ccch_msg.copy())) {
-      proc_logger.log_proc_failure("Failure to notify CCCH message to upper layers");
+      proc_logger.log_proc_failure("Failed to notify CCCH message to upper layers");
       CORO_AWAIT(clear_ue());
       CORO_EARLY_RETURN();
     }
@@ -192,21 +108,8 @@ du_ue* ue_creation_procedure::create_du_ue_context()
     return nullptr;
   }
 
-  // Create the adapter used by the MAC and RLC to notify the DU manager of a Radio Link Failure.
-  const du_cell_config& pcell_cfg = du_params.ran.cells[req.pcell_index];
-  // Note: Between an RLF being detected and the UE being released, the DU manager will wait for enough time to allow
-  // the UE to perform C-RNTI CE (t310) and RRC re-establishment (t311).
-  std::chrono::milliseconds release_timeout =
-      pcell_cfg.ue_timers_and_constants.t310 + pcell_cfg.ue_timers_and_constants.t311;
-  auto rlf_notifier = std::make_unique<du_ue_rlf_notification_adapter>(
-      req.ue_index,
-      release_timeout,
-      du_params.services.timers.create_unique_timer(du_params.services.du_mng_exec),
-      ue_mng);
-
   // Create the DU UE context.
-  return ue_mng.add_ue(
-      std::make_unique<du_ue>(req.ue_index, req.pcell_index, req.tc_rnti, std::move(rlf_notifier), std::move(ue_res)));
+  return ue_mng.add_ue(du_ue_context(req.ue_index, req.pcell_index, req.tc_rnti), std::move(ue_res));
 }
 
 async_task<void> ue_creation_procedure::clear_ue()
@@ -217,7 +120,7 @@ async_task<void> ue_creation_procedure::clear_ue()
       du_params.f1ap.ue_mng.handle_ue_deletion_request(req.ue_index);
     }
 
-    if (mac_resp.allocated_crnti != INVALID_RNTI) {
+    if (mac_resp.allocated_crnti != rnti_t::INVALID_RNTI) {
       CORO_AWAIT(du_params.mac.ue_cfg.handle_ue_delete_request(
           mac_ue_delete_request{req.pcell_index, req.ue_index, mac_resp.allocated_crnti}));
     }
@@ -254,7 +157,8 @@ bool ue_creation_procedure::setup_du_ue_resources()
   rlc_config tm_rlc_cfg{};
   tm_rlc_cfg.mode = rlc_mode::tm;
   ue_ctx->bearers.add_srb(srb_id_t::srb0, tm_rlc_cfg);
-  ue_ctx->bearers.add_srb(srb_id_t::srb1, ue_ctx->resources->rlc_bearers[0].rlc_cfg);
+  ue_ctx->bearers.add_srb(
+      srb_id_t::srb1, ue_ctx->resources->rlc_bearers[0].rlc_cfg, ue_ctx->resources->rlc_bearers[0].mac_cfg);
 
   return true;
 }
@@ -263,13 +167,23 @@ void ue_creation_procedure::create_rlc_srbs()
 {
   // Create SRB0 RLC entity.
   du_ue_srb& srb0 = ue_ctx->bearers.srbs()[srb_id_t::srb0];
-  srb0.rlc_bearer = create_rlc_entity(make_rlc_entity_creation_message(
-      ue_ctx->ue_index, ue_ctx->pcell_index, srb0, du_params.services, *ue_ctx->rlf_notifier));
+  srb0.rlc_bearer = create_rlc_entity(make_rlc_entity_creation_message(du_params.ran.gnb_du_id,
+                                                                       ue_ctx->ue_index,
+                                                                       ue_ctx->pcell_index,
+                                                                       srb0,
+                                                                       du_params.services,
+                                                                       ue_ctx->get_rlc_rlf_notifier(),
+                                                                       du_params.rlc.pcap_writer));
 
   // Create SRB1 RLC entity.
   du_ue_srb& srb1 = ue_ctx->bearers.srbs()[srb_id_t::srb1];
-  srb1.rlc_bearer = create_rlc_entity(make_rlc_entity_creation_message(
-      ue_ctx->ue_index, ue_ctx->pcell_index, srb1, du_params.services, *ue_ctx->rlf_notifier));
+  srb1.rlc_bearer = create_rlc_entity(make_rlc_entity_creation_message(du_params.ran.gnb_du_id,
+                                                                       ue_ctx->ue_index,
+                                                                       ue_ctx->pcell_index,
+                                                                       srb1,
+                                                                       du_params.services,
+                                                                       ue_ctx->get_rlc_rlf_notifier(),
+                                                                       du_params.rlc.pcap_writer));
 }
 
 async_task<mac_ue_create_response> ue_creation_procedure::create_mac_ue()
@@ -281,7 +195,7 @@ async_task<mac_ue_create_response> ue_creation_procedure::create_mac_ue()
   mac_ue_create_msg.cell_index         = req.pcell_index;
   mac_ue_create_msg.mac_cell_group_cfg = ue_ctx->resources->mcg_cfg;
   mac_ue_create_msg.phy_cell_group_cfg = ue_ctx->resources->pcg_cfg;
-  mac_ue_create_msg.rlf_notifier       = ue_ctx->rlf_notifier.get();
+  mac_ue_create_msg.rlf_notifier       = &ue_ctx->get_mac_rlf_notifier();
   for (du_ue_srb& bearer : ue_ctx->bearers.srbs()) {
     mac_ue_create_msg.bearers.emplace_back();
     mac_logical_channel_config& lc = mac_ue_create_msg.bearers.back();
@@ -327,21 +241,6 @@ f1ap_ue_creation_response ue_creation_procedure::create_f1ap_ue()
   // Section 8.4.1.2.
   cell_group_cfg_s cell_group;
   calculate_cell_group_config_diff(cell_group, {}, *ue_ctx->resources);
-  cell_group.rlc_bearer_to_add_mod_list.resize(1);
-  cell_group.rlc_bearer_to_add_mod_list[0].lc_ch_id        = 1;
-  cell_group.rlc_bearer_to_add_mod_list[0].rlc_cfg_present = true;
-  rlc_cfg_c::am_s_& am                                     = cell_group.rlc_bearer_to_add_mod_list[0].rlc_cfg.set_am();
-  am.ul_am_rlc.sn_field_len_present                        = true;
-  am.ul_am_rlc.sn_field_len.value                          = sn_field_len_am_opts::size12;
-  am.ul_am_rlc.t_poll_retx.value                           = t_poll_retx_opts::ms45;
-  am.ul_am_rlc.poll_pdu.value                              = poll_pdu_opts::infinity;
-  am.ul_am_rlc.poll_byte.value                             = poll_byte_opts::infinity;
-  am.ul_am_rlc.max_retx_thres.value                        = ul_am_rlc_s::max_retx_thres_opts::t8;
-  am.dl_am_rlc.sn_field_len_present                        = true;
-  am.dl_am_rlc.sn_field_len.value                          = sn_field_len_am_opts::size12;
-  am.dl_am_rlc.t_reassembly.value                          = t_reassembly_opts::ms35;
-  am.dl_am_rlc.t_status_prohibit.value                     = t_status_prohibit_opts::ms0;
-  // TODO: Fill Remaining.
 
   {
     asn1::bit_ref     bref{f1ap_msg.du_cu_rrc_container};

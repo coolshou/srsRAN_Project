@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -22,6 +22,10 @@ add_library(srsran_pusch_processor STATIC
         pusch_codeblock_decoder.cpp
         pusch_decoder_impl.cpp
         pusch_demodulator_impl.cpp
+        factories.cpp
         pusch_processor_impl.cpp
+        pusch_decoder_hw_impl.cpp
         ulsch_demultiplex_impl.cpp)
-target_link_libraries(srsran_pusch_processor srsran_upper_phy_support srsran_ran)
+set(SRSAN_PUSCH_LIBS srsran_upper_phy_support srsran_ran)
+
+target_link_libraries(srsran_pusch_processor ${SRSAN_PUSCH_LIBS})

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -69,18 +69,20 @@ protected:
   bool                                                  is_cplane_enabled = std::get<1>(params);
   prach_format_type                                     format            = std::get<0>(params);
 
-  prach_buffer_context                              buffer_context;
-  prach_buffer_dummy                                buffer;
-  unsigned                                          preamble_length;
-  unsigned                                          nof_symbols;
-  message_decoder_results                           results;
-  std::shared_ptr<prach_context_repository>         repo = std::make_shared<prach_context_repository>(1);
-  uplane_rx_symbol_notifier_spy                     notifier;
+  prach_buffer_context                      buffer_context;
+  prach_buffer_dummy                        buffer;
+  unsigned                                  preamble_length;
+  unsigned                                  nof_symbols;
+  message_decoder_results                   results;
+  std::shared_ptr<prach_context_repository> repo =
+      std::make_shared<prach_context_repository>(1, srslog::fetch_basic_logger("TEST"));
+  uplane_rx_symbol_notifier_spy*                    notifier;
   std::shared_ptr<uplink_cplane_context_repository> ul_cplane_context_repo_ptr =
       std::make_shared<uplink_cplane_context_repository>(1);
-  std::shared_ptr<prach_context_repository> prach_context_repo = std::make_shared<prach_context_repository>(1);
-  uplane_message_decoder_spy*               uplane_decoder;
-  data_flow_uplane_uplink_prach_impl        data_flow;
+  std::shared_ptr<prach_context_repository> prach_context_repo =
+      std::make_shared<prach_context_repository>(1, srslog::fetch_basic_logger("TEST"));
+  uplane_message_decoder_spy*        uplane_decoder;
+  data_flow_uplane_uplink_prach_impl data_flow;
 
 public:
   data_flow_uplane_uplink_prach_impl_fixture() :
@@ -92,7 +94,7 @@ public:
   {
     buffer_context.slot             = slot;
     buffer_context.format           = format;
-    buffer_context.port             = 0;
+    buffer_context.ports            = {0};
     buffer_context.nof_td_occasions = 1;
     buffer_context.nof_fd_occasions = 1;
     buffer_context.pusch_scs        = srsran::subcarrier_spacing::kHz30;
@@ -133,9 +135,14 @@ public:
     data_flow_uplane_uplink_prach_impl_dependencies dependencies;
 
     dependencies.logger                     = &srslog::fetch_basic_logger("TEST");
-    dependencies.notifier                   = &notifier;
     dependencies.ul_cplane_context_repo_ptr = ul_cplane_context_repo_ptr;
     dependencies.prach_context_repo         = prach_context_repo;
+
+    {
+      auto temp             = std::make_shared<uplane_rx_symbol_notifier_spy>();
+      notifier              = temp.get();
+      dependencies.notifier = std::move(temp);
+    }
     {
       auto temp                   = std::make_unique<uplane_message_decoder_spy>();
       uplane_decoder              = temp.get();
@@ -178,8 +185,8 @@ TEST_P(data_flow_uplane_uplink_prach_impl_fixture, valid_message_containing_all_
     data_flow.decode_type1_message(eaxc, {});
   }
 
-  ASSERT_FALSE(notifier.has_new_uplink_symbol_function_been_called());
-  ASSERT_TRUE(notifier.has_new_prach_function_been_called());
+  ASSERT_FALSE(notifier->has_new_uplink_symbol_function_been_called());
+  ASSERT_TRUE(notifier->has_new_prach_function_been_called());
 }
 
 TEST_P(data_flow_uplane_uplink_prach_impl_fixture, invalid_filter_index_does_not_write_buffer)
@@ -189,8 +196,8 @@ TEST_P(data_flow_uplane_uplink_prach_impl_fixture, invalid_filter_index_does_not
   uplane_decoder->set_results(deco_results);
   data_flow.decode_type1_message(eaxc, {});
 
-  ASSERT_FALSE(notifier.has_new_uplink_symbol_function_been_called());
-  ASSERT_FALSE(notifier.has_new_prach_function_been_called());
+  ASSERT_FALSE(notifier->has_new_uplink_symbol_function_been_called());
+  ASSERT_FALSE(notifier->has_new_prach_function_been_called());
 }
 
 TEST_P(data_flow_uplane_uplink_prach_impl_fixture, prbs_outside_prahc_range_does_not_notify)
@@ -205,6 +212,6 @@ TEST_P(data_flow_uplane_uplink_prach_impl_fixture, prbs_outside_prahc_range_does
     data_flow.decode_type1_message(eaxc, {});
   }
 
-  ASSERT_FALSE(notifier.has_new_uplink_symbol_function_been_called());
-  ASSERT_FALSE(notifier.has_new_prach_function_been_called());
+  ASSERT_FALSE(notifier->has_new_uplink_symbol_function_been_called());
+  ASSERT_FALSE(notifier->has_new_prach_function_been_called());
 }

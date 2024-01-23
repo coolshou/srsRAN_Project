@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -41,6 +41,10 @@ e2sm_kpm_du_meas_provider_impl::e2sm_kpm_du_meas_provider_impl(srs_du::f1ap_ue_i
       "DRB.PacketSuccessRateUlgNBUu",
       e2sm_kpm_supported_metric_t{
           NO_LABEL, E2_NODE_LEVEL | UE_LEVEL, true, &e2sm_kpm_du_meas_provider_impl::get_drb_ul_success_rate});
+  supported_metrics.emplace(
+      "DRB.UEThpDl",
+      e2sm_kpm_supported_metric_t{
+          NO_LABEL, E2_NODE_LEVEL | UE_LEVEL, true, &e2sm_kpm_du_meas_provider_impl::get_drb_dl_mean_throughput});
   supported_metrics.emplace(
       "DRB.UEThpUl",
       e2sm_kpm_supported_metric_t{
@@ -123,8 +127,34 @@ void e2sm_kpm_du_meas_provider_impl::report_metrics(const rlc_metrics& metrics)
     ue_aggr_rlc_metrics[metrics.ue_index].tx.num_dropped_sdus += metrics.tx.num_dropped_sdus;
     ue_aggr_rlc_metrics[metrics.ue_index].tx.num_discarded_sdus += metrics.tx.num_discarded_sdus;
     ue_aggr_rlc_metrics[metrics.ue_index].tx.num_discard_failures += metrics.tx.num_discard_failures;
-    ue_aggr_rlc_metrics[metrics.ue_index].tx.num_pdus += metrics.tx.num_pdus;
-    ue_aggr_rlc_metrics[metrics.ue_index].tx.num_pdu_bytes += metrics.tx.num_pdu_bytes;
+    ue_aggr_rlc_metrics[metrics.ue_index].tx.num_pdus_no_segmentation += metrics.tx.num_pdus_no_segmentation;
+    ue_aggr_rlc_metrics[metrics.ue_index].tx.num_pdu_bytes_no_segmentation += metrics.tx.num_pdu_bytes_no_segmentation;
+    switch (ue_aggr_rlc_metrics[metrics.ue_index].tx.mode) {
+      case rlc_mode::um_bidir:
+      case rlc_mode::um_unidir_dl:
+        ue_aggr_rlc_metrics[metrics.ue_index].tx.mode_specific.um.num_pdus_with_segmentation +=
+            metrics.tx.mode_specific.um.num_pdus_with_segmentation;
+        ue_aggr_rlc_metrics[metrics.ue_index].tx.mode_specific.um.num_pdu_bytes_with_segmentation +=
+            metrics.tx.mode_specific.um.num_pdu_bytes_with_segmentation;
+        break;
+      case rlc_mode::am:
+        ue_aggr_rlc_metrics[metrics.ue_index].tx.mode_specific.am.num_pdus_with_segmentation +=
+            metrics.tx.mode_specific.am.num_pdus_with_segmentation;
+        ue_aggr_rlc_metrics[metrics.ue_index].tx.mode_specific.am.num_pdu_bytes_with_segmentation +=
+            metrics.tx.mode_specific.am.num_pdu_bytes_with_segmentation;
+        ue_aggr_rlc_metrics[metrics.ue_index].tx.mode_specific.am.num_retx_pdus +=
+            metrics.tx.mode_specific.am.num_retx_pdus;
+        ue_aggr_rlc_metrics[metrics.ue_index].tx.mode_specific.am.num_retx_pdu_bytes +=
+            metrics.tx.mode_specific.am.num_retx_pdu_bytes;
+        ue_aggr_rlc_metrics[metrics.ue_index].tx.mode_specific.am.num_ctrl_pdus +=
+            metrics.tx.mode_specific.am.num_ctrl_pdus;
+        ue_aggr_rlc_metrics[metrics.ue_index].tx.mode_specific.am.num_ctrl_pdu_bytes +=
+            metrics.tx.mode_specific.am.num_ctrl_pdu_bytes;
+        break;
+      default:
+        // nothing to do here
+        break;
+    }
     ue_aggr_rlc_metrics[metrics.ue_index].counter++;
   }
 }
@@ -259,6 +289,75 @@ bool e2sm_kpm_du_meas_provider_impl::get_rsrq(const asn1::e2sm_kpm::label_info_l
   return meas_collected;
 }
 
+float e2sm_kpm_du_meas_provider_impl::bytes_to_kbits(float value)
+{
+  constexpr unsigned nof_bits_per_byte = 8;
+  return (nof_bits_per_byte * value / 1e3);
+}
+
+bool e2sm_kpm_du_meas_provider_impl::get_drb_dl_mean_throughput(
+    const asn1::e2sm_kpm::label_info_list_l          label_info_list,
+    const std::vector<asn1::e2sm_kpm::ueid_c>&       ues,
+    const srsran::optional<asn1::e2sm_kpm::cgi_c>    cell_global_id,
+    std::vector<asn1::e2sm_kpm::meas_record_item_c>& items)
+{
+  bool meas_collected = false;
+  if ((label_info_list.size() > 1 or
+       (label_info_list.size() == 1 and not label_info_list[0].meas_label.no_label_present))) {
+    logger.debug("Metric: DRB.UEThpDl supports only NO_LABEL label.");
+    return meas_collected;
+  }
+  unsigned                     seconds = 1;
+  std::map<uint16_t, unsigned> ue_throughput;
+  if (ue_aggr_rlc_metrics.size() == 0) {
+    return meas_collected;
+  }
+  for (auto& ue : ue_aggr_rlc_metrics) {
+    size_t num_pdu_bytes_with_segmentation;
+    switch (ue.second.tx.mode) {
+      case rlc_mode::um_bidir:
+      case rlc_mode::um_unidir_dl:
+        num_pdu_bytes_with_segmentation = ue.second.tx.mode_specific.um.num_pdu_bytes_with_segmentation;
+        break;
+      case rlc_mode::am:
+        num_pdu_bytes_with_segmentation = ue.second.tx.mode_specific.am.num_pdu_bytes_with_segmentation;
+        break;
+      default:
+        num_pdu_bytes_with_segmentation = 0;
+    }
+    ue_throughput[ue.first] =
+        bytes_to_kbits((ue.second.tx.num_pdu_bytes_no_segmentation + num_pdu_bytes_with_segmentation) /
+                       ue.second.counter) /
+        seconds; // unit is kbps
+  }
+  if (ues.size() == 0) {
+    meas_record_item_c meas_record_item;
+    int                total_throughput = 0;
+    for (auto& ue : ue_throughput) {
+      total_throughput += ue.second;
+    }
+    meas_record_item.set_integer() = total_throughput / ue_throughput.size();
+    items.push_back(meas_record_item);
+    meas_collected = true;
+  }
+
+  for (auto& ue : ues) {
+    meas_record_item_c  meas_record_item;
+    gnb_cu_ue_f1ap_id_t gnb_cu_ue_f1ap_id = int_to_gnb_cu_ue_f1ap_id(ue.gnb_du_ueid().gnb_cu_ue_f1_ap_id);
+    uint32_t            ue_idx            = f1ap_ue_id_provider.get_ue_index(gnb_cu_ue_f1ap_id);
+    if (ue_throughput.count(ue_idx) == 0) {
+      meas_record_item.set_no_value();
+      items.push_back(meas_record_item);
+      meas_collected = true;
+      continue;
+    }
+    meas_record_item.set_integer() = ue_throughput[ue_idx];
+    items.push_back(meas_record_item);
+    meas_collected = true;
+  }
+  return meas_collected;
+}
+
 bool e2sm_kpm_du_meas_provider_impl::get_drb_ul_mean_throughput(
     const asn1::e2sm_kpm::label_info_list_l          label_info_list,
     const std::vector<asn1::e2sm_kpm::ueid_c>&       ues,
@@ -277,7 +376,7 @@ bool e2sm_kpm_du_meas_provider_impl::get_drb_ul_mean_throughput(
     return meas_collected;
   }
   for (auto& ue : ue_aggr_rlc_metrics) {
-    ue_throughput[ue.first] = (ue.second.rx.num_pdu_bytes / ue.second.counter) / seconds;
+    ue_throughput[ue.first] = bytes_to_kbits(ue.second.rx.num_pdu_bytes / ue.second.counter) / seconds; // unit is kbps
   }
   if (ues.size() == 0) {
     meas_record_item_c meas_record_item;

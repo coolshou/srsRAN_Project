@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -35,7 +35,9 @@ static constexpr unsigned MAX_BUFFER_SIZE = 9600;
 void dpdk_receiver_impl::start()
 {
   logger.info("Starting the DPDK ethernet frame receiver");
-  executor.defer([this]() { receive_loop(); });
+  if (not executor.defer([this]() { receive_loop(); })) {
+    report_error("Unable to start the OFH DPDK ethernet frame receiver");
+  }
 }
 
 void dpdk_receiver_impl::stop()
@@ -52,7 +54,10 @@ void dpdk_receiver_impl::receive_loop()
     return;
   }
 
-  executor.defer([this]() { receive_loop(); });
+  // Retry the task deferring when it fails.
+  while (!executor.defer([this]() { receive_loop(); })) {
+    std::this_thread::sleep_for(std::chrono::microseconds(10));
+  }
 }
 
 void dpdk_receiver_impl::receive()

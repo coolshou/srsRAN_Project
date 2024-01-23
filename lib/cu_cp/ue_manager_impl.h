@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -79,10 +79,18 @@ public:
   rrc_ue_task_scheduler& get_task_sched() override { return *task_sched; }
 
   /// \brief Get the RRC UE control message notifier of the UE.
-  du_processor_rrc_ue_control_message_notifier& get_rrc_ue_notifier() override { return *rrc_ue_notifier; }
+  du_processor_rrc_ue_control_message_notifier& get_rrc_ue_notifier() override
+  {
+    srsran_assert(rrc_ue_notifier != nullptr, "ue={}: RRC UE notifier was not set", ue_index);
+    return *rrc_ue_notifier;
+  }
 
   /// \brief Get the RRC UE SRB control notifier of the UE.
-  du_processor_rrc_ue_srb_control_notifier& get_rrc_ue_srb_notifier() override { return *rrc_ue_srb_notifier; }
+  du_processor_rrc_ue_srb_control_notifier& get_rrc_ue_srb_notifier() override
+  {
+    srsran_assert(rrc_ue_srb_notifier != nullptr, "ue={}: RRC UE SRB notifier was not set", ue_index);
+    return *rrc_ue_srb_notifier;
+  }
 
   /// \brief Get the PCI of the UE.
   pci_t get_pci() override { return pci; };
@@ -97,13 +105,13 @@ public:
   du_cell_index_t get_pcell_index() override { return pcell_index; }
 
   /// \brief Update a UE with PCI and/or C-RNTI.
-  void update_du_ue(pci_t pci_ = INVALID_PCI, rnti_t c_rnti_ = INVALID_RNTI) override
+  void update_du_ue(pci_t pci_ = INVALID_PCI, rnti_t c_rnti_ = rnti_t::INVALID_RNTI) override
   {
     if (pci_ != INVALID_PCI) {
       pci = pci_;
     }
 
-    if (c_rnti_ != INVALID_RNTI) {
+    if (c_rnti_ != rnti_t::INVALID_RNTI) {
       c_rnti = c_rnti_;
     }
   }

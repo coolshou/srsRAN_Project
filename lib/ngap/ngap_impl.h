@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -56,7 +56,7 @@ public:
   bool update_ue_index(ue_index_t new_ue_index, ue_index_t old_ue_index) override;
 
   // ngap connection manager functions
-  async_task<ng_setup_response> handle_ng_setup_request(const ng_setup_request& request) override;
+  async_task<ngap_ng_setup_result> handle_ng_setup_request(const ngap_ng_setup_request& request) override;
 
   void handle_initial_ue_message(const cu_cp_initial_ue_message& msg) override;
 
@@ -67,7 +67,7 @@ public:
   void handle_connection_loss() override {}
 
   // ngap control message handler functions
-  void handle_ue_context_release_request(const cu_cp_ue_context_release_request& msg) override;
+  bool handle_ue_context_release_request(const cu_cp_ue_context_release_request& msg) override;
   async_task<ngap_handover_preparation_response>
        handle_handover_preparation_request(const ngap_handover_preparation_request& msg) override;
   void handle_inter_cu_ho_rrc_recfg_complete(const ue_index_t           ue_index,
@@ -124,7 +124,7 @@ private:
 
   /// \brief Notify about the reception of an Handover request message.
   /// \param[in] msg The received handover request message.
-  void handle_ho_request(const asn1::ngap::ho_request_s& msg);
+  void handle_handover_request(const asn1::ngap::ho_request_s& msg);
 
   /// \brief Notify about the reception of an Error Indication message.
   /// \param[in] msg The received Error Indication message.

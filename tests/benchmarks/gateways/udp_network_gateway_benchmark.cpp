@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #include "srsran/gateways/udp_network_gateway_factory.h"
 #include "srsran/srslog/srslog.h"
+#include "srsran/support/executors/manual_task_worker.h"
 #include "srsran/support/io/io_broker_factory.h"
 #include <arpa/inet.h>
 #include <getopt.h>
@@ -114,14 +115,16 @@ private:
   std::chrono::microseconds                      t_min  = std::chrono::microseconds::max();
   std::chrono::microseconds                      t_max  = std::chrono::microseconds::min();
   std::chrono::microseconds                      t_sum  = std::chrono::microseconds::zero();
-  ;
 };
 
 byte_buffer make_tx_byte_buffer(uint32_t length)
 {
   byte_buffer pdu{};
   for (uint32_t i = 0; i < length; ++i) {
-    pdu.append((uint8_t)i);
+    if (not pdu.append((uint8_t)i)) {
+      pdu.clear();
+      break;
+    }
   }
   return pdu;
 }
@@ -170,8 +173,10 @@ int main(int argc, char** argv)
   dummy_network_gateway_data_notifier_with_src_addr gw1_dn{params}, gw2_dn{params};
   std::unique_ptr<udp_network_gateway>              gw1, gw2;
 
-  gw1 = create_udp_network_gateway({gw1_cfg, gw1_dn});
-  gw2 = create_udp_network_gateway({gw2_cfg, gw2_dn});
+  manual_task_worker io_tx_executor{128};
+
+  gw1 = create_udp_network_gateway({gw1_cfg, gw1_dn, io_tx_executor});
+  gw2 = create_udp_network_gateway({gw2_cfg, gw2_dn, io_tx_executor});
 
   gw1->create_and_bind();
   gw2->create_and_bind();
@@ -185,13 +190,14 @@ int main(int argc, char** argv)
 
   sockaddr_storage gw2_addr = to_sockaddr_storage(gw2_cfg.bind_address, gw2_cfg.bind_port);
 
-  byte_buffer pdu = make_tx_byte_buffer(params.pdu_len);
+  byte_buffer pdu     = make_tx_byte_buffer(params.pdu_len);
+  uint32_t    pdu_len = pdu.length();
 
   auto t_start = std::chrono::high_resolution_clock::now();
 
   unsigned nof_pdus = params.nof_pdus;
   for (unsigned n = 0; n < nof_pdus; n++) {
-    gw1->handle_pdu(pdu, gw2_addr);
+    gw1->handle_pdu(std::move(pdu), gw2_addr);
   }
   auto t_end    = std::chrono::high_resolution_clock::now();
   auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_start);
@@ -200,9 +206,9 @@ int main(int argc, char** argv)
   std::this_thread::sleep_for(std::chrono::milliseconds(250));
 
   fmt::print("Tx time: {} us\n", duration.count());
-  fmt::print("Tx data rate: {:.2f} Mbit/s\n", (double)pdu.length() * nof_pdus * 8 * 1e-6 / (duration.count() * 1e-6));
+  fmt::print("Tx data rate: {:.2f} Mbit/s\n", (double)pdu_len * nof_pdus * 8 * 1e-6 / (duration.count() * 1e-6));
   fmt::print("Rx data rate: {:.2f} Mbit/s\n\n",
-             (double)pdu.length() * gw2_dn.get_n_pdus() * 8 * 1e-6 / (duration.count() * 1e-6));
+             (double)pdu_len * gw2_dn.get_n_pdus() * 8 * 1e-6 / (duration.count() * 1e-6));
 
   fmt::print("Tx PDU rate: {:.2f} PDU/s\n", (double)nof_pdus / (duration.count() * 1e-6));
   fmt::print("Rx PDU rate: {:.2f} PDU/s\n\n", (double)gw2_dn.get_n_pdus() / (duration.count() * 1e-6));

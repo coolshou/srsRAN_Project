@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,6 +25,7 @@
 #include "gnb_appconfig.h"
 #include "gnb_os_sched_affinity_manager.h"
 #include "srsran/adt/expected.h"
+#include "srsran/cu_up/cu_up_executor_pool.h"
 #include "srsran/du_high/du_high_executor_mapper.h"
 #include "srsran/support/executors/task_execution_manager.h"
 #include "srsran/support/executors/task_executor.h"
@@ -49,33 +50,44 @@ struct worker_manager {
   /// - e1ap_cu_cp::handle_message calls cu-cp ctrl exec
   /// - e1ap_cu_up::handle_message calls cu-up ue exec
 
-  task_executor*                           cu_cp_exec    = nullptr;
-  task_executor*                           cu_up_exec    = nullptr;
-  task_executor*                           gtpu_pdu_exec = nullptr;
-  std::vector<task_executor*>              lower_phy_tx_exec;
-  std::vector<task_executor*>              lower_phy_rx_exec;
-  std::vector<task_executor*>              lower_phy_dl_exec;
-  std::vector<task_executor*>              lower_phy_ul_exec;
-  std::vector<task_executor*>              lower_prach_exec;
-  std::vector<task_executor*>              upper_pusch_exec;
-  std::vector<task_executor*>              upper_pusch_decoder_exec;
-  std::vector<task_executor*>              upper_pucch_exec;
-  std::vector<task_executor*>              upper_prach_exec;
-  std::vector<task_executor*>              upper_pdsch_exec;
-  task_executor*                           radio_exec      = nullptr;
-  task_executor*                           ru_printer_exec = nullptr;
-  task_executor*                           ru_timing_exec  = nullptr;
-  std::vector<std::vector<task_executor*>> ru_dl_exec;
-  std::vector<task_executor*>              ru_tx_exec;
-  std::vector<task_executor*>              ru_rx_exec;
-  task_executor*                           cu_cp_e2_exec    = nullptr;
-  task_executor*                           cu_up_e2_exec    = nullptr;
-  task_executor*                           metrics_hub_exec = nullptr;
+  task_executor*              cu_cp_exec      = nullptr;
+  task_executor*              cu_up_ctrl_exec = nullptr; ///< CU-UP executor for control
+  task_executor*              cu_up_dl_exec   = nullptr; ///< CU-UP executor for DL data flow
+  task_executor*              cu_up_ul_exec   = nullptr; ///< CU-UP executor for UL data flow
+  std::vector<task_executor*> lower_phy_tx_exec;
+  std::vector<task_executor*> lower_phy_rx_exec;
+  std::vector<task_executor*> lower_phy_dl_exec;
+  std::vector<task_executor*> lower_phy_ul_exec;
+  std::vector<task_executor*> lower_prach_exec;
+  std::vector<task_executor*> upper_pusch_exec;
+  std::vector<task_executor*> upper_pusch_decoder_exec;
+  std::vector<task_executor*> upper_pucch_exec;
+  std::vector<task_executor*> upper_prach_exec;
+  std::vector<task_executor*> upper_pdsch_exec;
+  task_executor*              radio_exec      = nullptr;
+  task_executor*              ru_printer_exec = nullptr;
+  task_executor*              ru_timing_exec  = nullptr;
+  std::vector<task_executor*> ru_dl_exec;
+  std::vector<task_executor*> ru_tx_exec;
+  std::vector<task_executor*> ru_rx_exec;
+  task_executor*              cu_cp_e2_exec    = nullptr;
+  task_executor*              cu_up_e2_exec    = nullptr;
+  task_executor*              metrics_hub_exec = nullptr;
+
+  std::unique_ptr<cu_up_executor_pool> cu_up_exec_mapper;
 
   du_high_executor_mapper& get_du_high_executor_mapper(unsigned du_index);
 
   // Gets the DU-low downlink executors.
   void get_du_low_dl_executors(std::vector<task_executor*>& executors, unsigned sector_id) const;
+
+  /// Get executor based on the name.
+  task_executor* find_executor(const std::string& name) const
+  {
+    auto it = exec_mng.executors().find(name);
+    return it != exec_mng.executors().end() ? it->second : nullptr;
+  }
+  task_executor& get_executor(const std::string& name) const { return *exec_mng.executors().at(name); }
 
 private:
   struct du_high_executor_storage {
@@ -91,17 +103,17 @@ private:
   gnb_os_sched_affinity_manager affinity_mng;
 
   /// Helper method to create workers with non zero priority.
-  void create_prio_worker(const std::string&                                                   name,
-                          unsigned                                                             queue_size,
-                          const std::vector<execution_config_helper::single_worker::executor>& execs,
-                          const os_sched_affinity_bitmask&                                     mask,
+  void create_prio_worker(const std::string&                                    name,
+                          unsigned                                              queue_size,
+                          const std::vector<execution_config_helper::executor>& execs,
+                          const os_sched_affinity_bitmask&                      mask,
                           os_thread_realtime_priority prio = os_thread_realtime_priority::no_realtime());
 
   /// Helper method to create worker pool.
-  void create_worker_pool(const std::string&                                                 name,
-                          unsigned                                                           nof_workers,
-                          unsigned                                                           queue_size,
-                          const std::vector<execution_config_helper::worker_pool::executor>& execs,
+  void create_worker_pool(const std::string&                                    name,
+                          unsigned                                              nof_workers,
+                          unsigned                                              queue_size,
+                          const std::vector<execution_config_helper::executor>& execs,
                           os_thread_realtime_priority           prio      = os_thread_realtime_priority::no_realtime(),
                           span<const os_sched_affinity_bitmask> cpu_masks = {});
 
@@ -112,7 +124,6 @@ private:
   void create_du_low_executors(bool                       is_blocking_mode_active,
                                unsigned                   nof_ul_workers,
                                unsigned                   nof_dl_workers,
-                               unsigned                   nof_pdsch_workers,
                                unsigned                   nof_pusch_decoder_workers,
                                span<const cell_appconfig> cells_cfg,
                                unsigned                   pipeline_depth);

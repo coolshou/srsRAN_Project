@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -55,6 +55,7 @@ set(SOURCES
         scheduler_impl.cpp)
 
 add_library(srsran_sched STATIC ${SOURCES}
+        $<TARGET_OBJECTS:sched_config_manager>
         $<TARGET_OBJECTS:sched_cell>
         $<TARGET_OBJECTS:common_sched>
         $<TARGET_OBJECTS:ue_sched>)

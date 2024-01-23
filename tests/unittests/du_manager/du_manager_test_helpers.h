@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -70,6 +70,7 @@ public:
   explicit dummy_cell_executor_mapper(task_executor& exec_) : exec(exec_) {}
   task_executor& executor(du_cell_index_t cell_index) override { return exec; }
   task_executor& slot_ind_executor(du_cell_index_t cell_index) override { return exec; }
+  task_executor& error_ind_executor(du_cell_index_t cell_index) override { return exec; }
 
   task_executor& exec;
 };
@@ -354,6 +355,7 @@ public:
   f1ap_test_dummy                        f1ap;
   f1u_gateway_dummy                      f1u_gw;
   mac_test_dummy                         mac;
+  null_rlc_pcap                          rlc_pcap;
   du_manager_params                      params;
   dummy_ue_resource_configurator_factory cell_res_alloc;
   srslog::basic_logger&                  logger;

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -47,8 +47,15 @@ static void fill_reserved_re_pattern(pdsch_processor::pdu_t&     proc_pdu,
 static void fill_codewords(pdsch_processor::pdu_t& proc_pdu, const fapi::dl_pdsch_pdu& fapi_pdu)
 {
   for (const auto& cw : fapi_pdu.cws) {
-    proc_pdu.codewords.push_back(
-        pdsch_processor::codeword_description{static_cast<modulation_scheme>(cw.qam_mod_order), cw.rv_index});
+    pdsch_processor::codeword_description codeword_descr;
+    codeword_descr.modulation = static_cast<modulation_scheme>(cw.qam_mod_order);
+    codeword_descr.rv         = cw.rv_index;
+    if (fapi_pdu.context.has_value()) {
+      codeword_descr.new_data = fapi_pdu.context->is_new_data();
+    } else {
+      codeword_descr.new_data = true;
+    }
+    proc_pdu.codewords.push_back(codeword_descr);
   }
 }
 
@@ -192,7 +199,7 @@ void srsran::fapi_adaptor::convert_pdsch_fapi_to_phy(pdsch_processor::pdu_t&    
                                                      const precoding_matrix_repository& pm_repo)
 {
   proc_pdu.slot         = slot_point(fapi_pdu.scs, sfn, slot);
-  proc_pdu.rnti         = fapi_pdu.rnti;
+  proc_pdu.rnti         = to_value(fapi_pdu.rnti);
   proc_pdu.bwp_size_rb  = fapi_pdu.bwp_size;
   proc_pdu.bwp_start_rb = fapi_pdu.bwp_start;
   proc_pdu.cp           = fapi_pdu.cp;

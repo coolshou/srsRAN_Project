@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -63,6 +63,7 @@ option(ENABLE_UHD            "Enable UHD"                               ON)
 option(ENABLE_ZEROMQ         "Enable ZeroMQ"                            OFF)
 option(ENABLE_FFTW           "Enable FFTW"                              ON)
 option(ENABLE_DPDK           "Enable DPDK"                              OFF)
+option(ENABLE_PUSCH_HWACC    "Enable PUSCH hardware-acceleration"       OFF)
 option(ENABLE_EXPORT         "Enable PIC and export libraries"          OFF)
 option(ENABLE_TRX_DRIVER     "Enable Amarisoft TRX driver library"      OFF)
 option(AUTO_DETECT_ISA       "Enable automatic ISA detection"           ON)
@@ -96,6 +97,16 @@ endif ()
 if (ENABLE_EXPORT)
   set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif (ENABLE_EXPORT)
+
+if (ENABLE_PUSCH_HWACC)
+    if (ENABLE_EXPORT)
+        message(FATAL_ERROR "PUSCH Hardware acceleration is not compatible with library export.")
+    endif ()
+    if (NOT ENABLE_DPDK)
+        message(FATAL_ERROR "PUSCH Hardware acceleration requires DPDK.")
+    endif ()
+    message(STATUS "Hardware-acceleration enabled for PUSCH.")
+endif ()
 
 ########################################################################
 # Install Dirs
@@ -254,7 +265,7 @@ if (ENABLE_DPDK)
     set(DPDK_MIN_VERSION "22.11")
     find_package(DPDK ${DPDK_MIN_VERSION})
     if (DPDK_FOUND)
-        include_directories(${DPDK_INCLUDE_DIRS})
+        include_directories(SYSTEM ${DPDK_INCLUDE_DIRS})
     endif (DPDK_FOUND)
 else (ENABLE_DPDK)
     unset(DPDK_FOUND CACHE)

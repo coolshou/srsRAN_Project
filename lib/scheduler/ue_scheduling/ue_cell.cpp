@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -33,48 +33,57 @@ using namespace srsran;
 /// Number of UL HARQs reserved per UE (Implementation-defined)
 constexpr unsigned NOF_UL_HARQS = 16;
 
-ue_cell::ue_cell(du_ue_index_t              ue_index_,
-                 rnti_t                     crnti_val,
-                 const cell_configuration&  cell_cfg_common_,
-                 const serving_cell_config& ue_serv_cell,
-                 ue_harq_timeout_notifier   harq_timeout_notifier) :
+ue_cell::ue_cell(du_ue_index_t                ue_index_,
+                 rnti_t                       crnti_val,
+                 const ue_cell_configuration& ue_cell_cfg_,
+                 ue_harq_timeout_notifier     harq_timeout_notifier) :
   ue_index(ue_index_),
-  cell_index(ue_serv_cell.cell_index),
-  harqs(crnti_val, (unsigned)ue_serv_cell.pdsch_serv_cell_cfg->nof_harq_proc, NOF_UL_HARQS, harq_timeout_notifier),
+  cell_index(ue_cell_cfg_.cell_cfg_common.cell_index),
+  harqs(crnti_val,
+        (unsigned)ue_cell_cfg_.cfg_dedicated().pdsch_serv_cell_cfg->nof_harq_proc,
+        NOF_UL_HARQS,
+        harq_timeout_notifier,
+        ue_cell_cfg_.cell_cfg_common.ntn_cs_koffset),
   crnti_(crnti_val),
-  cell_cfg(cell_cfg_common_),
-  ue_cfg(crnti_val, cell_cfg_common_, ue_serv_cell),
+  cell_cfg(ue_cell_cfg_.cell_cfg_common),
+  ue_cfg(&ue_cell_cfg_),
   expert_cfg(cell_cfg.expert_cfg.ue),
   logger(srslog::fetch_basic_logger("SCHED")),
-  channel_state(cell_cfg.expert_cfg.ue, ue_cfg.get_nof_dl_ports()),
-  ue_mcs_calculator(cell_cfg_common_, channel_state)
+  channel_state(cell_cfg.expert_cfg.ue, ue_cfg->get_nof_dl_ports()),
+  ue_mcs_calculator(ue_cell_cfg_.cell_cfg_common, channel_state)
 {
 }
-
-void ue_cell::handle_reconfiguration_request(const serving_cell_config& new_ue_cell_cfg)
+void ue_cell::deactivate()
 {
-  ue_cfg.reconfigure(new_ue_cell_cfg);
-}
-
-void ue_cell::handle_resource_allocation_reconfiguration_request(const sched_ue_resource_alloc_config& ra_cfg)
-{
-  ue_res_alloc_cfg = ra_cfg;
-}
-
-const dl_harq_process* ue_cell::handle_dl_ack_info(slot_point                 uci_slot,
-                                                   mac_harq_ack_report_status ack_value,
-                                                   unsigned                   harq_bit_idx,
-                                                   optional<float>            pucch_snr)
-{
-  const dl_harq_process* h_dl = harqs.dl_ack_info(uci_slot, ack_value, harq_bit_idx, pucch_snr);
-
-  if (h_dl != nullptr) {
-    // Consider the feedback in the link adaptation controller.
-    ue_mcs_calculator.handle_dl_ack_info(
-        ack_value, h_dl->last_alloc_params().tb[0]->mcs, h_dl->last_alloc_params().tb[0]->mcs_table);
+  // Stop UL HARQ retransmissions.
+  // Note: We do no stop DL retransmissions because we are still relying on DL to send a potential RRC Release.
+  for (unsigned hid = 0; hid != harqs.nof_ul_harqs(); ++hid) {
+    harqs.ul_harq(hid).cancel_harq();
   }
 
-  return h_dl;
+  active = false;
+}
+
+void ue_cell::handle_reconfiguration_request(const ue_cell_configuration& ue_cell_cfg)
+{
+  ue_cfg = &ue_cell_cfg;
+}
+
+dl_harq_process::dl_ack_info_result ue_cell::handle_dl_ack_info(slot_point                 uci_slot,
+                                                                mac_harq_ack_report_status ack_value,
+                                                                unsigned                   harq_bit_idx,
+                                                                optional<float>            pucch_snr)
+{
+  dl_harq_process::dl_ack_info_result result = harqs.dl_ack_info(uci_slot, ack_value, harq_bit_idx, pucch_snr);
+
+  if (result.update == dl_harq_process::status_update::acked or
+      result.update == dl_harq_process::status_update::nacked) {
+    // HARQ is not expecting more ACK bits. Consider the feedback in the link adaptation controller.
+    ue_mcs_calculator.handle_dl_ack_info(
+        result.update == dl_harq_process::status_update::acked, result.mcs, result.mcs_table);
+  }
+
+  return result;
 }
 
 grant_prbs_mcs ue_cell::required_dl_prbs(const pdsch_time_domain_resource_allocation& pdsch_td_cfg,
@@ -114,14 +123,14 @@ grant_prbs_mcs ue_cell::required_dl_prbs(const pdsch_time_domain_resource_alloca
   }
 
   // Bound Nof PRBs by the number of PRBs in the BWP and the limits defined in the scheduler config.
-  const bwp_downlink_common& bwp_dl_cmn = *ue_cfg.bwp(active_bwp_id()).dl_common;
+  const bwp_downlink_common& bwp_dl_cmn = *ue_cfg->bwp(active_bwp_id()).dl_common;
   unsigned                   nof_prbs   = std::min(prbs_tbs.nof_prbs, bwp_dl_cmn.generic_params.crbs.length());
 
   // Apply grant size limits specified in the config.
   nof_prbs = std::max(std::min(nof_prbs, cell_cfg.expert_cfg.ue.pdsch_nof_rbs.stop()),
                       cell_cfg.expert_cfg.ue.pdsch_nof_rbs.start());
-  nof_prbs = std::max(std::min(nof_prbs, ue_res_alloc_cfg.pdsch_grant_size_limits.stop()),
-                      ue_res_alloc_cfg.pdsch_grant_size_limits.start());
+  nof_prbs = std::max(std::min(nof_prbs, ue_cfg->rrm_cfg().pdsch_grant_size_limits.stop()),
+                      ue_cfg->rrm_cfg().pdsch_grant_size_limits.start());
 
   return grant_prbs_mcs{mcs.value(), nof_prbs};
 }
@@ -130,7 +139,13 @@ grant_prbs_mcs ue_cell::required_ul_prbs(const pusch_time_domain_resource_alloca
                                          unsigned                                     pending_bytes,
                                          dci_ul_rnti_config_type                      dci_type) const
 {
-  const bwp_uplink_common& bwp_ul_cmn = *ue_cfg.bwp(active_bwp_id()).ul_common;
+  const bwp_uplink_common& bwp_ul_cmn = *ue_cfg->bwp(active_bwp_id()).ul_common;
+
+  // In the following, we allocate extra bits to account for the possible UCI overhead. At this point, we don't
+  // differentiate between HARQ-ACK bits and CSI bits, which would be necessary to compute the beta-offset values.
+  // Here, we only need to allocate some extra space.
+  const unsigned uci_bits_overallocation = 20U;
+  const bool     is_csi_report_slot      = false;
 
   pusch_config_params pusch_cfg;
   switch (dci_type) {
@@ -138,10 +153,12 @@ grant_prbs_mcs ue_cell::required_ul_prbs(const pusch_time_domain_resource_alloca
       pusch_cfg = get_pusch_config_f0_0_tc_rnti(cell_cfg, pusch_td_cfg);
       break;
     case dci_ul_rnti_config_type::c_rnti_f0_0:
-      pusch_cfg = get_pusch_config_f0_0_c_rnti(ue_cfg, bwp_ul_cmn, pusch_td_cfg);
+      pusch_cfg =
+          get_pusch_config_f0_0_c_rnti(*ue_cfg, bwp_ul_cmn, pusch_td_cfg, uci_bits_overallocation, is_csi_report_slot);
       break;
     case dci_ul_rnti_config_type::c_rnti_f0_1:
-      pusch_cfg = get_pusch_config_f0_1_c_rnti(ue_cfg, pusch_td_cfg, channel_state.get_nof_ul_layers());
+      pusch_cfg = get_pusch_config_f0_1_c_rnti(
+          *ue_cfg, pusch_td_cfg, channel_state.get_nof_ul_layers(), uci_bits_overallocation, is_csi_report_slot);
       break;
     default:
       report_fatal_error("Unsupported PDCCH DCI UL format");
@@ -162,8 +179,8 @@ grant_prbs_mcs ue_cell::required_ul_prbs(const pusch_time_domain_resource_alloca
   unsigned nof_prbs = std::min(prbs_tbs.nof_prbs, bwp_ul_cmn.generic_params.crbs.length());
 
   // Apply grant size limits specified in the config.
-  nof_prbs = std::max(std::min(nof_prbs, ue_res_alloc_cfg.pusch_grant_size_limits.stop()),
-                      ue_res_alloc_cfg.pusch_grant_size_limits.start());
+  nof_prbs = std::max(std::min(nof_prbs, ue_cfg->rrm_cfg().pusch_grant_size_limits.stop()),
+                      ue_cfg->rrm_cfg().pusch_grant_size_limits.start());
 
   return grant_prbs_mcs{mcs, nof_prbs};
 }
@@ -197,7 +214,7 @@ void ue_cell::handle_csi_report(const csi_report_data& csi_report)
   set_fallback_state(false);
   apply_link_adaptation_procedures(csi_report);
   if (not channel_state.handle_csi_report(csi_report)) {
-    logger.warning("ue={} rnti={:#x}: Invalid CSI report received", ue_index, rnti());
+    logger.warning("ue={} rnti={}: Invalid CSI report received", ue_index, rnti());
   }
 }
 
@@ -247,8 +264,8 @@ ue_cell::get_active_dl_search_spaces(slot_point                        pdcch_slo
                       required_dci_rnti_type == dci_dl_rnti_config_type::c_rnti_f1_0,
                   "Invalid required dci-rnti parameter");
     for (const search_space_configuration& ss :
-         ue_cfg.cell_cfg_common.dl_cfg_common.init_dl_bwp.pdcch_common.search_spaces) {
-      active_search_spaces.push_back(&ue_cfg.search_space(ss.get_id()));
+         ue_cfg->cell_cfg_common.dl_cfg_common.init_dl_bwp.pdcch_common.search_spaces) {
+      active_search_spaces.push_back(&ue_cfg->search_space(ss.get_id()));
     }
     return active_search_spaces;
   }
@@ -312,8 +329,8 @@ ue_cell::get_active_ul_search_spaces(slot_point                        pdcch_slo
                       required_dci_rnti_type == dci_ul_rnti_config_type::c_rnti_f0_0,
                   "Invalid required dci-rnti parameter");
     for (const search_space_configuration& ss :
-         ue_cfg.cell_cfg_common.dl_cfg_common.init_dl_bwp.pdcch_common.search_spaces) {
-      active_search_spaces.push_back(&ue_cfg.search_space(ss.get_id()));
+         ue_cfg->cell_cfg_common.dl_cfg_common.init_dl_bwp.pdcch_common.search_spaces) {
+      active_search_spaces.push_back(&ue_cfg->search_space(ss.get_id()));
     }
     return active_search_spaces;
   }
@@ -410,7 +427,7 @@ void ue_cell::apply_link_adaptation_procedures(const csi_report_data& csi_report
                                                         ? csi_report.first_tb_wideband_cqi.value()
                                                         : channel_state.get_wideband_cqi();
   const unsigned                     recommended_dl_layers =
-      csi_report.ri.has_value() and csi_report.ri.value() <= ue_cfg.get_nof_dl_ports()
+      csi_report.ri.has_value() and csi_report.ri.value() <= ue_cfg->get_nof_dl_ports()
                               ? csi_report.ri->value()
                               : channel_state.get_nof_dl_layers();
 

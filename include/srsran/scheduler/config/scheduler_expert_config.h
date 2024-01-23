@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -71,6 +71,10 @@ struct scheduler_ue_expert_config {
   unsigned max_pdschs_per_slot = MAX_PDSCH_PDUS_PER_SLOT;
   /// Maximum number of PUSCH grants per slot.
   unsigned max_puschs_per_slot = MAX_PUSCH_PDUS_PER_SLOT;
+  /// Maximum number of PUCCH grants per slot.
+  unsigned max_pucchs_per_slot{31U};
+  /// Maximum number of PUSCH + PUCCH grants per slot.
+  unsigned max_ul_grants_per_slot{32U};
   /// Maximum number of PDCCH grant allocation attempts per slot. Default: Unlimited.
   unsigned max_pdcch_alloc_attempts_per_slot = std::max(MAX_DL_PDCCH_PDUS_PER_SLOT, MAX_UL_PDCCH_PDUS_PER_SLOT);
   /// CQI offset increment used in outer loop link adaptation (OLLA) algorithm. If set to zero, OLLA is disabled.
@@ -89,15 +93,19 @@ struct scheduler_ue_expert_config {
   uint8_t dl_harq_la_cqi_drop_threshold{2};
   /// Threshold for drop in nof. layers of the first HARQ transmission above which HARQ retransmission is cancelled.
   uint8_t dl_harq_la_ri_drop_threshold{1};
+  // Automatic HARQ acknowledgement (used for NTN cases with no HARQ feedback)
+  bool auto_ack_harq{false};
 };
 
 /// \brief System Information scheduling statically configurable expert parameters.
 struct scheduler_si_expert_config {
   /// As per TS 38.214, Section 5.1.3.1, only an MCS with modulation order 2 allowed for SIB1.
-  sch_mcs_index     sib1_mcs_index;
-  aggregation_level sib1_dci_aggr_lev;
+  sch_mcs_index     sib1_mcs_index          = 5;
+  aggregation_level sib1_dci_aggr_lev       = aggregation_level::n4;
+  sch_mcs_index     si_message_mcs_index    = 5;
+  aggregation_level si_message_dci_aggr_lev = aggregation_level::n4;
   /// SIB1 retx period.
-  sib1_rtx_periodicity sib1_retx_period;
+  sib1_rtx_periodicity sib1_retx_period = sib1_rtx_periodicity::ms160;
 };
 
 /// \brief Random Access scheduling statically configurable expert parameters.
@@ -110,9 +118,9 @@ struct scheduler_ra_expert_config {
 /// \brief Paging scheduling statically configurable expert parameters.
 struct scheduler_paging_expert_config {
   /// As per TS 38.214, Section 5.1.3.1, only an MCS with modulation order 2 allowed for Paging.
-  sch_mcs_index     paging_mcs_index;
-  aggregation_level paging_dci_aggr_lev;
-  unsigned          max_paging_retries;
+  sch_mcs_index     paging_mcs_index    = 5;
+  aggregation_level paging_dci_aggr_lev = aggregation_level::n4;
+  unsigned          max_paging_retries  = 2;
 };
 
 /// \brief Scheduling statically configurable expert parameters.

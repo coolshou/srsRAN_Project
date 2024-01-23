@@ -18,9 +18,8 @@
       requests: "2G"
       limits: "2G"
     ephemeral-storage:
-      requests: "3G"
-      limit: "3G"
-  mode: grpc
+      requests: "6G"
+      limits: "6G"
   resources:
     - type: android
       model: one-plus-9-pro
@@ -37,12 +36,13 @@
       requests: "10G"
       limits: "10G"
     ephemeral-storage:
-      requests: "3G"
-      limit: "3G"
-  mode: grpc
+      requests: "6G"
+      limits: "6G"
   resources:
     - type: sdr
       model: b200
+  environment:
+    - PATH: ${PATH}:/builds/softwareradiosystems/srsgnb/build/apps/gnb
   shared_files:
     - local_path: ../../build/apps/gnb/gnb
       remote_path: /usr/local/bin
@@ -60,6 +60,5 @@
       requests: "4G"
       limits: "4G"
     ephemeral-storage:
-      requests: "3G"
-      limit: "3G"
-  mode: grpc
+      requests: "6G"
+      limits: "6G"

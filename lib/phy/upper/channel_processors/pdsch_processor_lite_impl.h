@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -30,6 +30,7 @@
 #include "srsran/phy/upper/channel_processors/pdsch_processor.h"
 #include "srsran/phy/upper/sequence_generators/pseudo_random_generator.h"
 #include "srsran/phy/upper/signal_processors/dmrs_pdsch_processor.h"
+#include "srsran/phy/upper/unique_tx_buffer.h"
 #include "srsran/ran/pdsch/pdsch_constants.h"
 #include "srsran/srsvec/bit.h"
 
@@ -49,13 +50,19 @@ public:
   }
 
   /// \brief Configures a new transmission.
-  /// \param[in] data Transport block data.
-  /// \param[in] i_cw Codeword index.
-  /// \param[in] pdu  PDSCH transmission parameters.
-  void configure_new_transmission(span<const uint8_t> data, unsigned i_cw, const pdsch_processor::pdu_t& pdu);
+  /// \param[in,out] rm_buffer  Rate matcher buffer.
+  /// \param[in]     data       Transport block data.
+  /// \param[in]     i_cw       Codeword index.
+  /// \param[in]     pdu        PDSCH transmission parameters.
+  void configure_new_transmission(unique_tx_buffer              rm_buffer,
+                                  span<const uint8_t>           data,
+                                  unsigned                      i_cw,
+                                  const pdsch_processor::pdu_t& pdu);
 
   // See interface for documentation.
-  unsigned get_max_block_size() const override { return max_block_size; }
+  unsigned get_max_block_size() const override;
+
+  bool empty() const override;
 
   // See interface for documentation.
   span<const ci8_t> pop_symbols(unsigned block_size) override;
@@ -78,19 +85,21 @@ private:
   /// Modulation mapper.
   modulation_mapper& modulator;
   /// Buffer for storing data segments obtained after transport block segmentation.
-  static_vector<described_segment, MAX_NOF_SEGMENTS> d_segments = {};
+  static_vector<described_segment, MAX_NOF_SEGMENTS> d_segments;
   /// Temporary packed bits.
-  static_bit_buffer<ldpc::MAX_CODEBLOCK_RM_SIZE> temp_codeblock = {};
+  static_bit_buffer<ldpc::MAX_CODEBLOCK_RM_SIZE> temp_codeblock;
   /// Current transmission modulation.
   modulation_scheme modulation;
+  /// Set to true if it is a new transmission.
+  bool new_data;
   /// Current codeblock index.
   unsigned next_i_cb = 0;
   /// Temporary storage of codeblock symbols.
   std::array<ci8_t, ldpc::MAX_CODEBLOCK_RM_SIZE> temp_codeblock_symbols;
+  /// Rate matching soft buffer.
+  unique_tx_buffer unique_rm_buffer;
   /// Current view of the codeblock modulated symbols.
   span<ci8_t> codeblock_symbols;
-  /// Temporary storage of modulated symbols.
-  std::array<ci8_t, max_block_size> temp_symbol_buffer;
 
   /// Processes a new codeblock and writes the new data in \ref encoded_bit_buffer.
   void new_codeblock();
@@ -122,16 +131,12 @@ public:
 
   // See interface for documentation.
   void process(resource_grid_mapper&                                        mapper,
+               unique_tx_buffer                                             rm_buffer,
                pdsch_processor_notifier&                                    notifier,
                static_vector<span<const uint8_t>, MAX_NOF_TRANSPORT_BLOCKS> data,
                const pdu_t&                                                 pdu) override;
 
 private:
-  /// \brief Asserts PDU.
-  ///
-  /// It triggers an assertion if the PDU is not valid for this processor.
-  void assert_pdu(const pdu_t& pdu) const;
-
   /// \brief Processes DM-RS.
   /// \param[out] mapper Resource grid mapper interface.
   /// \param[in]  pdu Necessary parameters to process the DM-RS.

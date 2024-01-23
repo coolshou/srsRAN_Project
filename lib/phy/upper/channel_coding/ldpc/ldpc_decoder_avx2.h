@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -68,7 +68,7 @@ private:
                                  unsigned                         var_node) override;
 
   /// Auxiliary buffer to store the rotated variable-to-check messages.
-  std::array<log_likelihood_ratio, ldpc::MAX_LIFTING_SIZE* MAX_CHECK_NODE_DEGREE> rotated_var_to_check = {};
+  std::array<log_likelihood_ratio, ldpc::MAX_LIFTING_SIZE * MAX_CHECK_NODE_DEGREE> rotated_var_to_check;
 
   /// Number of AVX2 vectors needed to cover a lifted node.
   unsigned node_size_avx2 = 0;

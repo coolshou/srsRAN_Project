@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -43,7 +43,7 @@ public:
                                       up_resource_manager&                     up_manager_,
                                       ngap_transaction_manager&                ev_mng_,
                                       timer_factory                            timers,
-                                      srslog::basic_logger&                    logger_);
+                                      ngap_ue_logger&                          logger_);
 
   void operator()(coro_context<async_task<ngap_handover_preparation_response>>& ctx);
 
@@ -57,7 +57,7 @@ private:
   ngap_rrc_ue_control_notifier&           rrc_ue_notifier;
   up_resource_manager&                    up_manager;
   ngap_transaction_manager&               ev_mng;
-  srslog::basic_logger&                   logger;
+  ngap_ue_logger&                         logger;
 
   unique_timer tng_reloc_prep_timer;
 

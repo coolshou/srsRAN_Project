@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -20,7 +20,7 @@
  *
  */
 
-#include "lib/scheduler/cell/cell_configuration.h"
+#include "lib/scheduler/config/cell_configuration.h"
 #include "scheduler_test_doubles.h"
 #include "tests/unittests/scheduler/test_utils/config_generators.h"
 #include "srsran/du/du_cell_config_helpers.h"

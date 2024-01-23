@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -129,7 +129,6 @@ struct mac_uci_pdu {
       static_vector<uci_pucch_f0_or_f1_harq_values, NOF_HARQS_PER_UCI> harqs;
     };
 
-    bool is_f1;
     /// \brief Metric of channel quality that ranges from -65.534 to 65.534 dBs.
     optional<float> ul_sinr;
     /// \brief Timing Advance Offset measured for the UE.

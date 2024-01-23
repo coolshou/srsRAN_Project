@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -29,8 +29,6 @@
 #include "srsran/ngap/ngap.h"
 #include "srsran/rrc/rrc.h"
 #include "srsran/srslog/srslog.h"
-
-#include "../../ngap/ngap_asn1_utils.h"
 
 namespace srsran {
 namespace srs_cu_cp {
