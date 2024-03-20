@@ -42,8 +42,6 @@ public:
 
   void on_new_message(const f1ap_message& msg) override
   {
-    logger.debug("Received a PDU of type {}", msg.pdu.type().to_string());
-
     if (pcap_writer.is_write_enabled()) {
       byte_buffer   buf;
       asn1::bit_ref bref(buf);
@@ -71,7 +69,7 @@ f1c_gateway_local_connector::f1c_gateway_local_connector(dlt_pcap& f1ap_pcap_wri
 {
 }
 
-void f1c_gateway_local_connector::attach_cu_cp(srs_cu_cp::du_repository& cu_cp_du_mng_)
+void f1c_gateway_local_connector::attach_cu_cp(srs_cu_cp::cu_cp_f1c_handler& cu_cp_du_mng_)
 {
   cu_cp_du_mng = &cu_cp_du_mng_;
 }

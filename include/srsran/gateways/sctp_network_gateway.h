@@ -45,6 +45,7 @@ struct sctp_network_gateway_config : common_network_gateway_config {
   optional<int32_t> rto_max;
   optional<int32_t> init_max_attempts;
   optional<int32_t> max_init_timeo;
+  optional<bool>    nodelay;
 };
 
 /// \brief Interface to inject PDUs into gateway entity.
@@ -72,6 +73,12 @@ public:
 
   /// \brief Start listening on socket.
   virtual bool listen() = 0;
+
+  /// \brief Return the port on which the socket is listening.
+  ///
+  /// In case the gateway was configured to listen on port 0, i.e. the operating system shall pick a random free port,
+  /// this function can be used to get the actual port number.
+  virtual optional<uint16_t> get_listen_port() = 0;
 };
 
 /// Interface to inform upper layers about connection establishment, drops, etc.

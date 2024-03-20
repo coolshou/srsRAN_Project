@@ -28,20 +28,6 @@
 
 using namespace srsran;
 
-// Compute number of host CPUs, statically, before any framework (e.g. DPDK) affects the affinities of the main thread.
-static const size_t nof_host_cpus = []() -> size_t {
-  cpu_set_t cpuset;
-  if (sched_getaffinity(0, sizeof(cpuset), &cpuset) == 0) {
-    return std::max(1, CPU_COUNT(&cpuset));
-  }
-  return std::max(1U, std::thread::hardware_concurrency());
-}();
-
-size_t srsran::compute_host_nof_hardware_threads()
-{
-  return nof_host_cpus;
-}
-
 /// Sets thread OS scheduling real-time priority.
 static bool thread_set_param(pthread_t t, os_thread_realtime_priority prio)
 {
@@ -59,6 +45,12 @@ static bool thread_set_param(pthread_t t, os_thread_realtime_priority prio)
 
 static bool thread_set_affinity(pthread_t t, const os_sched_affinity_bitmask& bitmap, const std::string& name)
 {
+  auto invalid_ids = bitmap.subtract(os_sched_affinity_bitmask::available_cpus());
+  if (invalid_ids.size() > 0) {
+    fmt::print(
+        "Warning: The CPU affinity of thread \"{}\" contains the following invalid CPU ids: {}\n", name, invalid_ids);
+  }
+
   cpu_set_t* cpusetp     = CPU_ALLOC(bitmap.size());
   size_t     cpuset_size = CPU_ALLOC_SIZE(bitmap.size());
   CPU_ZERO_S(cpuset_size, cpusetp);
@@ -135,9 +127,26 @@ static void print_thread_priority(pthread_t t, const char* tname, std::thread::i
   fmt::print("Thread [{}:{}]: Sched policy is \"{}\". Priority is {}.\n", tname, tid, p, param.sched_priority);
 }
 
-void unique_thread::print_priority()
+const os_sched_affinity_bitmask& os_sched_affinity_bitmask::available_cpus()
 {
-  print_thread_priority(thread_handle.native_handle(), name.c_str(), thread_handle.get_id());
+  static os_sched_affinity_bitmask available_cpus_mask = []() {
+    os_sched_affinity_bitmask bitmask;
+    cpu_set_t                 cpuset = cpu_architecture_info::get().get_available_cpuset();
+    for (size_t i = 0; i < bitmask.size(); ++i) {
+      if (CPU_ISSET(i, &cpuset)) {
+        bitmask.cpu_bitset.set(i);
+      }
+    }
+    return bitmask;
+  }();
+  return available_cpus_mask;
+}
+
+static_vector<size_t, os_sched_affinity_bitmask::MAX_CPUS>
+os_sched_affinity_bitmask::subtract(const os_sched_affinity_bitmask& rhs) const
+{
+  auto invalid_bitmap = (~rhs.cpu_bitset) & cpu_bitset;
+  return invalid_bitmap.get_bit_positions();
 }
 
 ///////////////////////////////////////
@@ -194,4 +203,9 @@ const char* srsran::this_thread_name()
 void srsran::print_this_thread_priority()
 {
   return print_thread_priority(pthread_self(), this_thread_name(), std::this_thread::get_id());
+}
+
+void unique_thread::print_priority()
+{
+  print_thread_priority(thread_handle.native_handle(), name.c_str(), thread_handle.get_id());
 }

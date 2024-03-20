@@ -26,94 +26,76 @@
 using namespace srsran;
 using namespace ofh;
 
-static constexpr unsigned MAX_FRAMES = 64;
-
 message_transmitter_impl::message_transmitter_impl(srslog::basic_logger&                  logger_,
-                                                   const symbol_handler_config&           cfg,
+                                                   const tx_window_timing_parameters&     timing_params_,
                                                    std::unique_ptr<ether::gateway>        gw,
                                                    std::shared_ptr<ether::eth_frame_pool> frame_pool) :
-  logger(logger_),
-  pool_ptr(frame_pool),
-  pool(*pool_ptr),
-  gateway(std::move(gw)),
-  timing_params(
-      cfg.tx_timing_params,
-      std::chrono::duration<double, std::nano>(1e6 / (cfg.symbols_per_slot * get_nof_slots_per_subframe(cfg.scs))))
+  logger(logger_), pool_ptr(frame_pool), pool(*pool_ptr), gateway(std::move(gw)), timing_params(timing_params_)
 {
   srsran_assert(gateway, "Invalid Ethernet gateway");
   srsran_assert(pool_ptr, "Invalid frame pool");
 }
 
-void message_transmitter_impl::transmit_enqueued_messages(slot_symbol_point symbol_point,
-                                                          message_type      type,
-                                                          data_direction    direction)
+void message_transmitter_impl::transmit_frame_burst(span<span<const uint8_t>> frame_burst)
 {
-  slot_point slot         = symbol_point.get_slot();
-  unsigned   symbol_index = symbol_point.get_symbol_index();
+  if (frame_burst.empty()) {
+    return;
+  }
 
-  const ether::frame_pool_context context{slot, symbol_index, type, direction};
-  auto                            frame_buffers = pool.read_frame_buffers(context);
+  gateway->send(frame_burst);
+  logger.debug("Sending an Ethernet frame burst of size '{}'", frame_burst.size());
+}
+
+void message_transmitter_impl::enqueue_messages_into_burst(
+    const ether::frame_pool_interval&                   interval,
+    static_vector<span<const uint8_t>, MAX_BURST_SIZE>& frame_burst)
+{
+  auto frame_buffers = pool.read_frame_buffers(interval);
   if (frame_buffers.empty()) {
     return;
   }
 
-  static_vector<span<const uint8_t>, MAX_FRAMES> frames;
   for (const auto& frame : frame_buffers) {
-    frames.push_back(frame->data());
+    frame_burst.emplace_back(frame->data());
   }
 
-  gateway->send(frames);
-  logger.debug("Sending an Ethernet frame burst of size '{}' frames through gateway in slot '{}_{}' and type '{}'",
-               frames.size(),
-               slot,
-               symbol_index,
-               (type == message_type::control_plane) ? "control" : "user");
-
-  pool.eth_frames_sent(context);
+  logger.debug("Enqueueing '{}' frame(s) of type '{}-{}' in interval '{}_{}':{}_{} for tx burst",
+               frame_buffers.size(),
+               (interval.type.type == message_type::control_plane) ? "control-plane" : "user-plane",
+               (interval.type.direction == ofh::data_direction::downlink) ? "downlink" : "uplink",
+               interval.start.get_slot(),
+               interval.start.get_symbol_index(),
+               interval.end.get_slot(),
+               interval.end.get_symbol_index());
 }
 
 void message_transmitter_impl::on_new_symbol(slot_symbol_point symbol_point)
 {
-  // Transmit pending DL Control-Plane messages.
-  transmit_enqueued_messages(
-      symbol_point + timing_params.sym_cp_dl_start, message_type::control_plane, data_direction::downlink);
+  static_vector<span<const uint8_t>, MAX_BURST_SIZE> frame_burst;
 
-  // Transmit pending UL Control-Plane messages.
-  transmit_enqueued_messages(
-      symbol_point + timing_params.sym_cp_ul_start, message_type::control_plane, data_direction::uplink);
+  // Enqueue pending DL Control-Plane messages.
+  ether::frame_pool_interval interval_cp_dl{{message_type::control_plane, data_direction::downlink},
+                                            symbol_point + timing_params.sym_cp_dl_end,
+                                            symbol_point + timing_params.sym_cp_dl_start};
+  enqueue_messages_into_burst(interval_cp_dl, frame_burst);
 
-  // Transmit pending User-Plane messages.
-  transmit_enqueued_messages(
-      symbol_point + timing_params.sym_up_dl_start, message_type::user_plane, data_direction::downlink);
+  // Enqueue pending UL Control-Plane messages.
+  ether::frame_pool_interval interval_cp_ul{{message_type::control_plane, data_direction::uplink},
+                                            symbol_point + timing_params.sym_cp_ul_end,
+                                            symbol_point + timing_params.sym_cp_ul_start};
+  enqueue_messages_into_burst(interval_cp_ul, frame_burst);
 
-  // Log the late messages when the transmission window closes.
-  log_late_messages_on_tx_window_close(symbol_point);
-}
+  // Enqueue pending User-Plane messages.
+  ether::frame_pool_interval interval_up{{message_type::user_plane, data_direction::downlink},
+                                         symbol_point + timing_params.sym_up_dl_end,
+                                         symbol_point + timing_params.sym_up_dl_start};
+  enqueue_messages_into_burst(interval_up, frame_burst);
 
-void message_transmitter_impl::log_late_messages_on_tx_window_close(slot_symbol_point symbol_point)
-{
-  log_late_messages(symbol_point + timing_params.sym_cp_dl_end, message_type::control_plane, data_direction::downlink);
-  log_late_messages(symbol_point + timing_params.sym_cp_ul_end, message_type::control_plane, data_direction::uplink);
-  log_late_messages(symbol_point + timing_params.sym_up_dl_end, message_type::user_plane, data_direction::downlink);
-}
+  // Transmit the data.
+  transmit_frame_burst(frame_burst);
 
-void message_transmitter_impl::log_late_messages(slot_symbol_point late_point,
-                                                 message_type      type,
-                                                 data_direction    direction)
-{
-  slot_point slot         = late_point.get_slot();
-  unsigned   symbol_index = late_point.get_symbol_index();
-
-  const ether::frame_pool_context context{slot, symbol_index, type, direction};
-  auto                            frame_buffers = pool.read_frame_buffers(context);
-
-  if (!frame_buffers.empty()) {
-    logger.warning("Detected '{}' late Ethernet frames in the transmitter queue for slot '{}', symbol '{}', type '{}', "
-                   "direction '{}'",
-                   frame_buffers.size(),
-                   slot,
-                   symbol_index,
-                   (type == message_type::control_plane) ? "control" : "user",
-                   (direction == data_direction::downlink) ? "downlink" : "uplink");
-  }
+  // Clear sent buffers.
+  pool.clear_sent_frame_buffers(interval_cp_dl);
+  pool.clear_sent_frame_buffers(interval_cp_ul);
+  pool.clear_sent_frame_buffers(interval_up);
 }

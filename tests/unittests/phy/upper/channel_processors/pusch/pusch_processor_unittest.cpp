@@ -30,7 +30,7 @@
 #include "ulsch_demultiplex_test_doubles.h"
 #include "srsran/phy/upper/channel_processors/pusch/factories.h"
 #include "srsran/ran/pusch/ulsch_info.h"
-#include "srsran/ran/sch_dmrs_power.h"
+#include "srsran/ran/sch/sch_dmrs_power.h"
 #include "srsran/srsvec/compare.h"
 #include <fmt/ostream.h>
 #include <gtest/gtest.h>
@@ -352,6 +352,7 @@ TEST_P(PuschProcessorFixture, PuschProcessorUnittest)
   ulsch_config.dmrs_symbol_mask      = pdu.dmrs_symbol_mask;
   ulsch_config.nof_cdm_groups_without_data = pdu.nof_cdm_groups_without_data;
   ulsch_config.nof_layers                  = pdu.nof_tx_layers;
+  ulsch_config.contains_dc                 = false;
   ulsch_information ulsch_info             = get_ulsch_information(ulsch_config);
 
   // Calculate the number of LLR.

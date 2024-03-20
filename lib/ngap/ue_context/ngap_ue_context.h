@@ -23,8 +23,8 @@
 #pragma once
 
 #include "ngap_ue_logger.h"
-#include "srsran/ngap/ngap.h"
 #include "srsran/ngap/ngap_types.h"
+#include "srsran/support/timers.h"
 #include <unordered_map>
 
 namespace srsran {
@@ -39,15 +39,16 @@ struct ngap_ue_ids {
 struct ngap_ue_context {
   ngap_ue_ids    ue_ids;
   uint64_t       aggregate_maximum_bit_rate_dl = 0;
-  unique_timer   ue_context_setup_timer        = {};
+  unique_timer   pdu_session_setup_timer       = {};
   bool           release_requested             = false;
   bool           release_scheduled             = false;
+  byte_buffer    last_pdu_session_resource_modify_request; // To check if a received modify request is a duplicate
   ngap_ue_logger logger;
 
   ngap_ue_context(ue_index_t ue_index_, ran_ue_id_t ran_ue_id_, timer_manager& timers_, task_executor& task_exec_) :
     ue_ids({ue_index_, ran_ue_id_}), logger("NGAP", {ue_index_, ran_ue_id_})
   {
-    ue_context_setup_timer = timers_.create_unique_timer(task_exec_);
+    pdu_session_setup_timer = timers_.create_unique_timer(task_exec_);
   }
 };
 
@@ -129,16 +130,30 @@ public:
     return ues.at(ran_ue_id);
   }
 
-  void add_amf_ue_id(ran_ue_id_t ran_ue_id, amf_ue_id_t amf_ue_id)
+  void update_amf_ue_id(ran_ue_id_t ran_ue_id, amf_ue_id_t amf_ue_id)
   {
     srsran_assert(amf_ue_id != amf_ue_id_t::invalid, "Invalid amf_ue_id={}", amf_ue_id);
     srsran_assert(ran_ue_id != ran_ue_id_t::invalid, "Invalid ran_ue_id={}", ran_ue_id);
     srsran_assert(ues.find(ran_ue_id) != ues.end(), "ran_ue_id={}: NGAP UE context not found", ran_ue_id);
 
     auto& ue = ues.at(ran_ue_id);
-    ue.logger.log_debug("Adding amf_ue_id={}", amf_ue_id);
-    ue.ue_ids.amf_ue_id = amf_ue_id;
-    amf_ue_id_to_ran_ue_id.emplace(amf_ue_id, ran_ue_id);
+
+    if (ue.ue_ids.amf_ue_id == amf_ue_id) {
+      // If the AMF-UE-ID is already set, we don't want to change it.
+      return;
+    } else if (ue.ue_ids.amf_ue_id == amf_ue_id_t::invalid) {
+      // If it was not set before, we add it
+      ue.logger.log_debug("Adding amf_ue_id={}", amf_ue_id);
+      ue.ue_ids.amf_ue_id = amf_ue_id;
+      amf_ue_id_to_ran_ue_id.emplace(amf_ue_id, ran_ue_id);
+    } else if (ue.ue_ids.amf_ue_id != amf_ue_id) {
+      // If it was set before, we update it
+      amf_ue_id_t old_amf_ue_id = ue.ue_ids.amf_ue_id;
+      ue.logger.log_info("Updating AMF-UE-ID. New amf_ue_id={}", amf_ue_id);
+      ue.ue_ids.amf_ue_id = amf_ue_id;
+      amf_ue_id_to_ran_ue_id.emplace(amf_ue_id, ran_ue_id);
+      amf_ue_id_to_ran_ue_id.erase(old_amf_ue_id);
+    }
 
     ue.logger.set_prefix({ue.ue_ids.ue_index, ran_ue_id, amf_ue_id});
   }
@@ -197,7 +212,7 @@ public:
   size_t size() const { return ues.size(); }
 
   /// \brief Get the next available RAN-UE-ID.
-  ran_ue_id_t get_next_ran_ue_id()
+  ran_ue_id_t allocate_ran_ue_id()
   {
     // return invalid when no RAN-UE-ID is available
     if (ue_index_to_ran_ue_id.size() == MAX_NOF_RAN_UES) {

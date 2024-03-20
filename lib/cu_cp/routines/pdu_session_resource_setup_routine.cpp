@@ -22,6 +22,7 @@
 
 #include "pdu_session_resource_setup_routine.h"
 #include "pdu_session_routine_helpers.h"
+#include "srsran/ran/cause/ngap_cause.h"
 
 using namespace srsran;
 using namespace srsran::srs_cu_cp;
@@ -90,11 +91,11 @@ void pdu_session_resource_setup_routine::operator()(
 {
   CORO_BEGIN(ctx);
 
-  logger.debug("ue={}: \"{}\" initialized.", setup_msg.ue_index, name());
+  logger.debug("ue={}: \"{}\" initialized", setup_msg.ue_index, name());
 
   // Perform initial sanity checks on incoming message.
   if (!rrc_ue_up_resource_manager.validate_request(setup_msg.pdu_session_res_setup_items)) {
-    logger.error("ue={}: \"{}\" Invalid PDU Session Resource Setup", setup_msg.ue_index, name());
+    logger.info("ue={}: \"{}\" Invalid PduSessionResourceSetup", setup_msg.ue_index, name());
     CORO_EARLY_RETURN(handle_pdu_session_resource_setup_result(false));
   }
 
@@ -104,7 +105,7 @@ void pdu_session_resource_setup_routine::operator()(
 
     // Handle UE Capability Transfer result
     if (not ue_capability_transfer_result) {
-      logger.error("ue={}: \"{}\" UE capability transfer failed", setup_msg.ue_index, name());
+      logger.warning("ue={}: \"{}\" UE capability transfer failed", setup_msg.ue_index, name());
       CORO_EARLY_RETURN(handle_pdu_session_resource_setup_result(false));
     }
   }
@@ -117,7 +118,10 @@ void pdu_session_resource_setup_routine::operator()(
   // sanity check passed, decide whether we have to create a Bearer Context at the CU-UP or modify an existing one.
   if (next_config.initial_context_creation) {
     // prepare BearerContextSetupRequest
-    fill_e1ap_bearer_context_setup_request(bearer_context_setup_request);
+    if (!fill_e1ap_bearer_context_setup_request(bearer_context_setup_request)) {
+      logger.warning("ue={}: \"{}\" failed to fill bearer context at CU-UP", setup_msg.ue_index, name());
+      CORO_EARLY_RETURN(handle_pdu_session_resource_setup_result(false));
+    }
 
     // call E1AP procedure
     CORO_AWAIT_VALUE(bearer_context_setup_response,
@@ -132,7 +136,7 @@ void pdu_session_resource_setup_routine::operator()(
                                    rrc_ue_up_resource_manager,
                                    default_security_indication,
                                    logger)) {
-      logger.error("ue={}: \"{}\" failed to setup bearer at CU-UP.", setup_msg.ue_index, name());
+      logger.warning("ue={}: \"{}\" failed to setup bearer at CU-UP", setup_msg.ue_index, name());
       CORO_EARLY_RETURN(handle_pdu_session_resource_setup_result(false));
     }
   } else {
@@ -153,7 +157,7 @@ void pdu_session_resource_setup_routine::operator()(
                                    rrc_ue_up_resource_manager,
                                    default_security_indication,
                                    logger)) {
-      logger.error("ue={}: \"{}\" failed to modify bearer at CU-UP.", setup_msg.ue_index, name());
+      logger.warning("ue={}: \"{}\" failed to modify bearer at CU-UP", setup_msg.ue_index, name());
       CORO_EARLY_RETURN(handle_pdu_session_resource_setup_result(false));
     }
   }
@@ -174,7 +178,7 @@ void pdu_session_resource_setup_routine::operator()(
                                    ue_context_modification_response,
                                    next_config,
                                    logger)) {
-      logger.error("ue={}: \"{}\" failed to modify UE context at DU.", setup_msg.ue_index, name());
+      logger.warning("ue={}: \"{}\" failed to modify UE context at DU", setup_msg.ue_index, name());
       CORO_EARLY_RETURN(handle_pdu_session_resource_setup_result(false));
     }
   }
@@ -197,7 +201,7 @@ void pdu_session_resource_setup_routine::operator()(
                                    rrc_ue_up_resource_manager,
                                    default_security_indication,
                                    logger)) {
-      logger.error("ue={}: \"{}\" failed to modification bearer at CU-UP.", setup_msg.ue_index, name());
+      logger.warning("ue={}: \"{}\" failed to modify bearer at CU-UP", setup_msg.ue_index, name());
       CORO_EARLY_RETURN(handle_pdu_session_resource_setup_result(false));
     }
   }
@@ -225,7 +229,7 @@ void pdu_session_resource_setup_routine::operator()(
                                   false,
                                   false,
                                   logger)) {
-        logger.error("ue={}: \"{}\" Failed to fill RRC Reconfiguration.", setup_msg.ue_index, name());
+        logger.warning("ue={}: \"{}\" Failed to fill RrcReconfiguration", setup_msg.ue_index, name());
         CORO_EARLY_RETURN(handle_pdu_session_resource_setup_result(false));
       }
     }
@@ -234,7 +238,7 @@ void pdu_session_resource_setup_routine::operator()(
 
     // Handle UE Context Modification Response
     if (!handle_procedure_response(response_msg, setup_msg, rrc_reconfig_result, logger)) {
-      logger.error("ue={}: \"{}\" RRC Reconfiguration failed.", setup_msg.ue_index, name());
+      logger.warning("ue={}: \"{}\" RRC reconfiguration failed", setup_msg.ue_index, name());
       CORO_EARLY_RETURN(handle_pdu_session_resource_setup_result(false));
     }
   }
@@ -273,12 +277,12 @@ bool handle_procedure_response(cu_cp_pdu_session_resource_setup_response&       
 
   for (const auto& e1ap_item : bearer_context_modification_response.pdu_session_resource_modified_list) {
     // modified list
-    logger.info("Implement handling of resource modified item {}.", e1ap_item.pdu_session_id);
+    logger.info("Implement handling of resource modified item with {}", e1ap_item.pdu_session_id);
   }
 
   for (const auto& e1ap_item : bearer_context_modification_response.pdu_session_resource_failed_to_modify_list) {
-    // modified list
-    logger.info("Implement handling of resource failed to modify item {}.", e1ap_item.pdu_session_id);
+    // failed to modify list
+    logger.info("Implement handling of resource failed to modify item with {}", e1ap_item.pdu_session_id);
   }
 
   return bearer_context_modification_response.success;
@@ -321,7 +325,7 @@ void fill_setup_failed_list(cu_cp_pdu_session_resource_setup_response&      resp
   for (const auto& item : setup_msg.pdu_session_res_setup_items) {
     cu_cp_pdu_session_res_setup_failed_item failed_item;
     failed_item.pdu_session_id              = item.pdu_session_id;
-    failed_item.unsuccessful_transfer.cause = cause_misc_t::unspecified;
+    failed_item.unsuccessful_transfer.cause = ngap_cause_misc_t::unspecified;
     response_msg.pdu_session_res_failed_to_setup_items.emplace(failed_item.pdu_session_id, failed_item);
   }
 }
@@ -338,8 +342,8 @@ bool handle_procedure_response(cu_cp_pdu_session_resource_setup_response&      r
 {
   // Fail procedure if (single) DRB couldn't be setup
   if (!ue_context_modification_response.drbs_failed_to_be_setup_mod_list.empty()) {
-    logger.error("Couldn't setup {} DRBs at DU.",
-                 ue_context_modification_response.drbs_failed_to_be_setup_mod_list.size());
+    logger.warning("Couldn't setup {} DRBs at DU",
+                   ue_context_modification_response.drbs_failed_to_be_setup_mod_list.size());
     return false;
   }
 
@@ -374,7 +378,7 @@ bool handle_procedure_response(cu_cp_pdu_session_resource_setup_response&      r
 // Helper to mark all PDU sessions that were requested to be set up as failed.
 void mark_all_sessions_as_failed(cu_cp_pdu_session_resource_setup_response&      response_msg,
                                  const cu_cp_pdu_session_resource_setup_request& setup_msg,
-                                 cause_t                                         cause)
+                                 e1ap_cause_t                                    cause)
 {
   slotted_id_vector<pdu_session_id_t, e1ap_pdu_session_resource_failed_item> failed_list;
   for (const auto& setup_item : setup_msg.pdu_session_res_setup_items) {
@@ -392,7 +396,7 @@ cu_cp_pdu_session_resource_setup_response
 pdu_session_resource_setup_routine::handle_pdu_session_resource_setup_result(bool success)
 {
   if (success) {
-    logger.debug("ue={}: \"{}\" finalized.", setup_msg.ue_index, name());
+    logger.debug("ue={}: \"{}\" finalized", setup_msg.ue_index, name());
 
     // Prepare update for UP resource manager.
     up_config_update_result result;
@@ -401,15 +405,15 @@ pdu_session_resource_setup_routine::handle_pdu_session_resource_setup_result(boo
     }
     rrc_ue_up_resource_manager.apply_config_update(result);
   } else {
-    logger.error("ue={}: \"{}\" failed.", setup_msg.ue_index, name());
+    logger.info("ue={}: \"{}\" failed", setup_msg.ue_index, name());
 
-    mark_all_sessions_as_failed(response_msg, setup_msg, cause_radio_network_t::unspecified);
+    mark_all_sessions_as_failed(response_msg, setup_msg, e1ap_cause_t{e1ap_cause_radio_network_t::unspecified});
   }
 
   return response_msg;
 }
 
-void pdu_session_resource_setup_routine::fill_e1ap_bearer_context_setup_request(
+bool pdu_session_resource_setup_routine::fill_e1ap_bearer_context_setup_request(
     e1ap_bearer_context_setup_request& e1ap_request)
 {
   e1ap_request.ue_index = setup_msg.ue_index;
@@ -417,9 +421,19 @@ void pdu_session_resource_setup_routine::fill_e1ap_bearer_context_setup_request(
   // security info
   e1ap_request.security_info.security_algorithm.ciphering_algo                 = security_cfg.cipher_algo;
   e1ap_request.security_info.security_algorithm.integrity_protection_algorithm = security_cfg.integ_algo;
-  e1ap_request.security_info.up_security_key.encryption_key                    = security_cfg.k_enc;
+  auto k_enc_buffer = byte_buffer::create(security_cfg.k_enc);
+  if (k_enc_buffer.is_error()) {
+    logger.warning("Unable to allocate byte_buffer");
+    return false;
+  }
+  e1ap_request.security_info.up_security_key.encryption_key = std::move(k_enc_buffer.value());
   if (security_cfg.k_int.has_value()) {
-    e1ap_request.security_info.up_security_key.integrity_protection_key = security_cfg.k_int.value();
+    auto k_int_buffer = byte_buffer::create(security_cfg.k_int.value());
+    if (k_int_buffer.is_error()) {
+      logger.warning("Unable to allocate byte_buffer");
+      return false;
+    }
+    e1ap_request.security_info.up_security_key.integrity_protection_key = std::move(k_int_buffer.value());
   }
 
   e1ap_request.ue_dl_aggregate_maximum_bit_rate = setup_msg.ue_aggregate_maximum_bit_rate_dl;
@@ -436,6 +450,8 @@ void pdu_session_resource_setup_routine::fill_e1ap_bearer_context_setup_request(
                                           setup_msg.pdu_session_res_setup_items,
                                           ue_cfg,
                                           default_security_indication);
+
+  return true;
 }
 
 // Helper to fill a Bearer Context Modification request if it is the initial E1AP message

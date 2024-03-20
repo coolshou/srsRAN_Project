@@ -28,8 +28,8 @@
 #include "srsran/phy/upper/channel_processors/pucch_processor_result.h"
 #include "srsran/phy/upper/channel_processors/pucch_uci_message.h"
 #include "srsran/ran/cyclic_prefix.h"
-#include "srsran/ran/modulation_scheme.h"
 #include "srsran/ran/pucch/pucch_context.h"
+#include "srsran/ran/sch/modulation_scheme.h"
 #include "srsran/ran/slot_point.h"
 
 namespace srsran {
@@ -80,8 +80,8 @@ public:
     optional<unsigned> second_hop_prb;
     /// \brief Parameter \f$n_{\textup{ID}}\f$ in TS38.211 Section 6.3.2.2.1 {0, ..., 1023}.
     ///
-    /// It must be set to the higher layer parameter \e hopingID given by TS38.331 Section 6.3.2, Information Element \e
-    /// PUCCH-ConfigCommon, if it is configured. Otherwise, it must be equal to the physical cell identifier
+    /// It must be set to the higher layer parameter \e hoppingID given by TS38.331 Section 6.3.2, Information Element
+    /// \e PUCCH-ConfigCommon, if it is configured. Otherwise, it must be equal to the physical cell identifier
     /// \f$N_{\textup{ID}}^{\textup{cell}}\f$.
     unsigned n_id;
     /// Number of expected HARQ-ACK bits {0, 1, 2} (see also \ref PUCCH_payload_size "here").

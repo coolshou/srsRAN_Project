@@ -1,26 +1,14 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2013-2024 Software Radio Systems Limited
 #
-# This file is part of srsRAN
-#
-# srsRAN is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as
-# published by the Free Software Foundation, either version 3 of
-# the License, or (at your option) any later version.
-#
-# srsRAN is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Affero General Public License for more details.
-#
-# A copy of the GNU Affero General Public License can be found in
-# the LICENSE file in the top-level directory of this distribution
-# and at http://www.gnu.org/licenses/.
+# By using this file, you agree to the terms and conditions set
+# forth in the LICENSE file which can be found at the top level of
+# the distribution.
 #
 
 include:
   - project: softwareradiosystems/ci/tools
-    ref: "14"
+    ref: "17"
     file: .gitlab/ci-shared/setup/all.yml
 
 variables:
@@ -28,6 +16,7 @@ variables:
     description: Retina Testbed Description
     options:
       - "zmq"
+      - "zmq_deb"
       - "zmq_single_ue"
       - "zmq_4x4_mimo"
       - "zmq_srsue"
@@ -74,8 +63,9 @@ load retina variables:
     - if: $TESTBED == "none"
       when: never
     - if: $ON_MR
-    - if: $CI_DESCRIPTION =~ /Nightly/
+    - if: $CI_DESCRIPTION =~ /Nightly E2E Tests/
     - if: $ON_WEB
+    - if: $ON_API
   script:
     - cat .gitlab/ci/e2e/.env
   artifacts:
@@ -94,27 +84,51 @@ load retina variables:
     - job: "load retina variables"
       artifacts: true
 
+e2e request validation:
+  stage: static
+  extends:
+    - .prepare_test
+  rules:
+    - if: $ON_MR
+      changes:
+        - .gitlab/ci/e2e/**/*
+  image:
+    name: ${RETINA_REGISTRY_PREFIX}/launcher:${RETINA_VERSION}
+    entrypoint: ["/bin/sh", "-c"]
+  script:
+    - |
+      cd ${CI_PROJECT_DIR}/.gitlab/ci/e2e
+      file_list=$(ls *.yml)
+      for f in $file_list; do
+          retina-request-checker --input $f
+      done
+
 .e2e-run:
-  stage: e2e
   resource_group: e2e-${GROUP}
   timeout: 6h
   image:
     name: ${RETINA_REGISTRY_PREFIX}/launcher:${RETINA_VERSION}
     entrypoint: ["/bin/sh", "-c"]
+  interruptible: false
   variables:
     ARTIFACT_COMPRESSION_LEVEL: "slowest"
-    KUBERNETES_EPHEMERAL_STORAGE_REQUEST: "5G"
+    KUBERNETES_CPU_REQUEST: 2
+    KUBERNETES_CPU_LIMIT: 2
+    KUBERNETES_MEMORY_REQUEST: 2Gi
+    KUBERNETES_MEMORY_LIMIT: 2Gi
+    KUBERNETES_EPHEMERAL_STORAGE_REQUEST: "12G"
+    KUBERNETES_EPHEMERAL_STORAGE_LIMIT: "12G"
     KUBECONFIG_VAR_NAME: "RETINA_NAMESPACE_KUBECONFIG"
     GROUP: zmq
   tags:
-    - on-prem-amd64
+    - "${RETINA_TAG}"
   extends:
     - .prepare_test
   rules:
-    - if: $CI_DESCRIPTION =~ /Nightly/
+    - if: $CI_DESCRIPTION =~ /Nightly E2E Tests/
   artifacts:
     paths:
-      - $CI_JOB_NAME/*
+      - tests/e2e/log
     when: always
     expire_in: 1 week
     reports:
@@ -130,6 +144,7 @@ load retina variables:
     - retina-delete-orchestration-network --user-name ^ci_${GROUP} --regex
     # Add extra secret env variables to the .env file
     - |
+      echo "" >> .gitlab/ci/e2e/.env
       cat $RETINA_SECRET_ENV >> .gitlab/ci/e2e/.env
     # Set username for retina
     - |
@@ -146,25 +161,28 @@ load retina variables:
   after_script:
     - |
       echo "*******************************************************************************************************************************"
-      echo "Test report ---> https://softwareradiosystems.gitlab.io/-/$CI_PROJECT_NAME/-/jobs/$CI_JOB_ID/artifacts/$CI_JOB_NAME/report.html"
+      echo "Test report ---> https://softwareradiosystems.gitlab.io/-/$CI_PROJECT_NAME/-/jobs/$CI_JOB_ID/artifacts/tests/e2e/log//report.html"
       echo "*******************************************************************************************************************************"
     - du -hs tests/e2e/log/
-    - mv tests/e2e/log ${CI_PROJECT_DIR}/$CI_JOB_NAME
-    - echo "$CI_JOB_ID" >> ${CI_PROJECT_DIR}/$CI_JOB_NAME/job.env
 
-custom-e2e:
+custom e2e:
+  stage: manual
   extends: .e2e-run
-  interruptible: false # Web jobs are standalone
   rules:
     - if: $TESTBED == "none"
       when: never
     - if: $ON_WEB
+    - if: $ON_API
   needs:
     - *retina-needs
-    - custom-build
+    - custom build
     - build trx driver
 
-smoke-zmq:
+################################################################################
+# ZMQ
+################################################################################
+
+smoke zmq:
   extends: .e2e-run
   stage: manual
   rules:
@@ -172,11 +190,12 @@ smoke-zmq:
     - if: $ON_MR
       when: manual
       allow_failure: false
+  interruptible: true
   variables:
     TESTBED: zmq
     MARKERS: "smoke"
     PYTEST_ARGS: "-x"
-    RETINA_ARGS: "gnb.all.pcap=True"
+    RETINA_ARGS: "gnb.all.pcap=True gnb.all.mac_enable=True gnb.all.rlc_enable=True"
     E2E_LOG_LEVEL: "debug"
   needs:
     - job: "smoke relwithdeb cached"
@@ -188,100 +207,231 @@ smoke-zmq:
     - *txrx-lib
     - *retina-needs
 
-zmq:
+.zmq:
+  stage: zmq
   extends: .e2e-run
-  rules:
-    - if: $CI_DESCRIPTION =~ /Nightly/
-  interruptible: false
   variables:
     TESTBED: "zmq"
-    MARKERS: "zmq and not smoke"
     E2E_LOG_LEVEL: "info"
   needs:
-    - job: "smoke relwithdeb update cache"
+    - job: "basic relwithdeb"
       artifacts: true
     - *txrx-lib
     - *retina-needs
 
-zmq_srsue:
-  extends: .e2e-run
-  rules:
-    - if: $CI_DESCRIPTION =~ /Nightly/
-  interruptible: false
+srsue:
+  extends: .zmq
   variables:
     TESTBED: "zmq_srsue"
     MARKERS: "zmq_srsue"
     E2E_LOG_LEVEL: "info"
   needs:
-    - job: "smoke relwithdeb update cache"
+    - job: "basic relwithdeb"
       artifacts: true
     - *txrx-lib
     - *retina-needs
 
-zmq-alternative-configs:
-  extends: .e2e-run
-  rules:
-    - if: $CI_DESCRIPTION =~ /Nightly/
-  interruptible: false
+amari 1UE:
+  extends: .zmq
   variables:
     TESTBED: "zmq_single_ue"
     MARKERS: "zmq_single_ue"
     E2E_LOG_LEVEL: "info"
-    RETINA_ARGS: "gnb.all.pcap=True"
+    RETINA_ARGS: "gnb.all.pcap=True gnb.all.rlc_enable=True"
   needs:
-    - job: "smoke relwithdeb update cache"
+    - job: "basic relwithdeb"
       artifacts: true
     - *txrx-lib
     - *retina-needs
 
-zmq_4x4_mimo:
-  extends: .e2e-run
-  rules:
-    - if: $CI_DESCRIPTION =~ /Nightly/
-  interruptible: false
+amari 1UE 4x4 mimo:
+  extends: .zmq
   variables:
     TESTBED: "zmq_4x4_mimo"
     MARKERS: "zmq_4x4_mimo"
     E2E_LOG_LEVEL: "info"
   needs:
-    - job: "smoke relwithdeb update cache"
+    - job: "basic relwithdeb"
       artifacts: true
     - *txrx-lib
     - *retina-needs
 
-zmq-asan:
-  extends: zmq
+amari 4UE deb:
+  extends: .zmq
+  variables:
+    TESTBED: "zmq_deb"
+    MARKERS: "smoke"
+    E2E_LOG_LEVEL: "info"
+  needs:
+    - job: "basic package"
+      artifacts: true
+    - *txrx-lib
+    - *retina-needs
+
+amari 32UE:
+  extends: .zmq
+  variables:
+    MARKERS: "zmq and not smoke"
+    E2E_LOG_LEVEL: "info"
+    RETINA_ARGS: "gnb.all.pcap=True gnb.all.rlc_enable=False"
+  needs:
+    - job: "basic relwithdeb"
+      artifacts: true
+    - *txrx-lib
+    - *retina-needs
+  parallel:
+    matrix:
+      - KEYWORDS:
+          [
+            "attach_detach",
+            "ping",
+            "iperf and udp and band:3",
+            "iperf and udp and not band:3",
+            "iperf and tcp and band:3",
+            "iperf and tcp and not band:3",
+          ]
+
+amari 32UE [reestablishment]:
+  extends: .zmq
+  variables:
+    MARKERS: "zmq and not smoke"
+    E2E_LOG_LEVEL: "info"
+    KEYWORDS: reestablishment
+    RETINA_ARGS: "gnb.all.pcap=True gnb.all.mac_enable=True gnb.all.rlc_enable=False"
+  allow_failure: true
+  needs:
+    - job: "basic relwithdeb"
+      artifacts: true
+    - *txrx-lib
+    - *retina-needs
+
+amari 32UE asan:
+  extends: .zmq
   variables:
     MARKERS: "smoke"
-    RETINA_ARGS: "gnb.all.pcap=True"
-  interruptible: false
+    RETINA_ARGS: "gnb.all.pcap=True gnb.all.mac_enable=True gnb.all.rlc_enable=True"
   needs:
     - job: "basic asan"
       artifacts: true
     - *txrx-lib
     - *retina-needs
 
-zmq-tsan:
-  extends: zmq
+amari 32UE tsan:
+  extends: .zmq
   variables:
     MARKERS: "smoke"
-    RETINA_ARGS: "gnb.all.pcap=True"
-  interruptible: false
+    RETINA_ARGS: "gnb.all.pcap=True gnb.all.mac_enable=True gnb.all.rlc_enable=True"
   needs:
-    - job: "smoke tsan update cache"
+    - job: "basic tsan"
       artifacts: true
     - *txrx-lib
     - *retina-needs
 
-zmq-valgrind:
-  extends: zmq
+amari 32UE memcheck:
+  extends: .zmq
   variables:
     MARKERS: "zmq_valgrind"
     E2E_LOG_LEVEL: "warning"
-    RETINA_ARGS: "gnb.all.pcap=True"
-  interruptible: false
+    RETINA_ARGS: "gnb.all.pcap=True gnb.all.mac_enable=True gnb.all.rlc_enable=True"
   needs:
-    - job: "smoke valgrind update cache"
+    - job: "basic memcheck"
+      artifacts: true
+    - *txrx-lib
+    - *retina-needs
+
+################################################################################
+# TEST MODE
+################################################################################
+
+test mode ue:
+  stage: zmq
+  extends: .e2e-run
+  variables:
+    TESTBED: "test_mode"
+    MARKERS: "test_mode"
+    KEYWORDS: "test_ue"
+    E2E_LOG_LEVEL: "warning"
+  needs:
+    - job: "basic relwithdeb"
+      artifacts: true
+    - *txrx-lib
+    - *retina-needs
+
+test mode ue tsan:
+  extends: test mode ue
+  when: manual
+  allow_failure: true
+  needs:
+    - job: "basic tsan"
+      artifacts: true
+    - *txrx-lib
+    - *retina-needs
+
+test mode ue asan:
+  extends: test mode ue
+  needs:
+    - job: "basic asan"
+      artifacts: true
+    - *txrx-lib
+    - *retina-needs
+
+test mode ue memcheck:
+  extends: test mode ue
+  needs:
+    - job: "basic memcheck"
+      artifacts: true
+    - *txrx-lib
+    - *retina-needs
+
+test mode ru:
+  stage: zmq
+  extends: .e2e-run
+  when: manual
+  allow_failure: true
+  variables:
+    GROUP: "viavi"
+    TESTBED: "viavi"
+    MARKERS: "test_mode"
+    KEYWORDS: "test_ru"
+    E2E_LOG_LEVEL: "info"
+  needs:
+    - job: "basic avx512 dpdk"
+      artifacts: true
+    - *txrx-lib
+    - *retina-needs
+
+test mode ru tsan:
+  extends: test mode ru
+  variables:
+    E2E_LOG_LEVEL: "warning"
+  when: manual
+  allow_failure: true
+  needs:
+    - job: "basic tsan"
+      artifacts: true
+    - *txrx-lib
+    - *retina-needs
+
+test mode ru asan:
+  extends: test mode ru
+  variables:
+    E2E_LOG_LEVEL: "warning"
+  when: manual
+  allow_failure: true
+  needs:
+    - job: "basic asan"
+      artifacts: true
+    - *txrx-lib
+    - *retina-needs
+
+test mode ru memcheck:
+  extends: test mode ru
+  variables:
+    E2E_LOG_LEVEL: "warning"
+  when: manual
+  allow_failure: true
+  needs:
+    - job: "basic memcheck"
       artifacts: true
     - *txrx-lib
     - *retina-needs
@@ -291,21 +441,19 @@ zmq-valgrind:
 ################################################################################
 
 .rf:
+  stage: rf
   extends: .e2e-run
-  rules:
-    - if: $CI_DESCRIPTION =~ /Nightly/
-  interruptible: false
   variables:
     GROUP: "rf"
     TESTBED: "rf_b200"
     MARKERS: "rf"
     E2E_LOG_LEVEL: "warning"
   needs:
-    - job: "smoke relwithdeb update cache"
+    - job: "basic relwithdeb"
       artifacts: true
     - *retina-needs
 
-rf-asan:
+amari b200 asan:
   extends: .rf
   variables:
     MARKERS: "rf_not_crash"
@@ -314,12 +462,12 @@ rf-asan:
       artifacts: true
     - *retina-needs
 
-rf-b200-config:
+validate b200 config:
   extends: .rf
   variables:
     MARKERS: "rf_b200"
 
-rf-n300-config:
+validate n300 config:
   extends: .rf
   variables:
     MARKERS: "rf_n300"
@@ -329,10 +477,9 @@ rf-n300-config:
 # Android
 ###############################################################################
 
-android:
+android b200:
+  stage: rf
   extends: .e2e-run
-  rules:
-    - if: $CI_DESCRIPTION =~ /Nightly/
   variables:
     GROUP: "rf"
     TESTBED: "android_b200"
@@ -340,14 +487,13 @@ android:
     E2E_LOG_LEVEL: "warning"
     KUBECONFIG_VAR_NAME: "RETINA_NAMESPACE_KUBECONFIG"
   needs:
-    - job: "smoke relwithdeb update cache"
+    - job: "basic relwithdeb"
       artifacts: true
     - *retina-needs
 
-android-x300:
+android x300:
+  stage: rf
   extends: .e2e-run
-  rules:
-    - if: $CI_DESCRIPTION =~ /Nightly/
   variables:
     GROUP: "rf"
     TESTBED: "android_x300"
@@ -355,12 +501,12 @@ android-x300:
     E2E_LOG_LEVEL: "info"
     KUBECONFIG_VAR_NAME: "RETINA_NAMESPACE_KUBECONFIG"
   needs:
-    - job: "smoke relwithdeb update cache"
+    - job: "basic relwithdeb"
       artifacts: true
     - *retina-needs
 
-android-n300:
-  extends: android-x300
+android n300:
+  extends: android x300
   variables:
     TESTBED: "android_n300"
 
@@ -369,17 +515,15 @@ android-n300:
 ###############################################################################
 
 viavi:
+  stage: rf
   extends: .e2e-run
-  rules:
-    - if: $CI_DESCRIPTION =~ /Nightly/
-      when: delayed
-      start_in: 5 hours
   variables:
     GROUP: "viavi"
     TESTBED: "viavi"
     MARKERS: "viavi"
     E2E_LOG_LEVEL: "warning"
     KUBECONFIG_VAR_NAME: "RETINA_NAMESPACE_KUBECONFIG"
+    RETINA_ARGS: "gnb.all.metrics_enable=True"
   needs:
     - job: "basic avx512 dpdk"
       artifacts: true
@@ -393,14 +537,14 @@ viavi:
   extends:
     - .prepare_test
   rules:
-    - if: $CI_DESCRIPTION =~ /Nightly/
+    - if: $CI_DESCRIPTION =~ /Nightly E2E Tests/
       when: always
   interruptible: false
   image:
     name: ${RETINA_REGISTRY_PREFIX}/launcher:${RETINA_VERSION}
     entrypoint: ["/bin/sh", "-c"]
   tags:
-    - on-prem-amd64
+    - "${RETINA_TAG}"
   script:
     - |
       retina-garbage-collector --mode demolition

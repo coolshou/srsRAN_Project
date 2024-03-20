@@ -178,26 +178,18 @@ TEST_F(scheduler_missing_ack_tester, when_no_harq_ack_arrives_then_harq_eventual
     ASSERT_NE(pdcch, nullptr) << "Failed to allocate DL HARQ newtxs";
   }
 
-  // Set buffer state to zero, so that no newtxs get allocated once the current harqs become empty.
+  // Set buffer state to zero, so that no newtxs get allocated once the current latest_harq_states become empty.
   srslog::fetch_basic_logger("TEST").info("-- Setting DL BS=0, which will stop new DL grants --");
   bench.push_dl_buffer_state(dl_buffer_state_indication_message{ue_create_req.ue_index, LCID_SRB1, 0});
   bench.run_slot(to_du_cell_index(0));
   ASSERT_EQ(bench.find_ue_dl_pdcch(rnti), nullptr) << "No HARQs should be available at this point";
 
-  // After several slots without HARQ-ACK, the HARQ should auto retx.
-  srslog::fetch_basic_logger("TEST").info("-- DL HARQs should be auto-retransmitted --");
-  const unsigned MAX_TEST_COUNT = nof_harqs * 8;
-  unsigned       nof_retxs      = 0;
-  for (unsigned i = 0; i != MAX_TEST_COUNT; ++i) {
+  // After several slots without HARQ-ACK, the HARQ should auto reset.
+  {
+    srslog::fetch_basic_logger("TEST").info("-- DL HARQs should be auto-reset --");
     const pdcch_dl_information* pdcch = this->run_until_next_dl_pdcch_alloc(MAX_HARQ_TIMEOUT);
-    if (pdcch == nullptr) {
-      // All HARQs should be reset at this point.
-      break;
-    }
-    nof_retxs++;
+    ASSERT_EQ(pdcch, nullptr) << "Retransmission took place without an HARQ-ACK";
   }
-  ASSERT_GT(nof_retxs, 0);
-  ASSERT_TRUE(nof_retxs % nof_harqs == 0) << "All HARQs should have expired at this point";
 
   // At this point, all HARQs should be free once again. Push enough bytes and verify that all HARQs get re-allocated.
   bench.push_dl_buffer_state(dl_buffer_state_indication_message{ue_create_req.ue_index, LCID_SRB1, 10000000});
@@ -230,27 +222,19 @@ TEST_F(scheduler_missing_ack_tester, when_no_crc_arrives_then_ul_harq_eventually
     ASSERT_NE(pdcch, nullptr) << "Failed to allocate UL HARQ newtxs";
   }
 
-  // Set buffer state to zero, so that no newtxs get allocated once the current harqs become empty.
+  // Set buffer state to zero, so that no newtxs get allocated once the current latest_harq_states become empty.
   srslog::fetch_basic_logger("TEST").info("-- Setting BSR=0, which will stop new UL grants --");
   bsr.reported_lcgs[0].nof_bytes = 0;
   bench.push_bsr(bsr);
   bench.run_slot(to_du_cell_index(0));
   ASSERT_EQ(bench.find_ue_ul_pdcch(rnti), nullptr) << "No HARQs should be available at this point";
 
-  // After several slots without HARQ-ACK, the HARQ should auto retx.
-  srslog::fetch_basic_logger("TEST").info("-- UL HARQs should be auto-retransmitted --");
-  const unsigned MAX_TEST_COUNT = nof_harqs * 8;
-  unsigned       nof_retxs      = 0;
-  for (unsigned i = 0; i != MAX_TEST_COUNT; ++i) {
+  // After several slots without HARQ-ACK, the HARQ should auto reset.
+  srslog::fetch_basic_logger("TEST").info("-- UL HARQs should be auto-reset --");
+  {
     const pdcch_ul_information* pdcch = this->run_until_next_ul_pdcch_alloc(MAX_HARQ_TIMEOUT);
-    if (pdcch == nullptr) {
-      // All HARQs should be reset at this point.
-      break;
-    }
-    nof_retxs++;
+    ASSERT_EQ(pdcch, nullptr) << "No retx should have taken place without CRC";
   }
-  ASSERT_GT(nof_retxs, 0);
-  ASSERT_TRUE(nof_retxs % nof_harqs == 0) << "All HARQs should have expired at this point";
 
   // At this point, all HARQs should be free once again. Push enough bytes and verify that all HARQs get re-allocated.
   srslog::fetch_basic_logger("TEST").info("-- Pushing BSR > 0 and ensuring HARQs get reallocated. --");

@@ -183,8 +183,12 @@ TEST_P(scheduler_con_res_msg4_test, while_ue_is_in_fallback_then_common_pucch_is
 
   // Wait for ConRes + Msg4 PDCCH, PDSCH and PUCCH to be scheduled.
   ASSERT_TRUE(this->run_slot_until([this]() {
-    auto* pucch = find_ue_pucch(rnti, *this->last_sched_res_list[to_du_cell_index(0)]);
-    return pucch != nullptr and pucch->format == pucch_format::FORMAT_1 and pucch->format_1.harq_ack_nof_bits > 0;
+    for (const auto& pucch : this->last_sched_res_list[to_du_cell_index(0)]->ul.pucchs) {
+      if (pucch.crnti == rnti and pucch.format == pucch_format::FORMAT_1 and pucch.format_1.harq_ack_nof_bits > 0) {
+        return true;
+      }
+    }
+    return false;
   }));
 
   // Enqueue SRB1 data.
@@ -200,12 +204,15 @@ TEST_P(scheduler_con_res_msg4_test, while_ue_is_in_fallback_then_common_pucch_is
   ASSERT_EQ(pdsch.pdsch_cfg.dci_fmt, dci_dl_format::f1_0);
 
   // Ensure common PUCCH resources are used.
-  ASSERT_TRUE(this->run_slot_until([this]() {
-    auto* pucch = find_ue_pucch(rnti, *this->last_sched_res_list[to_du_cell_index(0)]);
-    if (pucch == nullptr) {
-      return false;
+  const pucch_info* pucch_ptr = nullptr;
+  ASSERT_TRUE(this->run_slot_until([this, &pucch_ptr]() {
+    for (const auto& pucch : this->last_sched_res_list[to_du_cell_index(0)]->ul.pucchs) {
+      if (pucch.crnti == rnti and pucch.format == pucch_format::FORMAT_1 and pucch.format_1.harq_ack_nof_bits > 0) {
+        pucch_ptr = &pucch;
+        return true;
+      }
     }
-    return pucch->format == pucch_format::FORMAT_1 and pucch->format_1.harq_ack_nof_bits > 0;
+    return false;
   }));
   // TODO: Once PUCCH scheduler avoids multiplexing SR and HARQ-ACK for common PUCCH resources, uncomment the following.
   //  ASSERT_EQ(std::count_if(this->last_sched_res->ul.pucchs.begin(),
@@ -213,10 +220,38 @@ TEST_P(scheduler_con_res_msg4_test, while_ue_is_in_fallback_then_common_pucch_is
   //                          [this](const pucch_info& pucch) { return pucch.crnti == rnti; }),
   //            1)
   //      << "In case of common PUCCH scheduling, multiplexing with SR or CSI should be avoided";
-  const pucch_info& pucch = *find_ue_pucch(rnti, *this->last_sched_res_list[to_du_cell_index(0)]);
-  ASSERT_EQ(pucch.format, pucch_format::FORMAT_1);
-  ASSERT_EQ(pucch.format_1.sr_bits, sr_nof_bits::no_sr);
-  ASSERT_FALSE(pucch.resources.second_hop_prbs.empty()) << "For common PUCCH resources, second hop is used";
+  ASSERT_NE(pucch_ptr, nullptr);
+  ASSERT_EQ(pucch_ptr->format, pucch_format::FORMAT_1);
+  ASSERT_EQ(pucch_ptr->format_1.sr_bits, sr_nof_bits::no_sr);
+  ASSERT_FALSE(pucch_ptr->resources.second_hop_prbs.empty()) << "For common PUCCH resources, second hop is used";
+}
+
+TEST_P(scheduler_con_res_msg4_test, while_ue_is_in_fallback_then_common_ss_is_used)
+{
+  const static unsigned msg4_size = 128;
+
+  // Enqueue ConRes CE + Msg4.
+  this->sched->handle_dl_mac_ce_indication(dl_mac_ce_indication{ue_index, lcid_dl_sch_t::UE_CON_RES_ID});
+  this->push_dl_buffer_state(dl_buffer_state_indication_message{this->ue_index, params.msg4_lcid, msg4_size});
+
+  // Wait for ConRes + Msg4 PDCCH to be scheduled.
+  ASSERT_TRUE(this->run_slot_until([this]() { return find_ue_dl_pdcch(rnti) != nullptr; }));
+
+  const pdcch_dl_information&       dl_pdcch          = *find_ue_dl_pdcch(rnti);
+  bool                              is_common_ss_used = false;
+  const search_space_configuration* ss_used           = nullptr;
+  for (const search_space_configuration& ss :
+       cell_cfg_list.front().dl_cfg_common.init_dl_bwp.pdcch_common.search_spaces) {
+    if (dl_pdcch.ctx.context.ss_id == ss.get_id()) {
+      is_common_ss_used = true;
+      ss_used           = &ss;
+      break;
+    }
+  }
+  ASSERT_TRUE(is_common_ss_used) << "UE in fallback should use common SS";
+  // PDCCH monitoring must be active in this slot.
+  ASSERT_TRUE(ss_used != nullptr and pdcch_helper::is_pdcch_monitoring_active(next_slot, *ss_used))
+      << fmt::format("Common SS id={} is not monitored at slot={}", ss_used->get_id(), next_slot.slot_index());
 }
 
 INSTANTIATE_TEST_SUITE_P(scheduler_con_res_msg4_test,

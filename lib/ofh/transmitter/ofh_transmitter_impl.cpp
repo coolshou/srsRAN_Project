@@ -30,7 +30,7 @@ transmitter_impl::transmitter_impl(const transmitter_config& config, transmitter
   dl_manager(std::move(dependencies.dl_manager)),
   ul_request_handler(std::move(dependencies.ul_request_handler)),
   msg_transmitter(*dependencies.logger,
-                  config.symbol_handler_cfg,
+                  config.tx_timing_params,
                   std::move(dependencies.eth_gateway),
                   dependencies.frame_pool),
   ota_dispatcher(*dependencies.executor, dl_manager->get_ota_symbol_boundary_notifier(), msg_transmitter)
@@ -52,4 +52,9 @@ downlink_handler& transmitter_impl::get_downlink_handler()
 ota_symbol_boundary_notifier& transmitter_impl::get_ota_symbol_boundary_notifier()
 {
   return ota_dispatcher;
+}
+
+void transmitter_impl::set_error_notifier(error_notifier& notifier)
+{
+  dl_manager->set_error_notifier(notifier);
 }

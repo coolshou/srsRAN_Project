@@ -66,7 +66,7 @@ public:
 
   void handle_ul_phr_indication(const mac_phr_ce_info& phr) override;
 
-  void handle_crnti_ce_indication(du_ue_index_t old_ue_index) override;
+  void handle_crnti_ce_indication(du_ue_index_t old_ue_index, du_cell_index_t cell_index) override;
 
   void handle_paging_information(const paging_information& msg) override;
 
@@ -121,7 +121,9 @@ private:
     srsran_scheduler_adapter& parent;
   };
 
+  // Allocator for TC-RNTIs.
   rnti_manager& rnti_mng;
+
   /// Detector of UE RLFs.
   rlf_detector          rlf_handler;
   task_executor&        ctrl_exec;
@@ -132,9 +134,6 @@ private:
 
   /// srsGNB scheduler.
   std::unique_ptr<mac_scheduler> sched_impl;
-
-  /// Allocator of TC-RNTI values.
-  rnti_manager rnti_alloc;
 
   /// List of event flags used by scheduler to notify that the configuration is complete.
   struct ue_notification_context {

@@ -49,7 +49,7 @@ class dummy_cu_cp_f1c_gateway
 public:
   dummy_cu_cp_f1c_gateway() : logger(srslog::fetch_basic_logger("TEST")) {}
 
-  void attach_cu_cp_du_repo(srs_cu_cp::du_repository& cu_cp_du_mng_)
+  void attach_cu_cp_du_repo(srs_cu_cp::cu_cp_f1c_handler& cu_cp_du_mng_)
   {
     local_f1c_gw.attach_cu_cp_du_repo(cu_cp_du_mng_);
   }
@@ -140,57 +140,29 @@ public:
 
   srs_cu_cp::du_index_t get_du_index() override { return srs_cu_cp::du_index_t::min; }
 
-  void on_f1_setup_request_received(const srs_cu_cp::f1ap_f1_setup_request& msg) override
+  du_setup_result on_new_du_setup_request(const du_setup_request& msg) override
   {
     logger.info("Received F1SetupRequest");
-    last_f1_setup_request_msg.gnb_du_id          = msg.gnb_du_id;
-    last_f1_setup_request_msg.gnb_du_name        = msg.gnb_du_name;
-    last_f1_setup_request_msg.gnb_du_rrc_version = msg.gnb_du_rrc_version;
-    for (const auto& served_cell : msg.gnb_du_served_cells_list) {
-      srs_cu_cp::cu_cp_du_served_cells_item served_cell_item;
-      served_cell_item.served_cell_info.nr_cgi          = served_cell.served_cell_info.nr_cgi;
-      served_cell_item.served_cell_info.nr_pci          = served_cell.served_cell_info.nr_pci;
-      served_cell_item.served_cell_info.five_gs_tac     = served_cell.served_cell_info.five_gs_tac;
-      served_cell_item.served_cell_info.cfg_eps_tac     = served_cell.served_cell_info.cfg_eps_tac;
-      served_cell_item.served_cell_info.served_plmns    = served_cell.served_cell_info.served_plmns;
-      served_cell_item.served_cell_info.nr_mode_info    = served_cell.served_cell_info.nr_mode_info;
-      served_cell_item.served_cell_info.meas_timing_cfg = served_cell.served_cell_info.meas_timing_cfg.copy();
-
-      if (served_cell.gnb_du_sys_info.has_value()) {
-        srs_cu_cp::cu_cp_gnb_du_sys_info gnb_du_sys_info;
-        gnb_du_sys_info.mib_msg  = served_cell.gnb_du_sys_info.value().mib_msg.copy();
-        gnb_du_sys_info.sib1_msg = served_cell.gnb_du_sys_info.value().sib1_msg.copy();
-
-        served_cell_item.gnb_du_sys_info = gnb_du_sys_info;
-      }
-
-      last_f1_setup_request_msg.gnb_du_served_cells_list.push_back(served_cell_item);
-    }
+    last_f1_setup_request_msg = msg;
+    return next_du_setup_resp;
   }
 
-  ue_index_t on_new_ue_index_required() override
+  srs_cu_cp::ue_rrc_context_creation_response
+  on_ue_rrc_context_creation_request(const ue_rrc_context_creation_request& msg) override
   {
-    logger.info("Requested to allocate a new ue index.");
-    return allocate_ue_index();
-  }
-
-  srs_cu_cp::ue_creation_complete_message on_create_ue(const srs_cu_cp::cu_cp_ue_creation_message& msg) override
-  {
-    logger.info("Received UeCreationRequest");
+    logger.info("Received {}", __FUNCTION__);
     last_ue_creation_msg.ue_index               = msg.ue_index;
     last_ue_creation_msg.cgi                    = msg.cgi;
-    last_ue_creation_msg.tac                    = msg.tac;
     last_ue_creation_msg.du_to_cu_rrc_container = msg.du_to_cu_rrc_container.copy();
     last_ue_creation_msg.c_rnti                 = msg.c_rnti;
 
-    srs_cu_cp::ue_creation_complete_message ret = {};
-    ret.ue_index                                = msg.ue_index;
-    ret.f1ap_rrc_notifier                       = f1ap_rrc_notifier.get();
+    srs_cu_cp::ue_rrc_context_creation_response ret = {};
+    ret.f1ap_rrc_notifier                           = f1ap_rrc_notifier.get();
 
     return ret;
   }
 
-  ue_index_t allocate_ue_index()
+  ue_index_t on_new_cu_cp_ue_required() override
   {
     ue_index_t ue_index = srs_cu_cp::ue_index_t::invalid;
     if (ue_id < srs_cu_cp::MAX_NOF_UES_PER_DU) {
@@ -210,8 +182,10 @@ public:
 
   void set_ue_id(uint16_t ue_id_) { ue_id = ue_id_; }
 
-  srs_cu_cp::f1ap_f1_setup_request                 last_f1_setup_request_msg;
-  srs_cu_cp::cu_cp_ue_creation_message             last_ue_creation_msg;
+  srs_cu_cp::du_setup_request last_f1_setup_request_msg;
+  srs_cu_cp::du_setup_result  next_du_setup_resp;
+
+  srs_cu_cp::ue_rrc_context_creation_request       last_ue_creation_msg;
   optional<srs_cu_cp::ue_index_t>                  last_created_ue_index;
   std::unique_ptr<dummy_f1ap_rrc_message_notifier> f1ap_rrc_notifier =
       std::make_unique<dummy_f1ap_rrc_message_notifier>();
@@ -227,7 +201,7 @@ private:
 class dummy_f1ap_du_management_notifier : public f1ap_du_management_notifier
 {
 public:
-  void attach_handler(du_repository* handler_) { handler = handler_; };
+  void attach_handler(cu_cp_f1c_handler* handler_) { handler = handler_; };
 
   void on_du_remove_request_received(du_index_t idx) override
   {
@@ -244,22 +218,7 @@ public:
 
 private:
   srslog::basic_logger& logger  = srslog::fetch_basic_logger("TEST");
-  du_repository*        handler = nullptr;
-};
-
-class dummy_f1ap_task_scheduler : public f1ap_task_scheduler
-{
-public:
-  void schedule_async_task(ue_index_t ue_index, async_task<void>&& task) override
-  {
-    if (task_loop.count(ue_index) == 0) {
-      task_loop.insert(std::make_pair(ue_index, std::make_unique<fifo_async_task_scheduler>(128)));
-    }
-    task_loop.at(ue_index)->schedule(std::move(task));
-  }
-
-private:
-  std::unordered_map<ue_index_t, std::unique_ptr<fifo_async_task_scheduler>> task_loop;
+  cu_cp_f1c_handler*    handler = nullptr;
 };
 
 /// \brief Creates a dummy UE CONTEXT SETUP REQUEST.
@@ -287,14 +246,13 @@ protected:
   srslog::basic_logger& f1ap_logger = srslog::fetch_basic_logger("CU-CP-F1");
   srslog::basic_logger& test_logger = srslog::fetch_basic_logger("TEST");
 
-  slotted_id_table<ue_index_t, test_ue, MAX_NOF_UES_PER_DU> test_ues;
+  std::unordered_map<ue_index_t, test_ue> test_ues;
 
   dummy_f1ap_pdu_notifier           f1ap_pdu_notifier;
   dummy_f1ap_du_processor_notifier  du_processor_notifier;
   dummy_f1ap_du_management_notifier f1ap_du_mgmt_notifier;
   dummy_f1ap_ue_removal_notifier    f1ap_cu_cp_notifier;
   timer_manager                     timers;
-  dummy_f1ap_task_scheduler         task_sched;
   manual_task_worker                ctrl_worker{128};
   std::unique_ptr<f1ap_cu>          f1ap;
 };

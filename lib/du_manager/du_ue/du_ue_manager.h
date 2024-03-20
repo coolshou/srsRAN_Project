@@ -53,6 +53,9 @@ public:
   /// \brief Handle the removal of an existing UE context by F1AP request.
   async_task<void> handle_ue_delete_request(const f1ap_ue_delete_request& msg);
 
+  /// \brief Handle the deactivation of an existing UE context by F1AP request.
+  async_task<void> handle_ue_deactivation_request(du_ue_index_t ue_index);
+
   void handle_reestablishment_request(du_ue_index_t new_ue_index, du_ue_index_t old_ue_index);
 
   /// \brief Handle the configuration of an existing UE context by RIC request.
@@ -77,11 +80,11 @@ public:
   gtpu_teid_pool& get_f1u_teid_pool() override { return *f1u_teid_pool; }
 
 private:
-  du_ue* add_ue(const du_ue_context& ue_ctx, ue_ran_resource_configurator ue_ran_res) override;
-  void   update_crnti(du_ue_index_t ue_index, rnti_t crnti) override;
-  du_ue* find_rnti(rnti_t rnti) override;
-  du_ue* find_f1ap_ue_id(gnb_du_ue_f1ap_id_t f1ap_ue_id) override;
-  void   remove_ue(du_ue_index_t ue_index) override;
+  expected<du_ue*, std::string> add_ue(const du_ue_context& ue_ctx, ue_ran_resource_configurator ue_ran_res) override;
+  void                          update_crnti(du_ue_index_t ue_index, rnti_t crnti) override;
+  du_ue*                        find_rnti(rnti_t rnti) override;
+  du_ue*                        find_f1ap_ue_id(gnb_du_ue_f1ap_id_t f1ap_ue_id) override;
+  void                          remove_ue(du_ue_index_t ue_index) override;
 
   du_manager_params&       cfg;
   du_ran_resource_manager& cell_res_alloc;

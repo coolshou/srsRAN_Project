@@ -22,6 +22,7 @@
 
 #include "lib/rlc/rlc_rx_tm_entity.h"
 #include "rlc_test_helpers.h"
+#include "srsran/rlc/rlc_srb_config_factory.h"
 #include <gtest/gtest.h>
 #include <queue>
 
@@ -62,7 +63,8 @@ protected:
     tester = std::make_unique<rlc_rx_tm_test_frame>();
 
     // Create RLC AM TX entity
-    rlc = std::make_unique<rlc_rx_tm_entity>(0, du_ue_index_t::MIN_DU_UE_INDEX, srb_id_t::srb0, *tester, true, pcap);
+    rlc = std::make_unique<rlc_rx_tm_entity>(
+        0, du_ue_index_t::MIN_DU_UE_INDEX, srb_id_t::srb0, make_default_srb0_rlc_config().tm.rx, *tester, true, pcap);
   }
 
   void TearDown() override
@@ -89,14 +91,14 @@ TEST_F(rlc_rx_am_test, test_rx)
 
   // write first PDU into lower end
   byte_buffer       pdu_buf = create_sdu(sdu_size, count);
-  byte_buffer_slice pdu     = {pdu_buf.deep_copy()};
+  byte_buffer_slice pdu     = {pdu_buf.deep_copy().value()};
   rlc->handle_pdu(std::move(pdu));
 
   count++;
 
   // write second PDU into lower end
   byte_buffer pdu_buf2 = create_sdu(sdu_size, count);
-  pdu                  = {pdu_buf2.deep_copy()};
+  pdu                  = {pdu_buf2.deep_copy().value()};
   rlc->handle_pdu(std::move(pdu));
 
   // read first SDU from tester

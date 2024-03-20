@@ -1,10 +1,23 @@
 #
 # Copyright 2021-2024 Software Radio Systems Limited
 #
-# By using this file, you agree to the terms and conditions set
-# forth in the LICENSE file which can be found at the top level of
-# the distribution.
+# This file is part of srsRAN
 #
+# srsRAN is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of
+# the License, or (at your option) any later version.
+#
+# srsRAN is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# A copy of the GNU Affero General Public License can be found in
+# the LICENSE file in the top-level directory of this distribution
+# and at http://www.gnu.org/licenses/.
+#
+
 """
 Configuration related steps
 """
@@ -29,10 +42,10 @@ def configure_test_parameters(
     sample_rate: Optional[int],
     global_timing_advance: int,
     time_alignment_calibration: Union[int, str],
-    pcap: Optional[bool] = None,
     gtpu_enable: Optional[bool] = None,
     common_search_space_enable: bool = False,
     prach_config_index: int = -1,
+    log_ip_level="",
 ):
     """
     Configure test parameters
@@ -47,6 +60,7 @@ def configure_test_parameters(
                 "ssb_scs": common_scs,
                 "bandwidth": bandwidth,
                 "global_timing_advance": global_timing_advance,
+                "log_ip_level": log_ip_level,
             },
         },
         "gnb": {
@@ -61,10 +75,9 @@ def configure_test_parameters(
             },
         },
     }
-    if pcap is not None:
-        retina_data.test_config["gnb"]["parameters"]["pcap"] = pcap
-    if gtpu_enable is not None:
-        retina_data.test_config["gnb"]["parameters"]["gtpu_enable"] = gtpu_enable
+    if gtpu_enable is not None and gtpu_enable:
+        retina_data.test_config["gnb"]["parameters"]["pcap"] = True
+        retina_data.test_config["gnb"]["parameters"]["gtpu_enable"] = True
     if sample_rate is not None:
         retina_data.test_config["ue"]["parameters"]["sample_rate"] = sample_rate
         retina_data.test_config["gnb"]["parameters"]["sample_rate"] = sample_rate

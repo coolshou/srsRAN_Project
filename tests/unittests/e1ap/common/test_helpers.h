@@ -87,7 +87,7 @@ public:
       e1ap_pdu_session_resource_setup_modification_item response_setup_item;
       response_setup_item.pdu_session_id               = request_setup_item.pdu_session_id;
       response_setup_item.ng_dl_up_tnl_info.gtp_teid   = int_to_gtpu_teid(1);
-      response_setup_item.ng_dl_up_tnl_info.tp_address = transport_layer_address{"127.0.0.1"};
+      response_setup_item.ng_dl_up_tnl_info.tp_address = transport_layer_address::create_from_string("127.0.0.1");
 
       for (const auto& request_drb_item : request_setup_item.drb_to_setup_list_ng_ran) {
         e1ap_drb_setup_item_ng_ran response_drb_item;
@@ -221,10 +221,10 @@ private:
 class dummy_cu_cp_e1ap_pdu_notifier : public e1ap_message_notifier
 {
 public:
-  dummy_cu_cp_e1ap_pdu_notifier(srs_cu_cp::cu_cp_interface* cu_cp_, e1ap_message_handler* handler_) :
+  dummy_cu_cp_e1ap_pdu_notifier(srs_cu_cp::cu_cp* cu_cp_, e1ap_message_handler* handler_) :
     logger(srslog::fetch_basic_logger("TEST")), cu_cp(cu_cp_), handler(handler_){};
 
-  void attach_handler(srs_cu_cp::cu_cp_interface* cu_cp_, e1ap_message_handler* handler_)
+  void attach_handler(srs_cu_cp::cu_cp* cu_cp_, e1ap_message_handler* handler_)
   {
     cu_cp   = cu_cp_;
     handler = handler_;
@@ -242,9 +242,9 @@ public:
   e1ap_message last_e1ap_msg;
 
 private:
-  srslog::basic_logger&       logger;
-  srs_cu_cp::cu_cp_interface* cu_cp   = nullptr;
-  e1ap_message_handler*       handler = nullptr;
+  srslog::basic_logger& logger;
+  srs_cu_cp::cu_cp*     cu_cp   = nullptr;
+  e1ap_message_handler* handler = nullptr;
 };
 
 /// Dummy handler just printing the received PDU.

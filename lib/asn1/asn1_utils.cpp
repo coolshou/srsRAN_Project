@@ -21,6 +21,8 @@
  */
 
 #include "srsran/asn1/asn1_utils.h"
+#include "srsran/adt/bounded_bitset.h"
+#include "srsran/asn1/asn1_ap_utils.h"
 
 using srsran::byte_buffer;
 using srsran::span;
@@ -939,7 +941,7 @@ uint64_t octet_string_helper::to_uint(const byte_buffer& buf)
 void octet_string_helper::to_octet_string(srsran::span<uint8_t> buf, uint64_t number)
 {
   uint64_t nbytes = buf.size();
-  if ((static_cast<uint64_t>(1U) << (8U * nbytes)) <= number) {
+  if (nbytes < 8 and (static_cast<uint64_t>(1U) << (8U * nbytes)) <= number) {
     log_error("Integer={} does not fit in an OCTET STRING of size={}", number, nbytes);
     return;
   }
@@ -950,7 +952,7 @@ void octet_string_helper::to_octet_string(srsran::span<uint8_t> buf, uint64_t nu
 
 void octet_string_helper::to_octet_string(srsran::byte_buffer& buf, uint64_t number)
 {
-  buf.clear();
+  buf           = byte_buffer{byte_buffer::fallback_allocation_tag{}};
   size_t nbytes = sizeof(number);
   for (uint32_t i = 0; i < nbytes; ++i) {
     if (not buf.append((number >> (uint64_t)((nbytes - 1 - i) * 8U)) & 0xffu)) {
@@ -995,7 +997,7 @@ unsigned octet_string_helper::hex_string_to_octets(srsran::span<uint8_t> buf, co
 {
   srsran_assert(buf.size() >= ceil_frac(str.size(), (size_t)2U), "out-of-bounds access");
   if (str.size() % 2 != 0) {
-    log_warning("The provided hex string size={} is not a multiple of 2.", str.size());
+    log_error("The provided hex string size={} is not a multiple of 2.", str.size());
   }
   char cstr[] = "\0\0\0";
   for (unsigned i = 0; i < str.size(); i += 2) {
@@ -1008,7 +1010,7 @@ unsigned octet_string_helper::hex_string_to_octets(srsran::span<uint8_t> buf, co
 void octet_string_helper::append_hex_string(byte_buffer& buf, const std::string& str)
 {
   if (str.size() % 2 != 0) {
-    log_warning("The provided hex string size={} is not a multiple of 2.", str.size());
+    log_error("The provided hex string size={} is not a multiple of 2.", str.size());
   }
   char cstr[] = "\0\0\0";
   for (unsigned i = 0; i < str.size(); i += 2) {
@@ -1024,10 +1026,18 @@ void octet_string_helper::append_hex_string(byte_buffer& buf, const std::string&
 ************************/
 
 template <bool Al>
+unbounded_octstring<Al>::unbounded_octstring(const unbounded_octstring& other) noexcept :
+  // Use fallback allocator, because operator= should never fail.
+  srsran::byte_buffer(fallback_allocation_tag{}, other)
+{
+}
+
+template <bool Al>
 unbounded_octstring<Al>& unbounded_octstring<Al>::operator=(const unbounded_octstring& other) noexcept
 {
   if (this != &other) {
-    *static_cast<byte_buffer*>(this) = other.deep_copy();
+    // Use fallback allocator, because operator= should never fail.
+    *this = byte_buffer{fallback_allocation_tag{}, other};
   }
   return *this;
 }
@@ -1044,7 +1054,7 @@ SRSASN_CODE unbounded_octstring<Al>::pack(bit_ref& bref) const
 {
   HANDLE_CODE(pack_length(bref, length(), aligned));
   for (uint8_t b : *this) {
-    bref.pack(b, 8);
+    HANDLE_CODE(bref.pack(b, 8));
   }
   return SRSASN_SUCCESS;
 }
@@ -1072,8 +1082,12 @@ std::string unbounded_octstring<Al>::to_string() const
 template <bool Al>
 unbounded_octstring<Al>& unbounded_octstring<Al>::from_string(const std::string& hexstr)
 {
-  this->clear();
+  // clears previous buffer.
+  *this = byte_buffer{byte_buffer::fallback_allocation_tag{}};
+
+  // appends hex string to buffer.
   octet_string_helper::append_hex_string(*this, hexstr);
+
   return *this;
 }
 
@@ -1554,6 +1568,17 @@ void json_writer::write_bool(bool value)
   write_bool("", value);
 }
 
+void json_writer::write_float(const char* fieldname, float value)
+{
+  write_fieldname(fieldname);
+  fmt::format_to(buffer, "{}", value);
+  sep = COMMA;
+}
+
+void json_writer::write_float(float value)
+{
+  write_float("", value);
+}
 void json_writer::write_null(const char* fieldname)
 {
   write_fieldname(fieldname);
@@ -1642,5 +1667,96 @@ const char* detail::empty_obj_set_item_c::types_opts::to_string() const
   log_error("The enum value=0 of type protocol_ies_empty_o::value_c::types is not valid.");
   return "";
 }
+
+const int real_mantissa_len = 23;
+const int real_exponent_len = 7;
+const int buf_len           = 10;
+
+SRSASN_CODE pack_unconstrained_real(bit_ref& bref, float n, bool aligned)
+{
+  if (aligned) {
+    HANDLE_CODE(bref.align_bytes_zero());
+  }
+  uint8_t   buf[buf_len];
+  uint32_t* bits_ptr      = (uint32_t*)&n;
+  uint32_t  bits          = *bits_ptr;
+  bool      sign          = ((bits >> 31) & 0x1);
+  uint32_t  mantissa      = (bits & 0x7fffff) | 0x800000;
+  uint32_t  trailingZeros = srsran::detail::bitset_builtin_helper<unsigned>::zero_lsb_count(mantissa);
+  uint32_t  pack_mantissa = mantissa >> trailingZeros;
+  // the inverse of the trailing zeros gives the number of bits to shift
+  // the mantissa to the right to make it a whole number, this number must be added to the exponent
+  uint8_t inv_trailing_zeros = real_mantissa_len - trailingZeros;
+
+  int8_t exponent = (bits >> real_mantissa_len) & 0xff;
+  exponent -= (127 + inv_trailing_zeros);
+  uint8_t pack_exponent = exponent & 0xff;
+
+  uint8_t info_octet = 0x80;
+  if (sign) {
+    info_octet |= 0x1 << 6;
+  }
+  // compute the number of octets needed to represent the mantissa
+  uint8_t mantissa_bit_len = real_mantissa_len + 1 - trailingZeros;
+  uint8_t mantissa_oct_len = (mantissa_bit_len + 7) / 8;
+
+  for (uint8_t i = 0; i < mantissa_oct_len; i++) {
+    uint8_t octet                   = pack_mantissa & 0xff;
+    buf[(mantissa_oct_len - 1) - i] = octet;
+    pack_mantissa >>= 8;
+  }
+  uint32_t len = mantissa_oct_len + 2;
+  pack_length(bref, len, aligned);
+
+  bref.pack(info_octet, 8);
+  bref.pack(pack_exponent, 8);
+  for (uint8_t i = 0; i < mantissa_oct_len; i++) {
+    bref.pack(buf[i], 8);
+  }
+  return SRSASN_SUCCESS;
+};
+
+SRSASN_CODE unpack_unconstrained_real(float& n, cbit_ref& bref, bool aligned)
+{
+  if (aligned) {
+    HANDLE_CODE(bref.align_bytes());
+  }
+  uint32_t len;
+  HANDLE_CODE(unpack_length(len, bref, aligned));
+
+  uint8_t buf[buf_len];
+  for (uint32_t i = 0; i < len; i++) {
+    HANDLE_CODE(bref.unpack(buf[i], 8));
+  }
+
+  uint8_t  info_octet = buf[0];
+  uint8_t  exponent   = buf[1];
+  uint32_t mantissa   = 0;
+
+  bool    sign             = (info_octet >> 6) & 0x1;
+  uint8_t mantissa_oct_len = len - 2;
+
+  for (uint32_t i = 0; i < mantissa_oct_len; i++) {
+    mantissa |= (uint32_t)buf[i + 2] << (8 * i);
+  }
+
+  uint8_t leading_zeros = srsran::detail::bitset_builtin_helper<unsigned>::zero_msb_count(mantissa) - 9;
+
+  mantissa <<= leading_zeros + 1;
+  mantissa &= 0x7fffff;
+
+  uint32_t trailingZeros      = srsran::detail::bitset_builtin_helper<unsigned>::zero_lsb_count(mantissa);
+  uint8_t  inv_trailing_zeros = real_mantissa_len - trailingZeros;
+
+  int8_t unpacked_exponent = exponent;
+  unpacked_exponent += 127 + inv_trailing_zeros;
+
+  uint32_t bits =
+      (sign << (real_mantissa_len + real_exponent_len)) | (unpacked_exponent << real_mantissa_len) | (mantissa);
+
+  float* bits_ptr = (float*)&bits;
+  n               = *bits_ptr;
+  return SRSASN_SUCCESS;
+};
 
 } // namespace asn1

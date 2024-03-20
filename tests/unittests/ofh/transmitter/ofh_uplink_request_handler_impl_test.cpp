@@ -36,6 +36,7 @@ using namespace srsran::ofh::testing;
 static const static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC> eaxc            = {2};
 static const static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC> prach_eaxc      = {4};
 static constexpr unsigned                                    REPOSITORY_SIZE = 20U;
+static constexpr units::bytes                                mtu_size{9000};
 
 namespace {
 
@@ -179,8 +180,8 @@ protected:
   uplink_request_handler_impl                handler_prach_cp_en;
 
   explicit ofh_uplink_request_handler_impl_fixture() :
-    ul_slot_repo(std::make_shared<uplink_context_repository>(REPOSITORY_SIZE, srslog::fetch_basic_logger("TEST"))),
-    ul_prach_repo(std::make_shared<prach_context_repository>(REPOSITORY_SIZE, srslog::fetch_basic_logger("TEST"))),
+    ul_slot_repo(std::make_shared<uplink_context_repository>(REPOSITORY_SIZE)),
+    ul_prach_repo(std::make_shared<prach_context_repository>(REPOSITORY_SIZE)),
     handler(get_config_prach_cp_disabled(), get_dependencies_prach_cp_disabled()),
     handler_prach_cp_en(get_config_prach_cp_enabled(), get_dependencies_prach_cp_enabled())
   {
@@ -189,12 +190,13 @@ protected:
   uplink_request_handler_impl_dependencies get_dependencies_prach_cp_disabled()
   {
     uplink_request_handler_impl_dependencies dependencies;
-    dependencies.logger        = &srslog::fetch_basic_logger("TEST");
-    dependencies.ul_slot_repo  = ul_slot_repo;
-    dependencies.ul_prach_repo = ul_prach_repo;
-    auto temp                  = std::make_unique<data_flow_cplane_scheduling_commands_spy>();
-    data_flow                  = temp.get();
-    dependencies.data_flow     = std::move(temp);
+    dependencies.logger         = &srslog::fetch_basic_logger("TEST");
+    dependencies.ul_slot_repo   = ul_slot_repo;
+    dependencies.ul_prach_repo  = ul_prach_repo;
+    dependencies.frame_pool_ptr = std::make_shared<ether::eth_frame_pool>(mtu_size, 2);
+    auto temp                   = std::make_unique<data_flow_cplane_scheduling_commands_spy>();
+    data_flow                   = temp.get();
+    dependencies.data_flow      = std::move(temp);
 
     return dependencies;
   }
@@ -202,12 +204,13 @@ protected:
   uplink_request_handler_impl_dependencies get_dependencies_prach_cp_enabled()
   {
     uplink_request_handler_impl_dependencies dependencies;
-    dependencies.logger        = &srslog::fetch_basic_logger("TEST");
-    dependencies.ul_slot_repo  = ul_slot_repo;
-    dependencies.ul_prach_repo = ul_prach_repo;
-    auto temp                  = std::make_unique<data_flow_cplane_scheduling_commands_spy>();
-    data_flow_prach            = temp.get();
-    dependencies.data_flow     = std::move(temp);
+    dependencies.logger         = &srslog::fetch_basic_logger("TEST");
+    dependencies.ul_slot_repo   = ul_slot_repo;
+    dependencies.ul_prach_repo  = ul_prach_repo;
+    dependencies.frame_pool_ptr = std::make_shared<ether::eth_frame_pool>(mtu_size, 2);
+    auto temp                   = std::make_unique<data_flow_cplane_scheduling_commands_spy>();
+    data_flow_prach             = temp.get();
+    dependencies.data_flow      = std::move(temp);
 
     return dependencies;
   }

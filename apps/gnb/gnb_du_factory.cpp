@@ -166,10 +166,13 @@ std::vector<std::unique_ptr<du>> srsran::make_gnb_dus(const gnb_appconfig&      
     du_hi_cfg.rlc_p                          = &rlc_p;
     du_hi_cfg.gnb_du_id                      = du_insts.size() + 1;
     du_hi_cfg.gnb_du_name                    = fmt::format("srsdu{}", du_hi_cfg.gnb_du_id);
-    du_hi_cfg.du_bind_addr                   = {fmt::format("127.0.0.{}", du_hi_cfg.gnb_du_id)};
-    du_hi_cfg.mac_cfg                        = generate_mac_expert_config(gnb_cfg);
-    du_hi_cfg.sched_ue_metrics_notifier      = metrics_hub.get_scheduler_ue_metrics_source("DU " + std::to_string(i));
-    du_hi_cfg.sched_cfg                      = generate_scheduler_expert_config(gnb_cfg);
+    du_hi_cfg.du_bind_addr =
+        transport_layer_address::create_from_string(fmt::format("127.0.0.{}", du_hi_cfg.gnb_du_id));
+    du_hi_cfg.mac_cfg = generate_mac_expert_config(gnb_cfg);
+    // Assign different initial C-RNTIs to different DUs.
+    du_hi_cfg.mac_cfg.initial_crnti     = to_rnti(0x4601 + (0x1000 * du_insts.size()));
+    du_hi_cfg.sched_ue_metrics_notifier = metrics_hub.get_scheduler_ue_metrics_source("DU " + std::to_string(i));
+    du_hi_cfg.sched_cfg                 = generate_scheduler_expert_config(gnb_cfg);
 
     // Connect RLC metrics to sinks, if required
     if (gnb_cfg.metrics_cfg.rlc.json_enabled || gnb_cfg.e2_cfg.enable_du_e2) {
@@ -195,20 +198,32 @@ std::vector<std::unique_ptr<du>> srsran::make_gnb_dus(const gnb_appconfig&      
 
     // Configure test mode
     if (gnb_cfg.test_mode_cfg.test_ue.rnti != rnti_t::INVALID_RNTI) {
-      du_hi_cfg.test_cfg.test_ue = srs_du::du_test_config::test_ue_config{gnb_cfg.test_mode_cfg.test_ue.rnti,
-                                                                          gnb_cfg.test_mode_cfg.test_ue.pdsch_active,
-                                                                          gnb_cfg.test_mode_cfg.test_ue.pusch_active,
-                                                                          gnb_cfg.test_mode_cfg.test_ue.cqi,
-                                                                          gnb_cfg.test_mode_cfg.test_ue.ri,
-                                                                          gnb_cfg.test_mode_cfg.test_ue.pmi,
-                                                                          gnb_cfg.test_mode_cfg.test_ue.i_1_1,
-                                                                          gnb_cfg.test_mode_cfg.test_ue.i_1_3,
-                                                                          gnb_cfg.test_mode_cfg.test_ue.i_2};
+      du_hi_cfg.test_cfg.test_ue =
+          srs_du::du_test_config::test_ue_config{gnb_cfg.test_mode_cfg.test_ue.rnti,
+                                                 gnb_cfg.test_mode_cfg.test_ue.nof_ues,
+                                                 gnb_cfg.test_mode_cfg.test_ue.auto_ack_indication_delay,
+                                                 gnb_cfg.test_mode_cfg.test_ue.pdsch_active,
+                                                 gnb_cfg.test_mode_cfg.test_ue.pusch_active,
+                                                 gnb_cfg.test_mode_cfg.test_ue.cqi,
+                                                 gnb_cfg.test_mode_cfg.test_ue.ri,
+                                                 gnb_cfg.test_mode_cfg.test_ue.pmi,
+                                                 gnb_cfg.test_mode_cfg.test_ue.i_1_1,
+                                                 gnb_cfg.test_mode_cfg.test_ue.i_1_3,
+                                                 gnb_cfg.test_mode_cfg.test_ue.i_2};
     }
     // FAPI configuration.
-    du_cfg.fapi.log_level   = gnb_cfg.log_cfg.fapi_level;
-    du_cfg.fapi.sector      = i;
-    du_cfg.fapi.prach_ports = tmp_cfg.cells_cfg.front().cell.prach_cfg.ports;
+    du_cfg.fapi.log_level = gnb_cfg.log_cfg.fapi_level;
+    du_cfg.fapi.sector    = i;
+    if (tmp_cfg.fapi_cfg.l2_nof_slots_ahead != 0) {
+      du_cfg.fapi.executor.emplace(workers.fapi_exec[i]);
+    } else {
+      report_error_if_not(workers.fapi_exec[i] == nullptr,
+                          "FAPI buffered worker created for a cell with no MAC delay configured");
+    }
+
+    // As the temporal configuration contains only once cell, pick the data from that cell.
+    du_cfg.fapi.prach_ports        = tmp_cfg.cells_cfg.front().cell.prach_cfg.ports;
+    du_cfg.fapi.l2_nof_slots_ahead = tmp_cfg.fapi_cfg.l2_nof_slots_ahead;
 
     du_insts.push_back(make_du(du_cfg));
     report_error_if_not(du_insts.back(), "Invalid Distributed Unit");

@@ -25,6 +25,11 @@
 
 using namespace srsran;
 
+scheduler_result_logger::scheduler_result_logger(bool log_broadcast_, pci_t pci_) :
+  logger(srslog::fetch_basic_logger("SCHED")), log_broadcast(log_broadcast_), enabled(logger.info.enabled()), pci(pci_)
+{
+}
+
 void scheduler_result_logger::log_debug(const sched_result& result)
 {
   auto slot_stop_tp = std::chrono::high_resolution_clock::now();
@@ -287,8 +292,8 @@ void scheduler_result_logger::log_debug(const sched_result& result)
     const unsigned nof_pdschs = result.dl.paging_grants.size() + result.dl.rar_grants.size() +
                                 result.dl.ue_grants.size() + result.dl.bc.sibs.size();
     const unsigned nof_puschs = result.ul.puschs.size();
-    logger.debug("Slot decisions cell={} t={}us ({} PDSCH{}, {} PUSCH{}):{}",
-                 cell_index,
+    logger.debug("Slot decisions pci={} t={}us ({} PDSCH{}, {} PUSCH{}):{}",
+                 pci,
                  decision_latency.count(),
                  nof_pdschs,
                  nof_pdschs == 1 ? "" : "s",
@@ -323,7 +328,7 @@ void scheduler_result_logger::log_info(const sched_result& result)
   }
   for (const dl_msg_alloc& ue_msg : result.dl.ue_grants) {
     fmt::format_to(fmtbuf,
-                   "{}DL: ue={} c-rnti={} rb={} h_id={} ss_id={} k1={} rv={} tbs={}",
+                   "{}DL: ue={} c-rnti={} rb={} h_id={} ss_id={} k1={} newtx={} rv={} tbs={}",
                    fmtbuf.size() == 0 ? "" : ", ",
                    ue_msg.context.ue_index,
                    ue_msg.pdsch_cfg.rnti,
@@ -331,18 +336,20 @@ void scheduler_result_logger::log_info(const sched_result& result)
                    ue_msg.pdsch_cfg.harq_id,
                    ue_msg.context.ss_id,
                    ue_msg.context.k1,
+                   ue_msg.pdsch_cfg.codewords[0].new_data,
                    ue_msg.pdsch_cfg.codewords[0].rv_index,
                    ue_msg.pdsch_cfg.codewords[0].tb_size_bytes);
   }
   for (const ul_sched_info& ue_msg : result.ul.puschs) {
     fmt::format_to(fmtbuf,
-                   "{}UL: ue={} rnti={} h_id={} ss_id={} rb={} rv={} tbs={} ",
+                   "{}UL: ue={} rnti={} h_id={} ss_id={} rb={} newtx={} rv={} tbs={} ",
                    fmtbuf.size() == 0 ? "" : ", ",
                    ue_msg.context.ue_index,
                    ue_msg.pusch_cfg.rnti,
                    ue_msg.pusch_cfg.harq_id,
                    ue_msg.context.ss_id,
                    ue_msg.pusch_cfg.rbs,
+                   ue_msg.pusch_cfg.new_data,
                    ue_msg.pusch_cfg.rv_index,
                    ue_msg.pusch_cfg.tb_size_bytes);
     if (ue_msg.context.ue_index == INVALID_DU_UE_INDEX and ue_msg.context.nof_retxs == 0 and
@@ -373,8 +380,8 @@ void scheduler_result_logger::log_info(const sched_result& result)
     const unsigned nof_pdschs = result.dl.paging_grants.size() + result.dl.rar_grants.size() +
                                 result.dl.ue_grants.size() + result.dl.bc.sibs.size();
     const unsigned nof_puschs = result.ul.puschs.size();
-    logger.info("Slot decisions cell={} t={}us ({} PDSCH{}, {} PUSCH{}): {}",
-                cell_index,
+    logger.info("Slot decisions pci={} t={}us ({} PDSCH{}, {} PUSCH{}): {}",
+                pci,
                 decision_latency.count(),
                 nof_pdschs,
                 nof_pdschs == 1 ? "" : "s",

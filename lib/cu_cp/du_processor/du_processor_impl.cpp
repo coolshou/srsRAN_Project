@@ -21,11 +21,11 @@
  */
 
 #include "du_processor_impl.h"
-#include "../adapters/rrc_ue_adapters.h"
 #include "srsran/cu_cp/cu_cp_types.h"
 #include "srsran/f1ap/cu_cp/f1ap_cu_factory.h"
+#include "srsran/ran/cause/f1ap_cause_converters.h"
+#include "srsran/ran/cause/ngap_cause.h"
 #include "srsran/ran/nr_cgi_helpers.h"
-#include "srsran/ran/pci_helpers.h"
 #include "srsran/rrc/rrc_du_factory.h"
 
 using namespace srsran;
@@ -40,10 +40,9 @@ du_processor_impl::du_processor_impl(const du_processor_config_t&        du_proc
                                      f1ap_ue_removal_notifier&           f1ap_cu_cp_notifier_,
                                      rrc_ue_nas_notifier&                rrc_ue_nas_pdu_notifier_,
                                      rrc_ue_control_notifier&            rrc_ue_ngap_ctrl_notifier_,
-                                     rrc_ue_reestablishment_notifier&    rrc_ue_cu_cp_notifier_,
+                                     rrc_du_measurement_config_notifier& rrc_du_cu_cp_notifier,
                                      du_processor_ue_task_scheduler&     task_sched_,
                                      du_processor_ue_manager&            ue_manager_,
-                                     cell_meas_manager&                  cell_meas_mng_,
                                      task_executor&                      ctrl_exec_) :
   cfg(du_processor_config_),
   cu_cp_notifier(cu_cp_notifier_),
@@ -54,10 +53,9 @@ du_processor_impl::du_processor_impl(const du_processor_config_t&        du_proc
   f1ap_cu_cp_notifier(f1ap_cu_cp_notifier_),
   rrc_ue_nas_pdu_notifier(rrc_ue_nas_pdu_notifier_),
   rrc_ue_ngap_ctrl_notifier(rrc_ue_ngap_ctrl_notifier_),
-  rrc_ue_cu_cp_notifier(rrc_ue_cu_cp_notifier_),
   task_sched(task_sched_),
   ue_manager(ue_manager_),
-  ctrl_exec(ctrl_exec_)
+  f1ap_ev_notifier(*this)
 {
   context.du_index = cfg.du_index;
 
@@ -73,12 +71,8 @@ du_processor_impl::du_processor_impl(const du_processor_config_t&        du_proc
   f1ap_ue_context_notifier.connect_f1(f1ap->get_f1ap_ue_context_manager());
 
   // create RRC
-  rrc_du_creation_message rrc_creation_msg(cfg.rrc_cfg,
-                                           rrc_ue_ev_notifier,
-                                           rrc_ue_nas_pdu_notifier,
-                                           rrc_ue_ngap_ctrl_notifier,
-                                           rrc_ue_cu_cp_notifier,
-                                           cell_meas_mng_);
+  rrc_du_creation_message rrc_creation_msg(
+      cfg.rrc_cfg, rrc_ue_ev_notifier, rrc_ue_nas_pdu_notifier, rrc_ue_ngap_ctrl_notifier, rrc_du_cu_cp_notifier);
   rrc = create_rrc_du(rrc_creation_msg);
   rrc_du_adapter.connect_rrc_du(rrc->get_rrc_du_cell_manager(), rrc->get_rrc_du_ue_repository());
 
@@ -94,28 +88,27 @@ du_processor_impl::du_processor_impl(const du_processor_config_t&        du_proc
                                          rrc->get_rrc_du_statistics_handler());
 }
 
-void du_processor_impl::handle_f1_setup_request(const f1ap_f1_setup_request& request)
+du_setup_result du_processor_impl::handle_du_setup_request(const du_setup_request& request)
 {
-  logger.debug("Received F1 setup request");
-
-  // Reject request without served cells
-  if (request.gnb_du_served_cells_list.size() == 0) {
-    logger.warning("Not handling F1 setup without served cells");
-    send_f1_setup_failure(cause_radio_network_t::unspecified);
-    return;
-  }
+  du_setup_result res;
 
   // Set DU context
-  context.id = request.gnb_du_id;
-  if (request.gnb_du_name.has_value()) {
-    context.name = request.gnb_du_name.value();
+  context.id   = request.gnb_du_id;
+  context.name = request.gnb_du_name;
+
+  // Check if CU-CP is in a state to accept a new DU connection.
+  if (not cfg.du_setup_notif->on_du_setup_request(request)) {
+    res.result =
+        du_setup_result::rejected{cause_misc_t::unspecified, "CU-CP is not in a state to accept a new DU connection"};
+    return res;
   }
 
   // Forward serving cell list to RRC DU
   // TODO: How to handle missing optional freq and timing in meas timing config?
   if (!rrc_du_adapter.on_new_served_cell_list(request.gnb_du_served_cells_list)) {
-    send_f1_setup_failure(cause_protocol_t::unspecified);
-    return;
+    res.result =
+        du_setup_result::rejected{f1ap_cause_transport_t::unspecified, "Could not establish served cell list in RRC"};
+    return res;
   }
 
   for (const auto& served_cell : request.gnb_du_served_cells_list) {
@@ -124,42 +117,35 @@ void du_processor_impl::handle_f1_setup_request(const f1ap_f1_setup_request& req
     du_cell.cell_index = get_next_du_cell_index();
 
     if (du_cell.cell_index == du_cell_index_t::invalid) {
-      logger.warning("Not handling F1 setup, maximum number of DU cells reached");
-      send_f1_setup_failure(cause_radio_network_t::unspecified);
-      return;
+      res.result = du_setup_result::rejected{cause_misc_t::ctrl_processing_overload,
+                                             "Maximum number of DU cells supported in the CU-CP reached"};
+      return res;
     }
 
     du_cell.cgi = served_cell.served_cell_info.nr_cgi;
-    if (not srsran::config_helpers::is_valid(du_cell.cgi)) {
-      logger.warning("Not handling F1 setup, invalid CGI for cell {}", du_cell.cell_index);
-      send_f1_setup_failure(cause_radio_network_t::unspecified);
-      return;
+    if (not config_helpers::is_valid(du_cell.cgi)) {
+      res.result = du_setup_result::rejected{cause_protocol_t::semantic_error,
+                                             fmt::format("Invalid CGI for cell {}", du_cell.cell_index)};
+      return res;
     }
 
     du_cell.pci = served_cell.served_cell_info.nr_pci;
-    if (not srsran::config_helpers::is_valid(du_cell.pci)) {
-      logger.warning("Not handling F1 setup, invalid PCI for cell {}", du_cell.pci);
-      send_f1_setup_failure(cause_radio_network_t::unspecified);
-      return;
-    }
 
     if (not served_cell.served_cell_info.five_gs_tac.has_value()) {
-      logger.warning("Not handling F1 setup, missing TAC for cell {}", du_cell.cell_index);
-      send_f1_setup_failure(cause_radio_network_t::unspecified);
-      return;
-    } else {
-      du_cell.tac = served_cell.served_cell_info.five_gs_tac.value();
+      res.result = du_setup_result::rejected{cause_protocol_t::msg_not_compatible_with_receiver_state,
+                                             fmt::format("Missing TAC for cell {}", du_cell.cell_index)};
+      return res;
     }
+    du_cell.tac = served_cell.served_cell_info.five_gs_tac.value();
 
     if (not served_cell.gnb_du_sys_info.has_value()) {
-      logger.warning("Not handling served cells without system information");
-      send_f1_setup_failure(cause_radio_network_t::unspecified);
-      return;
-    } else {
-      // Store and unpack system information
-      du_cell.sys_info.packed_mib  = served_cell.gnb_du_sys_info.value().mib_msg.copy();
-      du_cell.sys_info.packed_sib1 = served_cell.gnb_du_sys_info.value().sib1_msg.copy();
+      res.result = du_setup_result::rejected{cause_protocol_t::semantic_error,
+                                             fmt::format("Missing system information for cell {}", du_cell.cell_index)};
+      return res;
     }
+    // Store and unpack system information
+    du_cell.sys_info.packed_mib  = served_cell.gnb_du_sys_info.value().mib_msg.copy();
+    du_cell.sys_info.packed_sib1 = served_cell.gnb_du_sys_info.value().sib1_msg.copy();
 
     // Add band information.
     if (served_cell.served_cell_info.nr_mode_info.fdd.has_value()) {
@@ -179,19 +165,35 @@ void du_processor_impl::handle_f1_setup_request(const f1ap_f1_setup_request& req
     cell_db.emplace(cell_index, std::move(du_cell));
 
     // Add cell to lookup
-    tac_to_nr_cgi.emplace(cell_db.at(cell_index).tac, cell_db.at(cell_index).cgi);
+    auto& cell = cell_db.at(cell_index);
+    if (tac_to_nr_cgi.find(cell.tac) == tac_to_nr_cgi.end()) {
+      tac_to_nr_cgi.emplace(cell.tac, std::vector<nr_cell_global_id_t>{cell.cgi});
+    } else {
+      tac_to_nr_cgi.at(cell.tac).push_back(cell.cgi);
+    }
   }
-
-  // send setup response
-  send_f1_setup_response(context);
 
   // connect paging f1ap paging adapter
   f1ap_paging_notifier.connect_f1(f1ap->get_f1ap_paging_manager());
+
+  // Prepare DU response with accepted setup.
+  auto& accepted              = res.result.emplace<du_setup_result::accepted>();
+  accepted.gnb_cu_name        = cfg.name;
+  accepted.gnb_cu_rrc_version = cfg.rrc_version;
+
+  // Accept all cells
+  accepted.cells_to_be_activ_list.resize(request.gnb_du_served_cells_list.size());
+  for (unsigned i = 0; i != accepted.cells_to_be_activ_list.size(); ++i) {
+    accepted.cells_to_be_activ_list[i].nr_cgi = request.gnb_du_served_cells_list[i].served_cell_info.nr_cgi;
+    accepted.cells_to_be_activ_list[i].nr_pci = request.gnb_du_served_cells_list[i].served_cell_info.nr_pci;
+  }
+
+  return res;
 }
 
-ue_index_t du_processor_impl::get_new_ue_index()
+ue_index_t du_processor_impl::allocate_new_ue_index()
 {
-  return ue_manager.allocate_new_ue_index(context.du_index);
+  return ue_manager.add_ue(context.du_index);
 }
 
 du_cell_index_t du_processor_impl::find_cell(uint64_t packed_nr_cell_id)
@@ -203,38 +205,6 @@ du_cell_index_t du_processor_impl::find_cell(uint64_t packed_nr_cell_id)
     }
   }
   return du_cell_index_t::invalid;
-}
-
-/// Sender for F1AP messages
-void du_processor_impl::send_f1_setup_response(const du_processor_context& du_ctxt)
-{
-  f1ap_f1_setup_response response;
-  response.success = true;
-
-  // fill CU common info
-  response.gnb_cu_name        = cfg.name;
-  response.gnb_cu_rrc_version = cfg.rrc_version;
-
-  // activate all DU cells
-  for (const auto& du_cell_pair : cell_db) {
-    const auto& du_cell = du_cell_pair.second;
-
-    f1ap_cells_to_be_activ_list_item resp_cell;
-    resp_cell.nr_cgi = du_cell.cgi;
-    resp_cell.nr_pci = du_cell.pci;
-
-    response.cells_to_be_activ_list.push_back(resp_cell);
-  }
-
-  f1ap->handle_f1_setup_response(response);
-}
-
-void du_processor_impl::send_f1_setup_failure(cause_t cause)
-{
-  f1ap_f1_setup_response response;
-  response.success = false;
-  response.cause   = cause;
-  f1ap->handle_f1_setup_response(response);
 }
 
 du_cell_index_t du_processor_impl::get_next_du_cell_index()
@@ -256,30 +226,25 @@ bool du_processor_impl::create_rrc_ue(du_ue&                            ue,
                                       byte_buffer                       du_to_cu_rrc_container,
                                       optional<rrc_ue_transfer_context> rrc_context)
 {
-  // Create and connect RRC UE task schedulers
-  rrc_ue_task_scheds.emplace(ue.get_ue_index(), rrc_to_du_ue_task_scheduler{ue.get_ue_index(), ctrl_exec});
-  rrc_ue_task_scheds.at(ue.get_ue_index()).connect_du_processor(get_du_processor_ue_task_handler());
-
   // Create RRC UE to F1AP adapter
   rrc_ue_f1ap_adapters.emplace(std::piecewise_construct,
                                std::forward_as_tuple(ue.get_ue_index()),
                                std::forward_as_tuple(f1ap->get_f1ap_rrc_message_handler(), ue.get_ue_index()));
 
-  // Set task schedulers
-  ue.set_task_sched(rrc_ue_task_scheds.at(ue.get_ue_index()));
-
   // Create new RRC UE entity
   rrc_ue_creation_message rrc_ue_create_msg{};
-  rrc_ue_create_msg.ue_index           = ue.get_ue_index();
-  rrc_ue_create_msg.c_rnti             = c_rnti;
-  rrc_ue_create_msg.cell.cgi           = cgi;
-  rrc_ue_create_msg.cell.tac           = cell_db.at(ue.get_pcell_index()).tac;
-  rrc_ue_create_msg.cell.pci           = cell_db.at(ue.get_pcell_index()).pci;
-  rrc_ue_create_msg.cell.bands         = cell_db.at(ue.get_pcell_index()).bands;
-  rrc_ue_create_msg.f1ap_pdu_notifier  = &rrc_ue_f1ap_adapters.at(ue.get_ue_index());
-  rrc_ue_create_msg.du_to_cu_container = std::move(du_to_cu_rrc_container);
-  rrc_ue_create_msg.ue_task_sched      = &ue.get_task_sched();
-  rrc_ue_create_msg.rrc_context        = std::move(rrc_context);
+  rrc_ue_create_msg.ue_index              = ue.get_ue_index();
+  rrc_ue_create_msg.c_rnti                = c_rnti;
+  rrc_ue_create_msg.cell.cgi              = cgi;
+  rrc_ue_create_msg.cell.tac              = cell_db.at(ue.get_pcell_index()).tac;
+  rrc_ue_create_msg.cell.pci              = cell_db.at(ue.get_pcell_index()).pci;
+  rrc_ue_create_msg.cell.bands            = cell_db.at(ue.get_pcell_index()).bands;
+  rrc_ue_create_msg.f1ap_pdu_notifier     = &rrc_ue_f1ap_adapters.at(ue.get_ue_index());
+  rrc_ue_create_msg.rrc_ue_cu_cp_notifier = &ue.get_rrc_ue_context_update_notifier();
+  rrc_ue_create_msg.measurement_notifier  = &ue.get_rrc_ue_measurement_notifier();
+  rrc_ue_create_msg.du_to_cu_container    = std::move(du_to_cu_rrc_container);
+  rrc_ue_create_msg.ue_task_sched         = &ue.get_task_sched();
+  rrc_ue_create_msg.rrc_context           = std::move(rrc_context);
   auto* rrc_ue = rrc_du_adapter.on_ue_creation_request(ue.get_up_resource_manager(), std::move(rrc_ue_create_msg));
   if (rrc_ue == nullptr) {
     logger.warning("Could not create RRC UE");
@@ -299,86 +264,47 @@ bool du_processor_impl::create_rrc_ue(du_ue&                            ue,
   return true;
 }
 
-ue_creation_complete_message du_processor_impl::handle_ue_creation_request(const cu_cp_ue_creation_message& msg)
+ue_rrc_context_creation_response
+du_processor_impl::handle_ue_rrc_context_creation_request(const ue_rrc_context_creation_request& req)
 {
-  srsran_assert(msg.ue_index != ue_index_t::invalid, "Invalid UE index", msg.ue_index);
-  srsran_assert(srsran::config_helpers::is_valid(msg.cgi), "ue={}: Invalid CGI", msg.ue_index);
-  srsran_assert(msg.c_rnti != rnti_t::INVALID_RNTI, "ue={}: Invalid C-RNTI", msg.ue_index);
-
-  ue_creation_complete_message ue_creation_complete_msg = {};
-  ue_creation_complete_msg.ue_index                     = ue_index_t::invalid;
+  srsran_assert(req.ue_index != ue_index_t::invalid, "Invalid UE index");
+  srsran_assert(req.c_rnti != rnti_t::INVALID_RNTI, "ue={}: Invalid C-RNTI", req.ue_index);
+  srsran_assert(config_helpers::is_valid(req.cgi), "ue={}: Invalid CGI", req.ue_index);
 
   // Check that creation message is valid
-  du_cell_index_t pcell_index = find_cell(msg.cgi.nci);
+  du_cell_index_t pcell_index = find_cell(req.cgi.nci);
   if (pcell_index == du_cell_index_t::invalid) {
-    logger.warning("ue={}: Could not find cell with cell_id={}", msg.ue_index, msg.cgi.nci);
-    return ue_creation_complete_msg;
+    logger.warning("ue={}: Could not find cell with NCI={}", req.ue_index, req.cgi.nci);
+    cu_cp_notifier.on_ue_removal_required(req.ue_index);
+    return {};
   }
+  const pci_t pci = cell_db.at(pcell_index).pci;
 
-  // Check that the PCI is valid
-  pci_t pci = cell_db.at(pcell_index).pci;
-  if (pci == INVALID_PCI) {
-    logger.warning("ue={} pci={}: Invalid PCI", msg.ue_index, pci);
-    return ue_creation_complete_msg;
-  }
-
-  // Create new UE context
-  du_ue* ue = ue_manager.add_ue(msg.ue_index, pci, msg.c_rnti);
+  // Create new UE RRC context
+  du_ue* ue = ue_manager.set_ue_du_context(req.ue_index, context.id, pci, req.c_rnti);
   if (ue == nullptr) {
-    logger.warning("ue={}: Could not create UE context", msg.ue_index);
-    return ue_creation_complete_msg;
+    logger.warning("ue={}: Could not create UE context", req.ue_index);
+    return {};
   }
-
-  // Set parameters from creation message
   ue->set_pcell_index(pcell_index);
 
-  // Create RRC UE only if all RRC-related values are available already.
-  if (!msg.du_to_cu_rrc_container.empty()) {
-    if (create_rrc_ue(*ue, msg.c_rnti, msg.cgi, msg.du_to_cu_rrc_container.copy(), std::move(msg.rrc_context)) ==
-        false) {
-      logger.warning("ue={}: Could not create RRC UE object", msg.ue_index);
-      return ue_creation_complete_msg;
-    }
-
-    rrc_ue_interface* rrc_ue           = rrc->find_ue(msg.ue_index);
-    f1ap_rrc_ue_adapters[msg.ue_index] = {};
-    f1ap_rrc_ue_adapters.at(msg.ue_index)
-        .connect_rrc_ue(rrc_ue->get_ul_ccch_pdu_handler(), rrc_ue->get_ul_dcch_pdu_handler());
-    ue_creation_complete_msg.f1ap_rrc_notifier = &f1ap_rrc_ue_adapters.at(msg.ue_index);
+  // Create RRC UE. If the DU-to-CU-RRC-Container is empty, the UE will be rejected.
+  if (not create_rrc_ue(*ue, req.c_rnti, req.cgi, req.du_to_cu_rrc_container.copy(), std::move(req.prev_context))) {
+    logger.warning("ue={}: Could not create RRC UE object", req.ue_index);
+    return {};
   }
+  rrc_ue_interface* rrc_ue           = rrc->find_ue(req.ue_index);
+  f1ap_rrc_ue_adapters[req.ue_index] = {};
+  f1ap_rrc_ue_adapters.at(req.ue_index)
+      .connect_rrc_ue(rrc_ue->get_ul_ccch_pdu_handler(), rrc_ue->get_ul_dcch_pdu_handler());
 
-  logger.info("ue={} c-rnti={}: UE created", ue->get_ue_index(), msg.c_rnti);
+  // Signal back to F1AP that the UE was successfully created.
+  ue_rrc_context_creation_response response;
+  response.f1ap_rrc_notifier = &f1ap_rrc_ue_adapters.at(req.ue_index);
 
-  ue_creation_complete_msg.ue_index = ue->get_ue_index();
+  logger.info("ue={} c-rnti={}: UE created", ue->get_ue_index(), req.c_rnti);
 
-  return ue_creation_complete_msg;
-}
-
-ue_update_complete_message du_processor_impl::handle_ue_update_request(const ue_update_message& msg)
-{
-  du_ue* ue = ue_manager.find_du_ue(msg.ue_index);
-  srsran_assert(ue != nullptr, "ue={}: Could not find DU UE", msg.ue_index);
-
-  ue_update_complete_message ue_update_complete_msg = {};
-
-  // Create RRC object if it doesn't already exist.
-  if (rrc_ue_adapters.find(ue->get_ue_index()) != rrc_ue_adapters.end()) {
-    if (!msg.cell_group_cfg.empty() && msg.c_rnti != rnti_t::INVALID_RNTI) {
-      if (!create_rrc_ue(*ue, msg.c_rnti, msg.cgi, msg.cell_group_cfg.copy(), {} /* no previous context */)) {
-        logger.warning("ue={}: Could not create RRC UE object", msg.ue_index);
-        return ue_update_complete_msg;
-      }
-
-      rrc_ue_interface* rrc_ue = rrc->find_ue(msg.ue_index);
-      f1ap_rrc_ue_adapters.at(msg.ue_index)
-          .connect_rrc_ue(rrc_ue->get_ul_ccch_pdu_handler(), rrc_ue->get_ul_dcch_pdu_handler());
-      ue_update_complete_msg.f1ap_rrc_notifier = &f1ap_rrc_ue_adapters.at(msg.ue_index);
-    }
-  }
-
-  ue_update_complete_msg.ue_index = ue->get_ue_index();
-
-  return ue_update_complete_msg;
+  return response;
 }
 
 void du_processor_impl::handle_du_initiated_ue_context_release_request(const f1ap_ue_context_release_request& request)
@@ -393,23 +319,26 @@ void du_processor_impl::handle_du_initiated_ue_context_release_request(const f1a
 
   logger.debug("ue={}: Handling DU initiated UE context release request", request.ue_index);
 
+  bool ngap_release_successful = false;
+
   // Schedule on UE task scheduler
   task_sched.schedule_async_task(
-      request.ue_index, launch_async([this, request, ue](coro_context<async_task<void>>& ctx) {
+      request.ue_index,
+      launch_async([this, request, ue, ngap_release_successful](coro_context<async_task<void>>& ctx) mutable {
         CORO_BEGIN(ctx);
 
         // Notify NGAP to request a release from the AMF
-        if (!ngap_ctrl_notifier.on_ue_context_release_request(cu_cp_ue_context_release_request{
-                request.ue_index,
-                ue->get_up_resource_manager().get_pdu_sessions(),
-                request.cause,
-            })) {
+        CORO_AWAIT_VALUE(ngap_release_successful,
+                         ngap_ctrl_notifier.on_ue_context_release_request(
+                             cu_cp_ue_context_release_request{request.ue_index,
+                                                              ue->get_up_resource_manager().get_pdu_sessions(),
+                                                              f1ap_to_ngap_cause(request.cause)}));
+        if (!ngap_release_successful) {
           // Release UE from DU, if it doesn't exist in the NGAP
           logger.debug("ue={}: Releasing UE from DU. ReleaseRequest not sent to AMF", request.ue_index);
           CORO_AWAIT(handle_ue_context_release_command(
-              cu_cp_ngap_ue_context_release_command{request.ue_index, cause_nas_t::unspecified}));
+              cu_cp_ue_context_release_command{request.ue_index, ngap_cause_radio_network_t::user_inactivity}));
         }
-
         CORO_RETURN();
       }));
 }
@@ -427,32 +356,6 @@ du_processor_impl::handle_ue_context_release_command(const cu_cp_ue_context_rele
   }
 
   return routine_mng->start_ue_context_release_routine(cmd, cu_cp_notifier);
-}
-
-async_task<cu_cp_ue_context_release_complete>
-du_processor_impl::handle_ue_context_release_command(const cu_cp_ngap_ue_context_release_command& cmd)
-{
-  du_ue* ue = ue_manager.find_du_ue(cmd.ue_index);
-  if (ue == nullptr) {
-    logger.warning("ue={}: Dropping UE context release command. UE does not exist", cmd.ue_index);
-    return launch_async([](coro_context<async_task<cu_cp_ue_context_release_complete>>& ctx) {
-      CORO_BEGIN(ctx);
-      CORO_RETURN(cu_cp_ue_context_release_complete{});
-    });
-  }
-
-  // Call RRC UE notifier to get the release context of the UE and add the location info to the UE context release
-  // complete message
-  rrc_ue_release_context release_context = ue->get_rrc_ue_notifier().get_rrc_ue_release_context();
-
-  // Create release command from NGAP UE context release command
-  cu_cp_ue_context_release_command release_command;
-  release_command.ue_index        = cmd.ue_index;
-  release_command.cause           = cmd.cause;
-  release_command.rrc_release_pdu = release_context.rrc_release_pdu.copy();
-  release_command.srb_id          = release_context.srb_id;
-
-  return handle_ue_context_release_command(release_command);
 }
 
 async_task<bool> du_processor_impl::handle_rrc_reestablishment_context_modification_required(ue_index_t ue_index)
@@ -518,57 +421,59 @@ void du_processor_impl::handle_paging_message(cu_cp_paging_message& msg)
 
     nr_cgi_for_tac_found = true;
 
-    // Setup recommended cell item to add in case it doesn't exist
-    cu_cp_recommended_cell_item cell_item;
-    cell_item.ngran_cgi = tac_to_nr_cgi.at(tai_list_item.tai.tac);
+    for (const auto& cgi : tac_to_nr_cgi.at(tai_list_item.tai.tac)) {
+      // Setup recommended cell item to add in case it doesn't exist
+      cu_cp_recommended_cell_item cell_item;
+      cell_item.ngran_cgi = cgi;
 
-    // Check if assist data for paging is already present
-    if (msg.assist_data_for_paging.has_value()) {
-      // Check if assist data for recommended cells is already present
-      if (msg.assist_data_for_paging.value().assist_data_for_recommended_cells.has_value()) {
-        // Check if recommended cell list already contains values
-        if (!msg.assist_data_for_paging.value()
-                 .assist_data_for_recommended_cells.value()
-                 .recommended_cells_for_paging.recommended_cell_list.empty()) {
-          // Check if NR CGI already present
-          bool is_present = false;
-          for (const auto& present_cell_item : msg.assist_data_for_paging.value()
-                                                   .assist_data_for_recommended_cells.value()
-                                                   .recommended_cells_for_paging.recommended_cell_list) {
-            if (present_cell_item.ngran_cgi.nci == tac_to_nr_cgi.at(tai_list_item.tai.tac).nci) {
-              is_present = true;
+      // Check if assist data for paging is already present
+      if (msg.assist_data_for_paging.has_value()) {
+        // Check if assist data for recommended cells is already present
+        if (msg.assist_data_for_paging.value().assist_data_for_recommended_cells.has_value()) {
+          // Check if recommended cell list already contains values
+          if (!msg.assist_data_for_paging.value()
+                   .assist_data_for_recommended_cells.value()
+                   .recommended_cells_for_paging.recommended_cell_list.empty()) {
+            // Check if NR CGI already present
+            bool is_present = false;
+            for (const auto& present_cell_item : msg.assist_data_for_paging.value()
+                                                     .assist_data_for_recommended_cells.value()
+                                                     .recommended_cells_for_paging.recommended_cell_list) {
+              if (present_cell_item.ngran_cgi.nci == cgi.nci) {
+                is_present = true;
+                continue;
+              }
+            }
+            if (is_present) {
+              // NR CGI for TAC is already present
               continue;
             }
           }
-          if (is_present) {
-            // NR CGI for TAC is already present
-            continue;
-          }
-        }
 
-        // NR CGI for TAC is not present so we add it
-        msg.assist_data_for_paging.value()
-            .assist_data_for_recommended_cells.value()
-            .recommended_cells_for_paging.recommended_cell_list.push_back(cell_item);
+          // NR CGI for TAC is not present so we add it
+          msg.assist_data_for_paging.value()
+              .assist_data_for_recommended_cells.value()
+              .recommended_cells_for_paging.recommended_cell_list.push_back(cell_item);
+        } else {
+          // Assist data for recommended cells is not present, we need to add it
+          cu_cp_assist_data_for_recommended_cells assist_data_for_recommended_cells;
+          assist_data_for_recommended_cells.recommended_cells_for_paging.recommended_cell_list.push_back(cell_item);
+
+          msg.assist_data_for_paging.value().assist_data_for_recommended_cells = assist_data_for_recommended_cells;
+        }
       } else {
-        // Assist data for recommended cells is not present, we need to add it
+        // Assist data for paging is not present, we need to add it
+        cu_cp_assist_data_for_paging assist_data_for_paging;
+
+        // Add assist data for recommended cells
         cu_cp_assist_data_for_recommended_cells assist_data_for_recommended_cells;
+        // Add cell item
         assist_data_for_recommended_cells.recommended_cells_for_paging.recommended_cell_list.push_back(cell_item);
 
-        msg.assist_data_for_paging.value().assist_data_for_recommended_cells = assist_data_for_recommended_cells;
+        assist_data_for_paging.assist_data_for_recommended_cells = assist_data_for_recommended_cells;
+
+        msg.assist_data_for_paging = assist_data_for_paging;
       }
-    } else {
-      // Assist data for paging is not present, we need to add it
-      cu_cp_assist_data_for_paging assist_data_for_paging;
-
-      // Add assist data for recommended cells
-      cu_cp_assist_data_for_recommended_cells assist_data_for_recommended_cells;
-      // Add cell item
-      assist_data_for_recommended_cells.recommended_cells_for_paging.recommended_cell_list.push_back(cell_item);
-
-      assist_data_for_paging.assist_data_for_recommended_cells = assist_data_for_recommended_cells;
-
-      msg.assist_data_for_paging = assist_data_for_paging;
     }
   }
 
@@ -581,14 +486,14 @@ void du_processor_impl::handle_paging_message(cu_cp_paging_message& msg)
   f1ap_paging_notifier.on_paging_message(msg);
 }
 
-void du_processor_impl::send_ngap_ue_context_release_request(ue_index_t ue_index, cause_t cause)
+void du_processor_impl::send_ngap_ue_context_release_request(ue_index_t ue_index, ngap_cause_t cause)
 {
   du_ue* ue = ue_manager.find_du_ue(ue_index);
   srsran_assert(ue != nullptr, "ue={}: Could not find DU UE", ue_index);
 
   cu_cp_ue_context_release_request req;
   req.ue_index = ue_index;
-  req.cause    = cause_radio_network_t::user_inactivity;
+  req.cause    = cause;
 
   // Add PDU Session IDs
   auto& up_resource_manager            = ue->get_up_resource_manager();
@@ -596,13 +501,19 @@ void du_processor_impl::send_ngap_ue_context_release_request(ue_index_t ue_index
 
   logger.debug("ue={}: Requesting UE context release with cause={}", req.ue_index, cause);
 
-  ngap_ctrl_notifier.on_ue_context_release_request(req);
+  // Schedule on UE task scheduler
+  task_sched.schedule_async_task(ue_index, launch_async([this, req](coro_context<async_task<void>>& ctx) mutable {
+                                   CORO_BEGIN(ctx);
+                                   // Notify NGAP to request a release from the AMF
+                                   CORO_AWAIT(ngap_ctrl_notifier.on_ue_context_release_request(req));
+                                   CORO_RETURN();
+                                 }));
 }
 
 void du_processor_impl::handle_inactivity_notification(const cu_cp_inactivity_notification& msg)
 {
   if (msg.ue_inactive) {
-    send_ngap_ue_context_release_request(msg.ue_index, cause_radio_network_t::user_inactivity);
+    send_ngap_ue_context_release_request(msg.ue_index, ngap_cause_radio_network_t::user_inactivity);
   } else {
     logger.debug("Inactivity notification level not supported");
   }
@@ -664,4 +575,16 @@ async_task<ngap_handover_resource_allocation_response>
 du_processor_impl::handle_ngap_handover_request(const ngap_handover_request& request)
 {
   return routine_mng->start_inter_cu_handover_target_routine(request, cu_cp_notifier);
+}
+
+metrics_report::du_info du_processor_impl::handle_du_metrics_report_request() const
+{
+  metrics_report::du_info report;
+  report.id = context.id;
+  for (const auto& cell : cell_db) {
+    report.cells.emplace_back();
+    report.cells.back().cgi = cell.second.cgi;
+    report.cells.back().pci = cell.second.pci;
+  }
+  return report;
 }

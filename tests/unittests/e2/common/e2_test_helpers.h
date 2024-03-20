@@ -183,7 +183,8 @@ inline e2_message generate_ric_control_request_style2_action6(srslog::basic_logg
     logger.error("Failed to pack E2SM RC control header\n");
   }
 
-  ric_control_request->ri_cctrl_hdr.value.resize(ctrl_hdr_buff.length());
+  bool ret = ric_control_request->ri_cctrl_hdr.value.resize(ctrl_hdr_buff.length());
+  (void)ret;
   std::copy(ctrl_hdr_buff.begin(), ctrl_hdr_buff.end(), ric_control_request->ri_cctrl_hdr.value.begin());
 
   asn1::e2sm_rc::e2_sm_rc_ctrl_msg_s ctrl_msg;
@@ -214,7 +215,8 @@ inline e2_message generate_ric_control_request_style2_action6(srslog::basic_logg
     logger.error("Failed to pack E2SM RC control message\n");
   }
 
-  ric_control_request->ri_cctrl_msg.value.resize(ctrl_msg_buff.length());
+  ret = ric_control_request->ri_cctrl_msg.value.resize(ctrl_msg_buff.length());
+  (void)ret;
   std::copy(ctrl_msg_buff.begin(), ctrl_msg_buff.end(), ric_control_request->ri_cctrl_msg.value.begin());
   return e2_msg;
 }
@@ -253,7 +255,8 @@ inline e2_message generate_ric_control_request(srslog::basic_logger& logger,
     logger.error("Failed to pack E2SM RC control header\n");
   }
 
-  ric_control_request->ri_cctrl_hdr.value.resize(ctrl_hdr_buff.length());
+  bool ret = ric_control_request->ri_cctrl_hdr.value.resize(ctrl_hdr_buff.length());
+  (void)ret;
   std::copy(ctrl_hdr_buff.begin(), ctrl_hdr_buff.end(), ric_control_request->ri_cctrl_hdr.value.begin());
 
   asn1::e2sm_rc::e2_sm_rc_ctrl_msg_s ctrl_msg;
@@ -277,7 +280,8 @@ inline e2_message generate_ric_control_request(srslog::basic_logger& logger,
     logger.error("Failed to pack E2SM RC control message\n");
   }
 
-  ric_control_request->ri_cctrl_msg.value.resize(ctrl_msg_buff.length());
+  ret = ric_control_request->ri_cctrl_msg.value.resize(ctrl_msg_buff.length());
+  (void)ret;
   std::copy(ctrl_msg_buff.begin(), ctrl_msg_buff.end(), ric_control_request->ri_cctrl_msg.value.begin());
   return e2_msg;
 }
@@ -383,15 +387,24 @@ public:
     if (ues.size() == 0) {
       // E2 Node level measurements
       meas_record_item_c meas_record_item;
-      if (meas_values.size()) {
-        meas_record_item.set_integer() = meas_values[0];
+      if (meas_type.meas_name().to_string() == "DRB.RlcSduDelayDl") {
+        if (meas_values_float.size()) {
+          meas_record_item.set_real();
+          meas_record_item.real().value = meas_values_float[0];
+        } else {
+          meas_record_item.set_real();
+          meas_record_item.real().value = 0.15625;
+        }
       } else {
-        meas_record_item.set_integer() = 1;
+        if (meas_values_int.size()) {
+          meas_record_item.set_integer() = meas_values_int[0];
+        } else {
+          meas_record_item.set_integer() = 1;
+        }
       }
       items.push_back(meas_record_item);
       return true;
     }
-
     // UE level measurements
     for (auto& ue_id : ues) {
       uint32_t                        ueid_  = ue_id.gnb_du_ueid().gnb_cu_ue_f1_ap_id;
@@ -401,11 +414,20 @@ public:
       meas_record_item_c meas_record_item;
       if (ue_idx < presence.size()) {
         if (presence[ue_idx]) {
-          if (ue_idx < meas_values.size()) {
-            meas_record_item.set_integer() = meas_values[ue_idx];
+          if (meas_type.meas_name().to_string() == "DRB.RlcSduDelayDl") {
+            if (meas_values_float.size()) {
+              meas_record_item.set_real();
+              meas_record_item.real().value = meas_values_float[ue_idx];
+            } else {
+              meas_record_item.set_real();
+              meas_record_item.real().value = 0.15625;
+            }
           } else {
-            // no meas provided, by default return value 1001
-            meas_record_item.set_integer() = 1001;
+            if (meas_values_int.size()) {
+              meas_record_item.set_integer() = meas_values_int[ue_idx];
+            } else {
+              meas_record_item.set_integer() = 1;
+            }
           }
         } else {
           meas_record_item.set_no_value();
@@ -424,13 +446,22 @@ public:
     return false;
   };
 
-  void push_measurements(std::vector<uint32_t> presence_,
-                         std::vector<uint32_t> cond_satisfied_,
-                         std::vector<uint32_t> meas_values_)
+  void push_measurements_int(std::vector<uint32_t> presence_,
+                             std::vector<uint32_t> cond_satisfied_,
+                             std::vector<uint32_t> meas_values_int_)
   {
-    presence       = presence_;
-    cond_satisfied = cond_satisfied_;
-    meas_values    = meas_values_;
+    presence        = presence_;
+    cond_satisfied  = cond_satisfied_;
+    meas_values_int = meas_values_int_;
+  };
+
+  void push_measurements_float(std::vector<uint32_t> presence_,
+                               std::vector<uint32_t> cond_satisfied_,
+                               std::vector<float>    meas_values_float_)
+  {
+    presence          = presence_;
+    cond_satisfied    = cond_satisfied_;
+    meas_values_float = meas_values_float_;
   };
 
   void set_ue_ids(std::vector<uint32_t> ue_ids_) { ue_ids = ue_ids_; };
@@ -454,11 +485,13 @@ private:
     return false;
   };
 
-  std::vector<std::string> supported_metrics = {"CQI", "RSRP", "RSRQ", "DRB.UEThpDl"};
-  std::vector<uint32_t>    presence          = {1};
-  std::vector<uint32_t>    cond_satisfied    = {1};
-  std::vector<uint32_t>    meas_values       = {1};
-  std::vector<uint32_t>    ue_ids            = {0};
+  std::vector<std::string> supported_metrics =
+      {"CQI", "RSRP", "RSRQ", "DRB.UEThpDl", "DRB.UEThpUl", "DRB.RlcSduDelayDl"};
+  std::vector<uint32_t> presence          = {1};
+  std::vector<uint32_t> cond_satisfied    = {1};
+  std::vector<float>    meas_values_float = {0.15625};
+  std::vector<uint32_t> meas_values_int   = {1};
+  std::vector<uint32_t> ue_ids            = {0};
 };
 
 class dummy_e2_subscription_mngr : public e2_subscription_manager
@@ -585,7 +618,8 @@ inline asn1::e2ap::ri_caction_to_be_setup_item_s generate_e2sm_kpm_ric_action(e2
     return {};
   }
 
-  ric_action.ric_action_definition.resize(buf.length());
+  bool ret = ric_action.ric_action_definition.resize(buf.length());
+  (void)ret;
   std::copy(buf.begin(), buf.end(), ric_action.ric_action_definition.begin());
   return ric_action;
 }
@@ -608,7 +642,8 @@ inline e2_message generate_e2sm_kpm_subscription_request(asn1::e2ap::ri_caction_
     return {};
   }
 
-  ric_subscript_reqs->ricsubscription_details->ric_event_trigger_definition.resize(buf.length());
+  bool ret = ric_subscript_reqs->ricsubscription_details->ric_event_trigger_definition.resize(buf.length());
+  (void)ret;
   std::copy(buf.begin(), buf.end(), ric_subscript_reqs->ricsubscription_details->ric_event_trigger_definition.begin());
 
   e2_message e2_msg;
@@ -634,9 +669,11 @@ inline e2_message generate_e2_ind_msg(byte_buffer& ind_hdr_bytes, byte_buffer& i
   e2_ind.indication->ri_ccall_process_id_present      = false;
 
   // put RIC indication content into message
-  e2_ind.indication->ri_cind_msg.value.resize(ind_msg_bytes.length());
+  bool ret = e2_ind.indication->ri_cind_msg.value.resize(ind_msg_bytes.length());
+  (void)ret;
   std::copy(ind_msg_bytes.begin(), ind_msg_bytes.end(), e2_ind.indication->ri_cind_msg.value.begin());
-  e2_ind.indication->ri_cind_hdr.value.resize(ind_hdr_bytes.length());
+  ret = e2_ind.indication->ri_cind_hdr.value.resize(ind_hdr_bytes.length());
+  (void)ret;
   std::copy(ind_hdr_bytes.begin(), ind_hdr_bytes.end(), e2_ind.indication->ri_cind_hdr.value.begin());
 
   e2_message e2_msg;
@@ -677,7 +714,8 @@ class dummy_e2sm_handler : public e2sm_handler
 {
   e2sm_action_definition handle_packed_e2sm_action_definition(const srsran::byte_buffer& buf) override
   {
-    e2sm_action_definition         action_def;
+    e2sm_action_definition action_def;
+    action_def.service_model = e2sm_service_model_t::KPM;
     e2_sm_kpm_action_definition_s& e2_sm_kpm_action_definition =
         variant_get<e2_sm_kpm_action_definition_s>(action_def.action_definition);
     e2_sm_kpm_action_definition.ric_style_type = 3;
@@ -756,7 +794,7 @@ public:
 };
 
 /// Fixture class for E2AP
-class e2_test_base : public ::testing::Test
+class e2_base
 {
 protected:
   void tick()
@@ -788,6 +826,12 @@ protected:
   std::unique_ptr<e2sm_manager>                       e2sm_mngr;
   srslog::basic_logger&                               test_logger = srslog::fetch_basic_logger("TEST");
 };
+
+class e2_test_base : public e2_base, public ::testing::Test
+{};
+
+class e2_test_base_with_pcap : public e2_base, public testing::TestWithParam<dlt_pcap*>
+{};
 
 class e2_test : public e2_test_base
 {

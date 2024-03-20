@@ -23,6 +23,7 @@
 #pragma once
 
 #include "uplink_request_processor_impl.h"
+#include "upper_phy_error_handler_impl.h"
 #include "upper_phy_pdu_validators.h"
 #include "upper_phy_rx_results_notifier_wrapper.h"
 #include "upper_phy_rx_symbol_handler_impl.h"
@@ -31,12 +32,12 @@
 #include "srsran/phy/support/resource_grid_pool.h"
 #include "srsran/phy/upper/downlink_processor.h"
 #include "srsran/phy/upper/rx_buffer_pool.h"
-#include "srsran/phy/upper/tx_buffer_pool.h"
 #include "srsran/phy/upper/uplink_processor.h"
 #include "srsran/phy/upper/upper_phy.h"
 #include "srsran/phy/upper/upper_phy_timing_handler.h"
 #include "srsran/phy/upper/upper_phy_timing_notifier.h"
 #include "srsran/support/executors/task_executor.h"
+#include <functional>
 
 namespace srsran {
 
@@ -50,18 +51,16 @@ struct upper_phy_impl_config {
   unsigned nof_rx_ports;
   /// Downlink processor pool.
   std::unique_ptr<downlink_processor_pool> dl_processor_pool;
+  /// Uplink processor pool.
+  std::unique_ptr<uplink_processor_pool> ul_processor_pool;
   /// Downlink resource grid pool.
   std::unique_ptr<resource_grid_pool> dl_rg_pool;
   /// Uplink resource grid pool.
   std::unique_ptr<resource_grid_pool> ul_rg_pool;
-  /// Uplink processor pool.
-  std::unique_ptr<uplink_processor_pool> ul_processor_pool;
   /// PRACH buffer pool.
   std::unique_ptr<prach_buffer_pool> prach_pool;
-  /// Transmit buffer pool.
-  std::unique_ptr<tx_buffer_pool> tx_buf_pool;
   /// Receive buffer pool.
-  std::unique_ptr<rx_buffer_pool> rx_buf_pool;
+  std::unique_ptr<rx_buffer_pool_controller> rx_buf_pool;
   /// Symbol request notifier.
   upper_phy_rx_symbol_request_notifier* rx_symbol_request_notifier;
   /// Log level.
@@ -114,6 +113,9 @@ public:
   explicit upper_phy_impl(upper_phy_impl_config&& config);
 
   // See interface for documentation.
+  upper_phy_error_handler& get_error_handler() override;
+
+  // See interface for documentation.
   upper_phy_rx_symbol_handler& get_rx_symbol_handler() override;
 
   // See interface for documentation.
@@ -124,9 +126,6 @@ public:
 
   // See interface for documentation.
   resource_grid_pool& get_downlink_resource_grid_pool() override;
-
-  // See interface for documentation.
-  tx_buffer_pool& get_tx_buffer_pool() override;
 
   // See interface for documentation.
   resource_grid_pool& get_uplink_resource_grid_pool() override;
@@ -144,44 +143,49 @@ public:
   const uplink_pdu_validator& get_uplink_pdu_validator() const override;
 
   // See interface for documentation.
+  void set_error_notifier(upper_phy_error_notifier& notifier) override;
+
+  // See interface for documentation.
   void set_timing_notifier(upper_phy_timing_notifier& notifier) override;
 
   // See interface for documentation.
   void set_rx_results_notifier(upper_phy_rx_results_notifier& notifier) override;
+
+  void stop() override;
 
 private:
   /// Upper PHY logger.
   srslog::basic_logger& logger;
   /// Base station sector identifier.
   const unsigned sector_id;
-  /// Downlink processor pool.
-  std::unique_ptr<downlink_processor_pool> dl_processor_pool;
+  /// Receive buffer pool.
+  std::unique_ptr<rx_buffer_pool_controller> rx_buf_pool;
   /// Downlink resource grid pool.
   std::unique_ptr<resource_grid_pool> dl_rg_pool;
   /// Uplink resource grid pool.
   std::unique_ptr<resource_grid_pool> ul_rg_pool;
-  /// Uplink processor pool.
-  std::unique_ptr<uplink_processor_pool> ul_processor_pool;
+  /// Uplink slot PDU registry.
+  uplink_slot_pdu_repository pdu_repository;
   /// PRACH buffer pool.
   std::unique_ptr<prach_buffer_pool> prach_pool;
-  /// Transmit buffer pool.
-  std::unique_ptr<tx_buffer_pool> tx_buf_pool;
-  /// Receive buffer pool.
-  std::unique_ptr<rx_buffer_pool> rx_buf_pool;
+  /// Downlink processor pool.
+  std::unique_ptr<downlink_processor_pool> dl_processor_pool;
+  /// Uplink processor pool.
+  std::unique_ptr<uplink_processor_pool> ul_processor_pool;
   /// Downlink processor PDUs validator.
   std::unique_ptr<downlink_pdu_validator> dl_pdu_validator;
   /// Uplink processor PDUs validator.
   std::unique_ptr<uplink_pdu_validator> ul_pdu_validator;
   /// Uplink request processor.
   uplink_request_processor_impl ul_request_processor;
-  /// Uplink slot PDU registry.
-  uplink_slot_pdu_repository pdu_repository;
   /// Upper PHY results notifier.
   upper_phy_rx_results_notifier_wrapper rx_results_notifier;
   /// Received symbols handler.
   std::unique_ptr<upper_phy_rx_symbol_handler> rx_symbol_handler;
   /// Timing events handler.
   upper_phy_timing_handler_impl timing_handler;
+  /// Error events handler.
+  upper_phy_error_handler_impl error_handler;
 };
 
 } // namespace srsran

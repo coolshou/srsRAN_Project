@@ -21,6 +21,7 @@
  */
 
 #include "dl_sch_pdu_assembler.h"
+#include "cell_dl_harq_buffer_pool.h"
 #include "srsran/adt/byte_buffer_chain.h"
 #include "srsran/ran/pdsch/pdsch_constants.h"
 #include "srsran/support/error_handling.h"
@@ -183,25 +184,41 @@ void dl_sch_pdu::encode_subheader(bool F_bit, lcid_dl_sch_t lcid, unsigned heade
 
 // /////////////////////////
 
-class dl_sch_pdu_assembler::dl_sch_pdu_logger
+class dl_sch_pdu_assembler::pdu_log_builder
 {
 public:
-  explicit dl_sch_pdu_logger(du_ue_index_t ue_index_, rnti_t rnti_, units::bytes tbs_, srslog::basic_logger& logger_) :
-    ue_index(ue_index_), rnti(rnti_), tbs(tbs_), logger(logger_)
+  explicit pdu_log_builder(du_ue_index_t         ue_index_,
+                           rnti_t                rnti_,
+                           units::bytes          tbs_,
+                           fmt::memory_buffer&   fmtbuf_,
+                           srslog::basic_logger& logger_) :
+    ue_index(ue_index_), rnti(rnti_), tbs(tbs_), logger(logger_), fmtbuf(fmtbuf_), enabled(logger.info.enabled())
   {
+    fmtbuf.clear();
   }
 
   void add_sdu(lcid_t lcid, unsigned len)
   {
-    if (not logger.info.enabled()) {
+    if (not enabled) {
       return;
     }
-    fmt::format_to(fmtbuf, "{}SDU: lcid={} size={}", separator(), lcid, len);
+    if (lcid != current_sdu_lcid) {
+      if (current_sdu_lcid != lcid_t::INVALID_LCID) {
+        fmt::format_to(
+            fmtbuf, "{}SDU: lcid={} nof_sdus={} total_size={}", separator(), current_sdu_lcid, nof_sdus, sum_bytes);
+      }
+      current_sdu_lcid = lcid;
+      nof_sdus         = 1;
+      sum_bytes        = units::bytes{len};
+    } else {
+      ++nof_sdus;
+      sum_bytes += units::bytes{len};
+    }
   }
 
   void add_conres_id(const ue_con_res_id_t& conres)
   {
-    if (not logger.info.enabled()) {
+    if (not enabled) {
       return;
     }
     fmt::format_to(fmtbuf, "{}CON_RES: id={:x}", separator(), fmt::join(conres, ""));
@@ -209,7 +226,7 @@ public:
 
   void add_ta_cmd(const ta_cmd_ce_payload& ce_payload)
   {
-    if (not logger.info.enabled()) {
+    if (not enabled) {
       return;
     }
     fmt::format_to(fmtbuf, "{}TA_CMD: tag_id={}, ta_cmd={}", separator(), ce_payload.tag_id, ce_payload.ta_cmd);
@@ -217,26 +234,39 @@ public:
 
   void log()
   {
-    if (not logger.info.enabled()) {
+    if (not enabled) {
       return;
     }
-    logger.info("DL PDU: ue={} rnti={} size={}: {}", ue_index, rnti, tbs, to_c_str(fmtbuf));
+
+    // Log pending LCID SDUs.
+    if (current_sdu_lcid != lcid_t::INVALID_LCID) {
+      fmt::format_to(
+          fmtbuf, "{}SDU: lcid={} nof_sdus={} total_size={}", separator(), current_sdu_lcid, nof_sdus, sum_bytes);
+    }
+
+    logger.info("DL PDU: ue={} rnti={} size={}:{}", ue_index, rnti, tbs, to_c_str(fmtbuf));
   }
 
 private:
   const char* separator() const { return fmtbuf.size() == 0 ? "" : ", "; }
 
-  du_ue_index_t         ue_index;
-  rnti_t                rnti;
-  units::bytes          tbs;
+  du_ue_index_t ue_index;
+  rnti_t        rnti;
+  units::bytes  tbs;
+
   srslog::basic_logger& logger;
-  fmt::memory_buffer    fmtbuf;
+  fmt::memory_buffer&   fmtbuf;
+  const bool            enabled;
+
+  lcid_t       current_sdu_lcid = lcid_t::INVALID_LCID;
+  unsigned     nof_sdus         = 0;
+  units::bytes sum_bytes{0U};
 };
 
 // /////////////////////////
 
-dl_sch_pdu_assembler::dl_sch_pdu_assembler(mac_dl_ue_manager& ue_mng_) :
-  ue_mng(ue_mng_), logger(srslog::fetch_basic_logger("MAC"))
+dl_sch_pdu_assembler::dl_sch_pdu_assembler(mac_dl_ue_manager& ue_mng_, cell_dl_harq_buffer_pool& cell_dl_harq_buffers) :
+  ue_mng(ue_mng_), harq_buffers(cell_dl_harq_buffers), logger(srslog::fetch_basic_logger("MAC"))
 {
 }
 
@@ -249,17 +279,21 @@ span<const uint8_t> dl_sch_pdu_assembler::assemble_newtx_pdu(rnti_t             
                                                              const dl_msg_tb_info& tb_info,
                                                              unsigned              tb_size_bytes)
 {
-  span<uint8_t> buffer = ue_mng.get_dl_harq_buffer(rnti, h_id, tb_idx);
+  du_ue_index_t ue_idx = ue_mng.get_ue_index(rnti);
+  if (ue_idx == INVALID_DU_UE_INDEX) {
+    logger.error("DL rnti={} h_id={}: Failed to assemble MAC PDU. Cause: C-RNTI has no associated UE id.", rnti, h_id);
+    return span<const uint8_t>(zero_buffer).first(tb_size_bytes);
+  }
+
+  span<uint8_t> buffer = harq_buffers.dl_harq_buffer(ue_idx, h_id);
   if (buffer.size() < tb_size_bytes) {
-    logger.error("DL ue={} rnti={} h_id={}: Failed to assemble MAC PDU. Cause: No HARQ buffers available",
-                 ue_mng.get_ue_index(rnti),
-                 rnti,
-                 h_id);
+    logger.error(
+        "DL ue={} rnti={} h_id={}: Failed to assemble MAC PDU. Cause: No HARQ buffers available", ue_idx, rnti, h_id);
     return span<const uint8_t>(zero_buffer).first(tb_size_bytes);
   }
   dl_sch_pdu ue_pdu(buffer.first(tb_size_bytes));
 
-  dl_sch_pdu_logger pdu_logger{ue_mng.get_ue_index(rnti), rnti, units::bytes{tb_size_bytes}, logger};
+  pdu_log_builder pdu_logger{ue_idx, rnti, units::bytes{tb_size_bytes}, fmtbuf, logger};
 
   // Encode added subPDUs.
   for (const dl_msg_lc_info& sched_lch : tb_info.lc_chs_to_sched) {
@@ -276,7 +310,7 @@ span<const uint8_t> dl_sch_pdu_assembler::assemble_newtx_pdu(rnti_t             
     ue_pdu.add_padding(tb_size_bytes - current_size);
   } else if (current_size > tb_size_bytes) {
     logger.error("ERROR: Allocated subPDUs exceed TB size ({} > {})", current_size, tb_size_bytes);
-    return {};
+    return span<const uint8_t>(zero_buffer).first(tb_size_bytes);
   }
 
   pdu_logger.log();
@@ -287,7 +321,7 @@ span<const uint8_t> dl_sch_pdu_assembler::assemble_newtx_pdu(rnti_t             
 void dl_sch_pdu_assembler::assemble_sdus(dl_sch_pdu&           ue_pdu,
                                          rnti_t                rnti,
                                          const dl_msg_lc_info& lc_grant_info,
-                                         dl_sch_pdu_logger&    pdu_logger)
+                                         pdu_log_builder&      pdu_logger)
 {
   // Note: Do not attempt to build an SDU if there is not enough space for the MAC subheader, min payload size and
   // potential RLC header.
@@ -366,7 +400,7 @@ void dl_sch_pdu_assembler::assemble_sdus(dl_sch_pdu&           ue_pdu,
 void dl_sch_pdu_assembler::assemble_ce(dl_sch_pdu&           ue_pdu,
                                        rnti_t                rnti,
                                        const dl_msg_lc_info& subpdu,
-                                       dl_sch_pdu_logger&    pdu_logger)
+                                       pdu_log_builder&      pdu_logger)
 {
   switch (subpdu.lcid.value()) {
     case lcid_dl_sch_t::UE_CON_RES_ID: {
@@ -391,7 +425,12 @@ void dl_sch_pdu_assembler::assemble_ce(dl_sch_pdu&           ue_pdu,
 span<const uint8_t>
 dl_sch_pdu_assembler::assemble_retx_pdu(rnti_t rnti, harq_id_t h_id, unsigned tb_idx, unsigned tbs_bytes)
 {
-  span<uint8_t> buffer = ue_mng.get_dl_harq_buffer(rnti, h_id, tb_idx);
+  du_ue_index_t ue_idx = ue_mng.get_ue_index(rnti);
+  if (ue_idx == INVALID_DU_UE_INDEX) {
+    logger.error("DL rnti={} h_id={}: Failed to assemble MAC PDU. Cause: C-RNTI has no associated UE id.", rnti, h_id);
+    return span<const uint8_t>(zero_buffer).first(tbs_bytes);
+  }
+  span<const uint8_t> buffer = harq_buffers.dl_harq_buffer(ue_idx, h_id);
   if (buffer.size() < tbs_bytes) {
     logger.error("DL ue={} rnti={} h_id={}: Failed to assemble MAC PDU. Cause: No HARQ buffers available",
                  ue_mng.get_ue_index(rnti),

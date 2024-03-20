@@ -23,7 +23,7 @@
 #include "inter_cu_handover_target_routine.h"
 #include "../pdu_session_routine_helpers.h"
 #include "srsran/ngap/ngap_handover.h"
-#include "srsran/ran/cause.h"
+#include "srsran/ran/cause/e1ap_cause_converters.h"
 
 using namespace srsran;
 using namespace srs_cu_cp;
@@ -70,13 +70,13 @@ void inter_cu_handover_target_routine::operator()(
 {
   CORO_BEGIN(ctx);
 
-  logger.debug("ue={}: \"{}\" initialized.", request.ue_index, name());
+  logger.debug("ue={}: \"{}\" initialized", request.ue_index, name());
 
   ue = ue_manager.find_ue(request.ue_index);
 
   // Perform initial sanity checks on incoming message.
   if (!ue->get_up_resource_manager().validate_request(request.pdu_session_res_setup_list_ho_req)) {
-    logger.error("ue={}: \"{}\" Invalid PDU Session Resource Setup during Handover", request.ue_index, name());
+    logger.warning("ue={}: \"{}\" Invalid PduSessionResourceSetupRequest during Handover", request.ue_index, name());
     CORO_EARLY_RETURN(generate_handover_resource_allocation_response(false));
   }
 
@@ -90,11 +90,14 @@ void inter_cu_handover_target_routine::operator()(
     // Generate security keys for Bearer Context Setup Request (RRC UE is not created yet)
     security_cfg = generate_security_keys(rrc_context.sec_context);
     if (!security_cfg.has_value()) {
-      logger.error("ue={}: \"{}\" failed to generate security keys.", request.ue_index, name());
+      logger.warning("ue={}: \"{}\" failed to generate security keys", request.ue_index, name());
       CORO_EARLY_RETURN(generate_handover_resource_allocation_response(false));
     }
 
-    fill_e1ap_bearer_context_setup_request(security_cfg.value());
+    if (!fill_e1ap_bearer_context_setup_request(security_cfg.value())) {
+      logger.warning("ue={}: \"{}\" failed to fill context at CU-UP", request.ue_index, name());
+      CORO_EARLY_RETURN(generate_handover_resource_allocation_response(false));
+    }
 
     // Call E1AP procedure
     CORO_AWAIT_VALUE(bearer_context_setup_response,
@@ -107,7 +110,7 @@ void inter_cu_handover_target_routine::operator()(
                                    next_config,
                                    ue->get_up_resource_manager(),
                                    logger)) {
-      logger.error("ue={}: \"{}\" failed to setup bearer at CU-UP.", request.ue_index, name());
+      logger.warning("ue={}: \"{}\" failed to setup bearer at CU-UP", request.ue_index, name());
       CORO_EARLY_RETURN(generate_handover_resource_allocation_response(false));
     }
   }
@@ -128,7 +131,7 @@ void inter_cu_handover_target_routine::operator()(
     // Handle UE Context Setup Response
     if (!handle_procedure_response(
             bearer_context_modification_request, ue_context_setup_response, next_config, logger)) {
-      logger.error("ue={}: \"{}\" failed to setup UE context at DU.", request.ue_index, name());
+      logger.warning("ue={}: \"{}\" failed to setup UE context at DU", request.ue_index, name());
       cu_cp_notifier.on_ue_removal_required(ue_context_setup_response.ue_index);
       CORO_EARLY_RETURN(generate_handover_resource_allocation_response(false));
     }
@@ -152,7 +155,7 @@ void inter_cu_handover_target_routine::operator()(
 
     // Handle BearerContextModificationResponse
     if (!bearer_context_modification_response.success) {
-      logger.error("ue={}: \"{}\" failed to modify bearer at CU-UP.", request.ue_index, name());
+      logger.warning("ue={}: \"{}\" failed to modify bearer at CU-UP", request.ue_index, name());
       CORO_EARLY_RETURN(generate_handover_resource_allocation_response(false));
     }
   }
@@ -170,7 +173,7 @@ void inter_cu_handover_target_routine::operator()(
                                 false,
                                 false,
                                 logger)) {
-      logger.error("ue={}: \"{}\" Failed to fill RRC Reconfiguration", request.ue_index, name());
+      logger.warning("ue={}: \"{}\" failed to fill RRC Reconfiguration", request.ue_index, name());
       CORO_EARLY_RETURN(generate_handover_resource_allocation_response(false));
     }
 
@@ -216,7 +219,7 @@ bool handle_procedure_response(e1ap_bearer_context_modification_request& bearer_
 {
   // Fail procedure if (single) DRB couldn't be setup
   if (!ue_context_setup_resp.drbs_failed_to_be_setup_list.empty()) {
-    logger.error("Couldn't setup {} DRBs at DU.", ue_context_setup_resp.drbs_failed_to_be_setup_list.size());
+    logger.warning("Couldn't setup {} DRBs at DU", ue_context_setup_resp.drbs_failed_to_be_setup_list.size());
     return false;
   }
 
@@ -244,10 +247,10 @@ inter_cu_handover_target_routine::generate_security_keys(security::security_cont
                                                                   security::ciphering_algorithm::nea1,
                                                                   security::ciphering_algorithm::nea3};
   if (not sec_context.select_algorithms(inc_algo_pref_list, ciph_algo_pref_list)) {
-    logger.error("ue={} could not select security algorithm.", request.ue_index);
+    logger.warning("ue={}: Could not select security algorithm", request.ue_index);
     return cfg;
   }
-  logger.debug("ue={} selected security algorithms NIA=NIA{} NEA=NEA{}.",
+  logger.debug("ue={}: Selected security algorithms NIA=NIA{} NEA=NEA{}",
                request.ue_index,
                sec_context.sel_algos.integ_algo,
                sec_context.sel_algos.cipher_algo);
@@ -260,16 +263,27 @@ inter_cu_handover_target_routine::generate_security_keys(security::security_cont
   return cfg;
 }
 
-void inter_cu_handover_target_routine::fill_e1ap_bearer_context_setup_request(const security::sec_as_config& sec_info)
+bool inter_cu_handover_target_routine::fill_e1ap_bearer_context_setup_request(const security::sec_as_config& sec_info)
 {
   bearer_context_setup_request.ue_index = request.ue_index;
 
   // security info
   bearer_context_setup_request.security_info.security_algorithm.ciphering_algo                 = sec_info.cipher_algo;
   bearer_context_setup_request.security_info.security_algorithm.integrity_protection_algorithm = sec_info.integ_algo;
-  bearer_context_setup_request.security_info.up_security_key.encryption_key                    = sec_info.k_enc;
+  auto k_enc_buffer = byte_buffer::create(sec_info.k_enc);
+  if (k_enc_buffer.is_error()) {
+    logger.warning("Unable to allocate byte_buffer");
+    return false;
+  }
+  bearer_context_setup_request.security_info.up_security_key.encryption_key = std::move(k_enc_buffer.value());
   if (sec_info.k_int.has_value()) {
-    bearer_context_setup_request.security_info.up_security_key.integrity_protection_key = sec_info.k_int.value();
+    auto k_int_buffer = byte_buffer::create(sec_info.k_int.value());
+    if (k_int_buffer.is_error()) {
+      logger.warning("Unable to allocate byte_buffer");
+      return false;
+    }
+    bearer_context_setup_request.security_info.up_security_key.integrity_protection_key =
+        std::move(k_int_buffer.value());
   }
 
   bearer_context_setup_request.ue_dl_aggregate_maximum_bit_rate = request.ue_aggr_max_bit_rate.ue_aggr_max_bit_rate_dl;
@@ -286,6 +300,8 @@ void inter_cu_handover_target_routine::fill_e1ap_bearer_context_setup_request(co
                                           request.pdu_session_res_setup_list_ho_req,
                                           ue_manager.get_ue_config(),
                                           default_security_indication);
+
+  return true;
 }
 
 void inter_cu_handover_target_routine::create_srb1()
@@ -334,7 +350,7 @@ inter_cu_handover_target_routine::generate_handover_resource_allocation_response
           // qos flow id
           qos_flow_item.qos_flow_id = flow_failed_item.qos_flow_id;
           // cause
-          qos_flow_item.cause = flow_failed_item.cause;
+          qos_flow_item.cause = e1ap_to_ngap_cause(flow_failed_item.cause);
 
           admitted_item.ho_request_ack_transfer.qos_flow_failed_to_setup_list.push_back(qos_flow_item);
         }

@@ -24,7 +24,10 @@
 #include "fapi_factory.h"
 #include "phy_factory.h"
 #include "radio_notifier_sample.h"
-#include "srsran/asn1/rrc_nr/msg_common.h"
+#include "srsran/asn1/f1ap/common.h"
+#include "srsran/asn1/f1ap/f1ap_pdu_contents.h"
+#include "srsran/asn1/rrc_nr/dl_ccch_msg.h"
+#include "srsran/asn1/rrc_nr/dl_dcch_msg_ies.h"
 #include "srsran/du/du_cell_config_helpers.h"
 #include "srsran/du_high/du_high_factory.h"
 #include "srsran/f1ap/common/f1ap_message.h"
@@ -33,7 +36,6 @@
 #include "srsran/fapi_adaptor/phy/phy_fapi_adaptor_factory.h"
 #include "srsran/fapi_adaptor/precoding_matrix_table_generator.h"
 #include "srsran/fapi_adaptor/uci_part2_correspondence_generator.h"
-#include "srsran/phy/upper/channel_coding/ldpc/ldpc.h"
 #include "srsran/phy/upper/upper_phy_timing_notifier.h"
 #include "srsran/ru/ru_adapters.h"
 #include "srsran/ru/ru_controller.h"
@@ -239,7 +241,7 @@ public:
               0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x14, 0x10, 0x0c, 0xa8, 0x18, 0x06, 0x20, 0x00};
 
           // Unpack the pre-canned Msg4, that contains the DL-CCCH RRC setup message.
-          byte_buffer                 msg4_pdu(span<const uint8_t>{msg4, sizeof(msg4)});
+          byte_buffer                 msg4_pdu = byte_buffer::create(span<const uint8_t>{msg4, sizeof(msg4)}).value();
           asn1::cbit_ref              r_bref{msg4_pdu};
           asn1::rrc_nr::dl_ccch_msg_s msg4_rrc;
           msg4_rrc.unpack(r_bref);
@@ -257,7 +259,10 @@ public:
 
           // Store the packed RRC setup message in the RRC container field of the F1 DL RRC Message that is sent to the
           // DU.
-          resp->rrc_container.resize(msg4_pdu.length());
+          if (!resp->rrc_container.resize(msg4_pdu.length())) {
+            du_logger.warning("Unable to resize RRC PDU to {} bytes", msg4_pdu.length());
+            return;
+          }
           std::copy(msg4_pdu.begin(), msg4_pdu.end(), resp->rrc_container.begin());
         } else if (msg.pdu.init_msg().value.type().value ==
                    asn1::f1ap::f1ap_elem_procs_o::init_msg_c::types_opts::f1_setup_request) {
@@ -730,7 +735,6 @@ int main(int argc, char** argv)
       generate_carrier_config_tlv(),
       std::move(std::get<std::unique_ptr<fapi_adaptor::precoding_matrix_repository>>(pm_tools)),
       std::move(std::get<std::unique_ptr<fapi_adaptor::uci_part2_correspondence_repository>>(uci_part2_tools)),
-      upper->get_tx_buffer_pool(),
       {0});
   report_error_if_not(phy_adaptor, "Unable to create PHY adaptor.");
   upper->set_rx_results_notifier(phy_adaptor->get_rx_results_notifier());

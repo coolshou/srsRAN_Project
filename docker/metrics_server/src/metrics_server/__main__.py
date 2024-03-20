@@ -34,7 +34,25 @@ def main():
     if clean_bucket:
         _recreate_bucket(client, bucket)
 
-    queue_obj: Queue[Optional[Dict[str, Any]]] = Queue()  # pylint: disable=unsubscriptable-object
+    queue_obj: Queue[Optional[Dict[str, Any]]] = Queue()  #
+# Copyright 2021-2024 Software Radio Systems Limited
+#
+# This file is part of srsRAN
+#
+# srsRAN is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of
+# the License, or (at your option) any later version.
+#
+# srsRAN is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# A copy of the GNU Affero General Public License can be found in
+# the LICENSE file in the top-level directory of this distribution
+# and at http://www.gnu.org/licenses/.
+#
 
     parsing_thread = Thread(target=_start_metric_server, args=(port, queue_obj))
     pushing_thread = Thread(target=_publish_data, args=(client, bucket, testbed, queue_obj))
@@ -149,30 +167,18 @@ def _publish_data(
                 # Currently we only support ue_list metric
                 if "ue_list" in metric:
                     timestamp = datetime.utcfromtimestamp(metric["timestamp"]).isoformat()
-                    # Number of UEs measurement
-                    _influx_push(
-                        write_api,
-                        bucket=bucket,
-                        record={
-                            "measurement": "ue_count",
-                            "tags": {
-                                "testbed": testbed,
-                            },
-                            "fields": {"value": len(metric["ue_list"])},
-                            "time": timestamp,
-                        },
-                        record_time_key="time",
-                    )
                     # UE Info measurement
                     for ue_info in metric["ue_list"]:
                         ue_container = ue_info["ue_container"]
                         rnti = ue_container.pop("rnti")
+                        pci = ue_container.pop("pci")
                         _influx_push(
                             write_api,
                             bucket=bucket,
                             record={
                                 "measurement": "ue_info",
                                 "tags": {
+                                    "pci": pci,
                                     "rnti": f"{rnti:x}",
                                     "testbed": testbed,
                                 },

@@ -42,6 +42,10 @@ class rx_window_checker;
 
 /// Message receiver configuration.
 struct message_receiver_config {
+  /// Number of symbols
+  unsigned nof_symbols;
+  /// Subcarrier spacing.
+  subcarrier_spacing scs;
   /// VLAN ethernet frame parameters.
   ether::vlan_frame_params vlan_params;
   /// Uplink PRACH eAxC.
@@ -54,14 +58,14 @@ struct message_receiver_config {
 struct message_receiver_dependencies {
   /// Logger.
   srslog::basic_logger* logger;
+  /// Ethernet receiver.
+  std::unique_ptr<ether::receiver> eth_receiver;
   /// Reception window checker.
   rx_window_checker* window_checker;
   /// eCPRI packet decoder.
   std::unique_ptr<ecpri::packet_decoder> ecpri_decoder;
   /// Ethernet frame decoder.
   std::unique_ptr<ether::vlan_frame_decoder> eth_frame_decoder;
-  /// Open Fronthaul User-Plane decoder.
-  std::unique_ptr<uplane_message_decoder> uplane_decoder;
   /// User-Plane uplink data flow.
   std::unique_ptr<data_flow_uplane_uplink_data> data_flow_uplink;
   /// User-Plane uplink PRACH data flow.
@@ -82,20 +86,8 @@ public:
   // See interface for documentation.
   void on_new_frame(span<const uint8_t> payload) override;
 
-  /// Sets the Ethernet receiver for this Open Fronthaul message receiver.
-  void set_ethernet_receiver(std::unique_ptr<ether::receiver> eth_rx)
-  {
-    srsran_assert(!eth_receiver, "Ethernet receiver already set");
-    srsran_assert(eth_rx, "Invalid Ethernet receiver to set");
-    eth_receiver = std::move(eth_rx);
-  }
-
   /// Returns the Ethernet receiver of this Open Fronthaul message receiver.
-  ether::receiver& get_ethernet_receiver()
-  {
-    srsran_assert(eth_receiver, "Ethernet receiver is not configured");
-    return *eth_receiver;
-  }
+  ether::receiver& get_ethernet_receiver() { return *eth_receiver; }
 
 private:
   /// Returns true if the ethernet frame represented by the given eth parameters should be filtered, otherwise false.
@@ -106,6 +98,8 @@ private:
 
 private:
   srslog::basic_logger&                                 logger;
+  const unsigned                                        nof_symbols;
+  const subcarrier_spacing                              scs;
   const ether::vlan_frame_params                        vlan_params;
   const static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC> ul_prach_eaxc;
   const static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC> ul_eaxc;
@@ -113,7 +107,6 @@ private:
   std::unique_ptr<sequence_id_checker>                  seq_id_checker;
   std::unique_ptr<ether::vlan_frame_decoder>            vlan_decoder;
   std::unique_ptr<ecpri::packet_decoder>                ecpri_decoder;
-  std::unique_ptr<uplane_message_decoder>               uplane_decoder;
   std::unique_ptr<data_flow_uplane_uplink_data>         data_flow_uplink;
   std::unique_ptr<data_flow_uplane_uplink_prach>        data_flow_prach;
   std::unique_ptr<ether::receiver>                      eth_receiver;

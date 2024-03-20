@@ -38,13 +38,6 @@ class uplane_message_decoder_spy : public uplane_message_decoder
   uplane_message_decoder_results spy_results;
 
 public:
-  slot_symbol_point peek_slot_symbol_point(span<const uint8_t> message) const override { return {0, 0, 14}; }
-
-  filter_index_type peek_filter_index(span<const uint8_t> message) const override
-  {
-    return filter_index_type::ul_prach_preamble_1p25khz;
-  }
-
   bool decode(uplane_message_decoder_results& results, span<const uint8_t> message) override
   {
     results = spy_results;
@@ -69,20 +62,18 @@ protected:
   bool                                                  is_cplane_enabled = std::get<1>(params);
   prach_format_type                                     format            = std::get<0>(params);
 
-  prach_buffer_context                      buffer_context;
-  prach_buffer_dummy                        buffer;
-  unsigned                                  preamble_length;
-  unsigned                                  nof_symbols;
-  message_decoder_results                   results;
-  std::shared_ptr<prach_context_repository> repo =
-      std::make_shared<prach_context_repository>(1, srslog::fetch_basic_logger("TEST"));
+  prach_buffer_context                              buffer_context;
+  prach_buffer_dummy                                buffer;
+  unsigned                                          preamble_length;
+  unsigned                                          nof_symbols;
+  message_decoder_results                           results;
+  std::shared_ptr<prach_context_repository>         repo = std::make_shared<prach_context_repository>(1);
   uplane_rx_symbol_notifier_spy*                    notifier;
   std::shared_ptr<uplink_cplane_context_repository> ul_cplane_context_repo_ptr =
       std::make_shared<uplink_cplane_context_repository>(1);
-  std::shared_ptr<prach_context_repository> prach_context_repo =
-      std::make_shared<prach_context_repository>(1, srslog::fetch_basic_logger("TEST"));
-  uplane_message_decoder_spy*        uplane_decoder;
-  data_flow_uplane_uplink_prach_impl data_flow;
+  std::shared_ptr<prach_context_repository> prach_context_repo = std::make_shared<prach_context_repository>(1);
+  uplane_message_decoder_spy*               uplane_decoder;
+  data_flow_uplane_uplink_prach_impl        data_flow;
 
 public:
   data_flow_uplane_uplink_prach_impl_fixture() :
@@ -98,6 +89,7 @@ public:
     buffer_context.nof_td_occasions = 1;
     buffer_context.nof_fd_occasions = 1;
     buffer_context.pusch_scs        = srsran::subcarrier_spacing::kHz30;
+    buffer_context.start_symbol     = 0;
 
     repo->add(buffer_context, buffer);
 

@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "srsran/ran/pucch/pucch_mapping.h"
 #include "srsran/support/error_handling.h"
 #include <cstdint>
 
@@ -39,6 +40,9 @@ inline scheduling_request_id uint_to_sched_req_id(unsigned sr_id)
 {
   return static_cast<scheduling_request_id>(sr_id);
 }
+
+/// Maximum SR period in slots.
+constexpr unsigned MAX_SR_PERIOD = 640;
 
 /// Encodes the periodicity (only) of \c periodicityAndOffset for \c SchedulingRequestResourceConfig, TS 38.331. Note
 /// that the offset is encoded separately.
@@ -150,7 +154,8 @@ struct scheduling_request_resource_config {
   sr_periodicity period;
   unsigned       offset;
   /// \c resource, which identifies the PUCCH resource to be used for this SR.
-  unsigned pucch_res_id;
+  /// Refer to \ref pucch_res_id_t.
+  pucch_res_id_t pucch_res_id = {0, 0};
 };
 
 } // namespace srsran

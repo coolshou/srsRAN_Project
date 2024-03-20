@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "srsran/cu_cp/du_processor.h"
+#include "../du_processor/du_processor_impl_interface.h"
 #include "srsran/cu_cp/ue_manager.h"
 #include "srsran/support/async/async_task.h"
 
@@ -64,7 +64,7 @@ public:
   static const char* name() { return "PDU Session Resource Setup Routine"; }
 
 private:
-  void fill_e1ap_bearer_context_setup_request(e1ap_bearer_context_setup_request& e1ap_request);
+  bool fill_e1ap_bearer_context_setup_request(e1ap_bearer_context_setup_request& e1ap_request);
   void fill_initial_e1ap_bearer_context_modification_request(e1ap_bearer_context_modification_request& e1ap_request);
 
   cu_cp_pdu_session_resource_setup_response handle_pdu_session_resource_setup_result(bool success);

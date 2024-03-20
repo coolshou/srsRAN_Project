@@ -48,16 +48,16 @@ protected:
 /// Test the RRC setup with disconnected AMF
 TEST_F(rrc_ue_setup, when_amf_disconnected_then_rrc_reject_sent)
 {
+  this->rrc_ue_cu_cp_notifier.next_ue_setup_response = false;
+
   receive_setup_request();
 
-  // check if the RRC reject message was generated
-  ASSERT_EQ(get_srb0_pdu_type(), asn1::rrc_nr::dl_ccch_msg_type_c::c1_c_::types::rrc_reject);
+  check_ue_release_requested();
 }
 
 /// Test the RRC setup with connected AMF
 TEST_F(rrc_ue_setup, when_amf_connected_then_rrc_setup_sent)
 {
-  connect_amf();
   receive_setup_request();
 
   // check if the RRC setup message was generated
@@ -69,10 +69,17 @@ TEST_F(rrc_ue_setup, when_amf_connected_then_rrc_setup_sent)
   receive_setup_complete();
 }
 
+/// Test the RRC setup with disconnected AMF
+TEST_F(rrc_ue_setup, when_rrc_setup_invalid_then_rrc_reject_sent)
+{
+  receive_invalid_setup_request();
+
+  check_ue_release_requested();
+}
+
 /// Test the correct handling of missing RRC setup complete message
 TEST_F(rrc_ue_setup, when_setup_complete_timeout_then_ue_deleted)
 {
-  connect_amf();
   receive_setup_request();
 
   // check that UE has been created and was not requested to be released
@@ -87,7 +94,6 @@ TEST_F(rrc_ue_setup, when_setup_complete_timeout_then_ue_deleted)
 
 TEST_F(rrc_ue_setup, when_setup_complete_received_initial_ue_message_sent)
 {
-  connect_amf();
   receive_setup_request();
 
   // check if the RRC setup message was generated
@@ -99,4 +105,24 @@ TEST_F(rrc_ue_setup, when_setup_complete_received_initial_ue_message_sent)
   receive_setup_complete();
 
   check_initial_ue_message_sent();
+}
+
+/// Test the correct handling of corrupted RRC setup complete message
+TEST_F(rrc_ue_setup, when_integrity_failure_detected_then_ue_deleted)
+{
+  receive_setup_request();
+
+  // check if the RRC setup message was generated
+  ASSERT_EQ(get_srb0_pdu_type(), asn1::rrc_nr::dl_ccch_msg_type_c::c1_c_::types::rrc_setup);
+
+  // check if SRB1 was created
+  check_srb1_exists();
+
+  receive_corrupted_setup_complete();
+
+  // tick timer until RRC setup complete timer fires
+  tick_timer();
+
+  // verify that RRC requested UE context release
+  check_ue_release_requested();
 }

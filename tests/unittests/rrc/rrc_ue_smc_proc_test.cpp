@@ -22,10 +22,7 @@
 
 #include "rrc_ue_test_helpers.h"
 #include "rrc_ue_test_messages.h"
-#include "srsran/adt/byte_buffer.h"
-#include "srsran/rrc/rrc_du_factory.h"
-#include "srsran/support/async/fifo_async_task_scheduler.h"
-#include "srsran/support/test_utils.h"
+#include "srsran/support/async/async_test_utils.h"
 #include <gtest/gtest.h>
 
 using namespace srsran;
@@ -49,7 +46,6 @@ protected:
     pdcp_logger.set_level(srslog::basic_levels::debug);
     pdcp_logger.set_hex_dump_max_size(32);
 
-    connect_amf();
     receive_setup_request();
 
     // check if the RRC setup message was generated

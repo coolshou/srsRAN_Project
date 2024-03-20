@@ -45,7 +45,7 @@ rlc_tx_am_entity::rlc_tx_am_entity(uint32_t                             du_index
                                    rlc_pcap&                            pcap_) :
   rlc_tx_entity(du_index, ue_index, rb_id, upper_dn_, upper_cn_, lower_dn_, metrics_enabled_, pcap_),
   cfg(config),
-  sdu_queue(cfg.queue_size),
+  sdu_queue(cfg.queue_size, logger),
   retx_queue(window_size(to_number(cfg.sn_field_length))),
   mod(cardinality(to_number(cfg.sn_field_length))),
   am_window_size(window_size(to_number(cfg.sn_field_length))),
@@ -76,14 +76,19 @@ rlc_tx_am_entity::rlc_tx_am_entity(uint32_t                             du_index
 // TS 38.322 v16.2.0 Sec. 5.2.3.1
 void rlc_tx_am_entity::handle_sdu(rlc_sdu sdu)
 {
-  size_t sdu_length = sdu.buf.length();
+  sdu.time_of_arrival = std::chrono::high_resolution_clock::now();
+  size_t sdu_length   = sdu.buf.length();
   if (sdu_queue.write(sdu)) {
-    logger.log_info(
-        sdu.buf.begin(), sdu.buf.end(), "TX SDU. sdu_len={} pdcp_sn={} {}", sdu.buf.length(), sdu.pdcp_sn, sdu_queue);
+    logger.log_info(sdu.buf.begin(),
+                    sdu.buf.end(),
+                    "TX SDU. sdu_len={} pdcp_sn={} {}",
+                    sdu.buf.length(),
+                    sdu.pdcp_sn,
+                    sdu_queue.get_state());
     metrics.metrics_add_sdus(1, sdu_length);
     handle_changed_buffer_state();
   } else {
-    logger.log_warning("Dropped SDU. sdu_len={} pdcp_sn={} {}", sdu_length, sdu.pdcp_sn, sdu_queue);
+    logger.log_warning("Dropped SDU. sdu_len={} pdcp_sn={} {}", sdu_length, sdu.pdcp_sn, sdu_queue.get_state());
     metrics.metrics_add_lost_sdus(1);
   }
 }
@@ -91,7 +96,7 @@ void rlc_tx_am_entity::handle_sdu(rlc_sdu sdu)
 // TS 38.322 v16.2.0 Sec. 5.4
 void rlc_tx_am_entity::discard_sdu(uint32_t pdcp_sn)
 {
-  if (sdu_queue.discard(pdcp_sn)) {
+  if (sdu_queue.try_discard(pdcp_sn)) {
     logger.log_info("Discarded SDU. pdcp_sn={}", pdcp_sn);
     metrics.metrics_add_discard(1);
     handle_changed_buffer_state();
@@ -158,8 +163,8 @@ size_t rlc_tx_am_entity::pull_pdu(span<uint8_t> rlc_pdu_buf)
       pcap.push_pdu(pcap_context, rlc_pdu_buf.subspan(0, pdu_len));
       return pdu_len;
     }
-    sn_under_segmentation = INVALID_RLC_SN;
     logger.log_error("SDU under segmentation does not exist in tx_window. sn={}", sn_under_segmentation);
+    sn_under_segmentation = INVALID_RLC_SN;
     // attempt to send next SDU
   }
 
@@ -191,7 +196,7 @@ size_t rlc_tx_am_entity::build_new_pdu(span<uint8_t> rlc_pdu_buf)
 
   // Read new SDU from TX queue
   rlc_sdu sdu;
-  logger.log_debug("Reading SDU from sdu_queue. {}", sdu_queue);
+  logger.log_debug("Reading SDU from sdu_queue. {}", sdu_queue.get_state());
   if (not sdu_queue.read(sdu)) {
     logger.log_debug("SDU queue empty. grant_len={}", grant_len);
     return 0;
@@ -203,6 +208,7 @@ size_t rlc_tx_am_entity::build_new_pdu(span<uint8_t> rlc_pdu_buf)
   rlc_tx_am_sdu_info& sdu_info = tx_window->add_sn(st.tx_next);
   sdu_info.pdcp_sn             = sdu.pdcp_sn;
   sdu_info.sdu                 = std::move(sdu.buf); // Move SDU into TX window SDU info
+  sdu_info.time_of_arrival     = sdu.time_of_arrival;
 
   // Notify the upper layer about the beginning of the transfer of the current SDU
   if (sdu.pdcp_sn.has_value()) {
@@ -242,6 +248,10 @@ size_t rlc_tx_am_entity::build_new_pdu(span<uint8_t> rlc_pdu_buf)
   logger.log_info(rlc_pdu_buf.data(), pdu_len, "TX PDU. {} pdu_len={} grant_len={}", hdr, pdu_len, grant_len);
 
   // Update TX Next
+  auto latency = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() -
+                                                                      sdu_info.time_of_arrival);
+  metrics.metrics_add_sdu_latency_us(latency.count() / 1000);
+  metrics.metrics_add_pulled_sdus(1);
   st.tx_next = (st.tx_next + 1) % mod;
 
   // Update metrics
@@ -400,6 +410,10 @@ size_t rlc_tx_am_entity::build_continued_sdu_segment(span<uint8_t> rlc_pdu_buf, 
 
   // Update TX Next (when segmentation has finished)
   if (si == rlc_si_field::last_segment) {
+    auto latency = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() -
+                                                                        sdu_info.time_of_arrival);
+    metrics.metrics_add_sdu_latency_us(latency.count() / 1000);
+    metrics.metrics_add_pulled_sdus(1);
     st.tx_next = (st.tx_next + 1) % mod;
   }
 
@@ -583,6 +597,9 @@ void rlc_tx_am_entity::handle_status_pdu(rlc_am_status_pdu status)
 
   if (tx_mod_base(status.ack_sn) > tx_mod_base(st.tx_next + 1)) {
     logger.log_error("Ignoring status report with ack_sn={} > tx_next. {}", status.ack_sn, st);
+    if (ue_executor.defer([this]() { upper_cn.on_protocol_failure(); })) {
+      logger.log_error("Could not trigger protocol failure on invalid ACK_SN");
+    }
     return;
   }
 
@@ -747,29 +764,70 @@ bool rlc_tx_am_entity::handle_nack(rlc_am_status_nack nack)
     return false;
   }
 
-  uint32_t sdu_length = (*tx_window)[nack.nack_sn].sdu.length();
+  const rlc_tx_am_sdu_info& sdu_info   = (*tx_window)[nack.nack_sn];
+  uint32_t                  sdu_length = sdu_info.sdu.length();
 
   // Convert NACK for full SDUs into NACK with segment offset and length
   if (!nack.has_so) {
     nack.so_start = 0;
     nack.so_end   = sdu_length - 1;
   }
-  // Replace "end"-mark with actual SDU length
   if (nack.so_end == rlc_am_status_nack::so_end_of_sdu) {
-    nack.so_end = sdu_length - 1;
+    if (nack.nack_sn != sn_under_segmentation) {
+      // Replace "end"-mark with actual SDU length
+      nack.so_end = sdu_length - 1;
+    } else {
+      // The SDU is still under segmentation; RETX only what was already sent; avoid RETX overtaking the original
+      if (sdu_info.next_so == 0) {
+        logger.log_error("Cannot RETX sn_under_segmentation={} with invalid next_so={}. nack={} sdu_length={}",
+                         sn_under_segmentation,
+                         sdu_info.next_so,
+                         nack,
+                         sdu_length);
+        return false;
+      }
+      if (nack.so_start > sdu_info.next_so) {
+        logger.log_warning("Invalid NACK for sn_under_segmentation={}: so_start={} > next_so={}. nack={} sdu_length={}",
+                           sn_under_segmentation,
+                           nack.so_start,
+                           sdu_info.next_so,
+                           nack,
+                           sdu_length);
+        return false;
+      }
+      if (nack.so_start == sdu_info.next_so) {
+        // This NACK only marks the peak segment that has not yet been sent and can therefore be ignored.
+        logger.log_debug("Ignoring NACK for yet unsent rest of sn_under_segmentation={}: nack={} sdu_length={}",
+                         sn_under_segmentation,
+                         nack,
+                         sdu_length);
+        return false;
+      }
+      nack.so_end = sdu_info.next_so - 1;
+    }
   }
   // Sanity checks
   if (nack.so_start > nack.so_end) {
     logger.log_warning("Invalid NACK with so_start > so_end. nack={}, sdu_length={}", nack, sdu_length);
     nack.so_start = 0;
+    if (ue_executor.defer([this]() { upper_cn.on_protocol_failure(); })) {
+      logger.log_error("Could not trigger protocol failure on invalid NACK");
+    }
   }
   if (nack.so_start >= sdu_length) {
     logger.log_warning("Invalid NACK with so_start >= sdu_length. nack={} sdu_length={}.", nack, sdu_length);
     nack.so_start = 0;
+    if (ue_executor.defer([this]() { upper_cn.on_protocol_failure(); })) {
+      logger.log_error("Could not trigger protocol failure on invalid NACK");
+    }
   }
   if (nack.so_end >= sdu_length) {
     logger.log_warning("Invalid NACK: so_end >= sdu_length. nack={}, sdu_length={}.", nack, sdu_length);
     nack.so_end = sdu_length - 1;
+    upper_cn.on_protocol_failure();
+    if (ue_executor.defer([this]() { upper_cn.on_protocol_failure(); })) {
+      logger.log_error("Could not trigger protocol failure on invalid NACK");
+    }
   }
 
   // Enqueue RETX
@@ -1116,6 +1174,9 @@ bool rlc_tx_am_entity::valid_nack(uint32_t ack_sn, const rlc_am_status_nack& nac
   // NACK_SN >= tx_next
   if (tx_mod_base(nack.nack_sn) > tx_mod_base(st.tx_next)) {
     logger.log_error("Ignoring status report with nack_sn={} >= tx_next. {}", nack.nack_sn, st);
+    if (ue_executor.defer([this]() { upper_cn.on_protocol_failure(); })) {
+      logger.log_error("Could not trigger protocol failure on invalid NACK");
+    }
     return false;
   }
   // NACK_SN + range >= tx_next
@@ -1125,6 +1186,9 @@ bool rlc_tx_am_entity::valid_nack(uint32_t ack_sn, const rlc_am_status_nack& nac
                        nack.nack_sn,
                        nack.nack_range,
                        st);
+      if (ue_executor.defer([this]() { upper_cn.on_protocol_failure(); })) {
+        logger.log_error("Could not trigger protocol failure on invalid NACK");
+      }
       return false;
     }
   }

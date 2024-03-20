@@ -35,7 +35,7 @@ du_manager_impl::du_manager_impl(const du_manager_params& params_) :
   params(params_),
   logger(srslog::fetch_basic_logger("DU-MNG")),
   cell_mng(params),
-  cell_res_alloc(params.ran.cells, params.ran.srbs, params.ran.qos),
+  cell_res_alloc(params.ran.cells, params.mac.sched_cfg, params.ran.srbs, params.ran.qos),
   ue_mng(params, cell_res_alloc),
   main_ctrl_loop(128)
 {
@@ -153,6 +153,11 @@ du_manager_impl::handle_ue_context_update(const f1ap_ue_context_update_request& 
 async_task<void> du_manager_impl::handle_ue_delete_request(const f1ap_ue_delete_request& request)
 {
   return ue_mng.handle_ue_delete_request(request);
+}
+
+async_task<void> du_manager_impl::handle_ue_deactivation_request(du_ue_index_t ue_index)
+{
+  return ue_mng.handle_ue_deactivation_request(ue_index);
 }
 
 void du_manager_impl::handle_ue_reestablishment(du_ue_index_t new_ue_index, du_ue_index_t old_ue_index)

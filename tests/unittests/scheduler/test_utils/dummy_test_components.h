@@ -144,6 +144,8 @@ public:
   {
     return 0;
   }
+
+  bool has_uci_harq_on_common_pucch_res(rnti_t crnti, slot_point sl_tx) override { return false; }
 };
 
 class sched_cfg_dummy_notifier : public sched_configuration_notifier
@@ -173,7 +175,7 @@ public:
 class scheduler_ue_metrics_dummy_configurator : public sched_metrics_ue_configurator
 {
 public:
-  void handle_ue_creation(du_ue_index_t ue_index, rnti_t rnti, pci_t pcell_pci) override {}
+  void handle_ue_creation(du_ue_index_t ue_index, rnti_t rnti, pci_t pcell_pci, unsigned num_prbs) override {}
   void handle_ue_deletion(du_ue_index_t ue_index) override {}
 };
 

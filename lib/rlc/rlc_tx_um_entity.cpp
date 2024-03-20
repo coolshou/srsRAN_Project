@@ -38,7 +38,7 @@ rlc_tx_um_entity::rlc_tx_um_entity(uint32_t                             du_index
                                    rlc_pcap&                            pcap_) :
   rlc_tx_entity(du_index, ue_index, rb_id, upper_dn_, upper_cn_, lower_dn_, metrics_enabled, pcap_),
   cfg(config),
-  sdu_queue(cfg.queue_size),
+  sdu_queue(cfg.queue_size, logger),
   mod(cardinality(to_number(cfg.sn_field_length))),
   head_len_full(rlc_um_pdu_header_size_complete_sdu),
   head_len_first(rlc_um_pdu_header_size_no_so(cfg.sn_field_length)),
@@ -54,18 +54,19 @@ rlc_tx_um_entity::rlc_tx_um_entity(uint32_t                             du_index
 // TS 38.322 v16.2.0 Sec. 5.2.2.1
 void rlc_tx_um_entity::handle_sdu(rlc_sdu sdu_)
 {
-  size_t sdu_length = sdu_.buf.length();
+  size_t sdu_length    = sdu_.buf.length();
+  sdu_.time_of_arrival = std::chrono::high_resolution_clock::now();
   if (sdu_queue.write(sdu_)) {
     logger.log_info(sdu_.buf.begin(),
                     sdu_.buf.end(),
                     "TX SDU. sdu_len={} pdcp_sn={} {}",
                     sdu_.buf.length(),
                     sdu_.pdcp_sn,
-                    sdu_queue);
+                    sdu_queue.get_state());
     metrics.metrics_add_sdus(1, sdu_length);
     handle_changed_buffer_state();
   } else {
-    logger.log_info("Dropped SDU. sdu_len={} pdcp_sn={} {}", sdu_length, sdu_.pdcp_sn, sdu_queue);
+    logger.log_info("Dropped SDU. sdu_len={} pdcp_sn={} {}", sdu_length, sdu_.pdcp_sn, sdu_queue.get_state());
     metrics.metrics_add_lost_sdus(1);
   }
 }
@@ -73,7 +74,7 @@ void rlc_tx_um_entity::handle_sdu(rlc_sdu sdu_)
 // TS 38.322 v16.2.0 Sec. 5.4
 void rlc_tx_um_entity::discard_sdu(uint32_t pdcp_sn)
 {
-  if (sdu_queue.discard(pdcp_sn)) {
+  if (sdu_queue.try_discard(pdcp_sn)) {
     logger.log_info("Discarded SDU. pdcp_sn={}", pdcp_sn);
     metrics.metrics_add_discard(1);
     handle_changed_buffer_state();
@@ -103,7 +104,7 @@ size_t rlc_tx_um_entity::pull_pdu(span<uint8_t> mac_sdu_buf)
   // Get a new SDU, if none is currently being transmitted
   if (sdu.buf.empty()) {
     srsran_sanity_check(next_so == 0, "New TX SDU, but next_so={} > 0.", next_so);
-    logger.log_debug("Reading SDU from sdu_queue. {}", sdu_queue);
+    logger.log_debug("Reading SDU from sdu_queue. {}", sdu_queue.get_state());
     if (not sdu_queue.read(sdu)) {
       logger.log_debug("SDU queue empty. grant_len={}", grant_len);
       return {};
@@ -163,7 +164,11 @@ size_t rlc_tx_um_entity::pull_pdu(span<uint8_t> mac_sdu_buf)
   // Release SDU if needed
   if (header.si == rlc_si_field::full_sdu || header.si == rlc_si_field::last_segment) {
     sdu.buf.clear();
-    next_so = 0;
+    next_so      = 0;
+    auto latency = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() -
+                                                                        sdu.time_of_arrival);
+    metrics.metrics_add_sdu_latency_us(latency.count() / 1000);
+    metrics.metrics_add_pulled_sdus(1);
   } else {
     // advance SO offset
     next_so += payload_len;

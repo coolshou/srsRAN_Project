@@ -202,9 +202,13 @@ protected:
     }
     ASSERT_NE(dft_factory, nullptr) << "Cannot create DFT factory.";
 
+    std::shared_ptr<time_alignment_estimator_factory> ta_estimator_factory =
+        create_time_alignment_estimator_dft_factory(dft_factory);
+    ASSERT_NE(ta_estimator_factory, nullptr) << "Cannot create TA estimator factory.";
+
     // Create port channel estimator factory.
     std::shared_ptr<port_channel_estimator_factory> port_chan_estimator_factory =
-        create_port_channel_estimator_factory_sw(dft_factory);
+        create_port_channel_estimator_factory_sw(ta_estimator_factory);
     ASSERT_NE(port_chan_estimator_factory, nullptr);
 
     // Create DM-RS for PUSCH channel estimator.
@@ -231,6 +235,8 @@ protected:
     pusch_dec_config.decoder_factory                         = ldpc_dec_factory;
     pusch_dec_config.dematcher_factory                       = ldpc_rm_factory;
     pusch_dec_config.segmenter_factory                       = ldpc_segm_rx_factory;
+    pusch_dec_config.nof_prb                                 = MAX_RB;
+    pusch_dec_config.nof_layers                              = pusch_constants::MAX_NOF_LAYERS;
     std::shared_ptr<pusch_decoder_factory> pusch_dec_factory = create_pusch_decoder_factory_sw(pusch_dec_config);
     ASSERT_NE(pusch_dec_factory, nullptr);
 

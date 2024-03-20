@@ -103,6 +103,15 @@ async_task<void> du_ue_manager::handle_ue_delete_request(const f1ap_ue_delete_re
   return launch_async<ue_deletion_procedure>(msg, *this, cfg);
 }
 
+async_task<void> du_ue_manager::handle_ue_deactivation_request(du_ue_index_t ue_index)
+{
+  if (not ue_db.contains(ue_index)) {
+    logger.warning("ue={}: UE deactivation request for inexistent UE index", ue_index);
+    return launch_no_op_task();
+  }
+  return ue_db[ue_index].handle_activity_stop_request();
+}
+
 void du_ue_manager::handle_reestablishment_request(du_ue_index_t new_ue_index, du_ue_index_t old_ue_index)
 {
   srsran_assert(ue_db.contains(new_ue_index), "Invalid UE index={}", new_ue_index);
@@ -150,13 +159,13 @@ async_task<void> du_ue_manager::stop()
       }
 
       for (auto& srb : ue_it->bearers.srbs()) {
-        srb.disconnect();
+        srb.stop();
       }
 
       for (auto& drb_pair : ue_it->bearers.drbs()) {
         du_ue_drb& drb = *drb_pair.second;
 
-        drb.disconnect();
+        drb.stop();
       }
     }
 
@@ -210,17 +219,18 @@ du_ue* du_ue_manager::find_f1ap_ue_id(gnb_du_ue_f1ap_id_t f1ap_ue_id)
   return nullptr;
 }
 
-du_ue* du_ue_manager::add_ue(const du_ue_context& ue_ctx, ue_ran_resource_configurator ue_ran_res)
+expected<du_ue*, std::string> du_ue_manager::add_ue(const du_ue_context&         ue_ctx,
+                                                    ue_ran_resource_configurator ue_ran_res)
 {
   if (not is_du_ue_index_valid(ue_ctx.ue_index) or
       (not is_crnti(ue_ctx.rnti) and ue_ctx.rnti != rnti_t::INVALID_RNTI)) {
     // UE identifiers are invalid.
-    return nullptr;
+    return std::string("Invalid UE identifiers");
   }
 
   if (ue_db.contains(ue_ctx.ue_index) or (is_crnti(ue_ctx.rnti) and rnti_to_ue_index.count(ue_ctx.rnti) > 0)) {
     // UE already existed with same ue_index or C-RNTI.
-    return nullptr;
+    return std::string("UE already existed with same ue_index or C-RNTI");
   }
 
   // Create UE context object

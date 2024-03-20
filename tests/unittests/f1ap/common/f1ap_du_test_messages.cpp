@@ -21,6 +21,8 @@
  */
 
 #include "f1ap_du_test_messages.h"
+#include "srsran/asn1/f1ap/common.h"
+#include "srsran/asn1/f1ap/f1ap_pdu_contents.h"
 #include "srsran/f1ap/common/f1ap_message.h"
 
 using namespace srsran;
@@ -75,7 +77,7 @@ f1ap_message srsran::generate_f1ap_dl_rrc_message_transfer(srb_id_t srb_id, cons
   dl_msg->gnb_cu_ue_f1ap_id = 0;
   dl_msg->gnb_du_ue_f1ap_id = 0;
   dl_msg->srb_id            = srb_id_to_uint(srb_id);
-  dl_msg->rrc_container     = rrc_container.deep_copy();
+  dl_msg->rrc_container     = rrc_container.deep_copy().value();
 
   return msg;
 }

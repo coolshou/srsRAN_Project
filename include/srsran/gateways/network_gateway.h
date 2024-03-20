@@ -34,6 +34,7 @@ namespace srsran {
 /// implementations will further specify parameters according to their
 /// needs.
 struct common_network_gateway_config {
+  std::string bind_interface;
   std::string bind_address;
   int         bind_port         = 0;
   bool        non_blocking_mode = false;
@@ -80,11 +81,5 @@ public:
 
   /// \brief Return socket file descriptor.
   virtual int get_socket_fd() = 0;
-
-  /// \brief Return the port to which the socket is bound.
-  ///
-  /// In case the gateway was configured to bind to port 0, i.e. the operating system shall pick a random free port,
-  /// this function can be used to get the actual port number.
-  virtual int get_bind_port() = 0;
 };
 } // namespace srsran

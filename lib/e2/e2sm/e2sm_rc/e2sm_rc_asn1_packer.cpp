@@ -45,7 +45,8 @@ e2sm_action_definition
 e2sm_rc_asn1_packer::handle_packed_e2sm_action_definition(const srsran::byte_buffer& action_definition)
 {
   e2sm_action_definition action_def;
-  asn1::cbit_ref         bref(action_definition);
+  action_def.service_model = e2sm_service_model_t::RC;
+  asn1::cbit_ref bref(action_definition);
   if (variant_get<asn1::e2sm_rc::e2_sm_rc_action_definition_s>(action_def.action_definition).unpack(bref) !=
       asn1::SRSASN_SUCCESS) {
     printf("Failed to unpack E2SM RC Action Definition\n");
@@ -98,7 +99,10 @@ e2_ric_control_response e2sm_rc_asn1_packer::pack_ric_control_response(const e2s
       if (variant_get<e2_sm_rc_ctrl_outcome_s>(e2sm_response.ric_ctrl_outcome).pack(bref) != asn1::SRSASN_SUCCESS) {
         printf("Failed to pack E2SM RC RIC Control Outcome (Ack)\n");
       }
-      e2_control_response.ack->ri_cctrl_outcome->resize(buf.length());
+      if (!e2_control_response.ack->ri_cctrl_outcome->resize(buf.length())) {
+        printf("Failed to resize E2SM RC RIC Control Outcome (Ack)\n");
+        return {};
+      }
       std::copy(buf.begin(), buf.end(), e2_control_response.ack->ri_cctrl_outcome->begin());
     }
   } else {
@@ -109,7 +113,10 @@ e2_ric_control_response e2sm_rc_asn1_packer::pack_ric_control_response(const e2s
       if (variant_get<e2_sm_rc_ctrl_outcome_s>(e2sm_response.ric_ctrl_outcome).pack(bref) != asn1::SRSASN_SUCCESS) {
         printf("Failed to pack E2SM RC RIC Control Outcome (Failure)\n");
       }
-      e2_control_response.failure->ri_cctrl_outcome->resize(buf.length());
+      if (!e2_control_response.failure->ri_cctrl_outcome->resize(buf.length())) {
+        printf("Failed to resize E2SM RC RIC Control Outcome (Failure)\n");
+        return {};
+      }
       std::copy(buf.begin(), buf.end(), e2_control_response.failure->ri_cctrl_outcome->begin());
     }
     e2_control_response.failure->cause.value = e2sm_response.cause;
@@ -165,7 +172,10 @@ asn1::unbounded_octstring<true> e2sm_rc_asn1_packer::pack_ran_function_descripti
     return ran_function_description;
   }
 
-  ran_function_description.resize(buf.length());
+  if (!ran_function_description.resize(buf.length())) {
+    printf("Failed to resize E2SM RC RAN Function Description\n");
+    return ran_function_description;
+  }
   std::copy(buf.begin(), buf.end(), ran_function_description.begin());
   return ran_function_description;
 }

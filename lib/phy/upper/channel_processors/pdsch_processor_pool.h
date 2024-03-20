@@ -57,7 +57,6 @@ public:
 
   // See pdsch_processor interface for documentation.
   void process(resource_grid_mapper&                                                         mapper,
-               unique_tx_buffer                                                              rm_buffer,
                pdsch_processor_notifier&                                                     notifier_,
                static_vector<span<const uint8_t>, pdsch_processor::MAX_NOF_TRANSPORT_BLOCKS> data,
                const pdsch_processor::pdu_t&                                                 pdu) override
@@ -66,7 +65,7 @@ public:
     notifier = &notifier_;
 
     // Process.
-    processor->process(mapper, std::move(rm_buffer), *this, data, pdu);
+    processor->process(mapper, *this, data, pdu);
   }
 
 private:
@@ -101,7 +100,8 @@ private:
 class pdsch_processor_pool : public pdsch_processor
 {
 public:
-  explicit pdsch_processor_pool(span<std::unique_ptr<pdsch_processor>> processors_) : free_list(processors_.size())
+  explicit pdsch_processor_pool(span<std::unique_ptr<pdsch_processor>> processors_, bool blocking_) :
+    free_list(processors_.size()), blocking(blocking_)
   {
     unsigned index = 0;
     for (std::unique_ptr<pdsch_processor>& processor : processors_) {
@@ -111,13 +111,16 @@ public:
   }
 
   void process(resource_grid_mapper&                                        mapper,
-               unique_tx_buffer                                             rm_buffer,
                pdsch_processor_notifier&                                    notifier,
                static_vector<span<const uint8_t>, MAX_NOF_TRANSPORT_BLOCKS> data,
                const pdu_t&                                                 pdu) override
   {
     // Try to get a worker.
-    optional<unsigned> index = free_list.try_pop();
+    optional<unsigned> index;
+
+    do {
+      index = free_list.try_pop();
+    } while (blocking && !index.has_value());
 
     // If no worker is available.
     if (!index.has_value()) {
@@ -127,12 +130,13 @@ public:
     }
 
     // Process PDSCH.
-    processors[index.value()].process(mapper, std::move(rm_buffer), notifier, data, pdu);
+    processors[index.value()].process(mapper, notifier, data, pdu);
   }
 
 private:
   std::vector<detail::pdsch_processor_wrapper> processors;
   detail::pdsch_processor_free_list            free_list;
+  bool                                         blocking;
 };
 
 } // namespace srsran

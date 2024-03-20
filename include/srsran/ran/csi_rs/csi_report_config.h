@@ -41,6 +41,9 @@ enum csi_report_config_id_t : uint8_t {
   MAX_NOF_CSI_REPORT_CONFIGS = 48,
 };
 
+/// Maximum CSI report period in slots.
+constexpr unsigned MAX_CSI_REPORT_PERIOD = 320;
+
 /// \brief Periodicity and slot offset.
 /// \remark See TS 38.331, \c CSI-ReportPeriodicityAndOffset.
 enum class csi_report_periodicity {
@@ -78,7 +81,9 @@ struct csi_report_config {
   /// \remark See TS 38.331, \c pucch-Resource under \c CSI-ReportConfig.
   struct pucch_csi_resource {
     bwp_id_t ul_bwp;
-    unsigned pucch_res_id;
+    /// Defines the PUCCH resource ID used for this config report. Ref to \ref srsran::pucch_res_id_t for the
+    /// documentation.
+    pucch_res_id_t pucch_res_id = {0, 0};
 
     bool operator==(const pucch_csi_resource& rhs) const
     {

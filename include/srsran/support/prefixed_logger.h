@@ -37,13 +37,18 @@ template <typename Prefix>
 class prefixed_logger
 {
 public:
-  prefixed_logger(const std::string& log_name, Prefix prefix_) :
-    logger(srslog::fetch_basic_logger(log_name, false)), prefix(prefix_)
+  prefixed_logger(const std::string& log_name, Prefix prefix, const char* prefix_separator = "") :
+    logger(srslog::fetch_basic_logger(log_name, false))
   {
+    set_prefix(prefix, prefix_separator);
   }
 
-  void   set_prefix(Prefix prefix_) { prefix = prefix_; }
-  Prefix get_prefix() const { return prefix; }
+  void set_prefix(Prefix prefix, const char* prefix_separator = "")
+  {
+    fmt::memory_buffer buffer;
+    fmt::format_to(buffer, "{}{}", prefix, prefix_separator);
+    log_label = std::make_shared<const std::string>(fmt::to_string(buffer));
+  }
 
   template <typename... Args>
   void log_debug(const char* fmt, Args&&... args) const
@@ -206,8 +211,8 @@ public:
   srslog::basic_logger& get_basic_logger() { return logger; }
 
 private:
-  srslog::basic_logger& logger;
-  Prefix                prefix;
+  srslog::basic_logger&              logger;
+  std::shared_ptr<const std::string> log_label;
 
   template <typename... Args>
   void log_helper(srslog::log_channel& channel, const char* fmt, Args&&... args) const
@@ -215,9 +220,7 @@ private:
     if (!channel.enabled()) {
       return;
     }
-    fmt::memory_buffer buffer;
-    fmt::format_to(buffer, fmt, std::forward<Args>(args)...);
-    channel("{}{}", prefix, to_c_str(buffer));
+    channel(log_label, fmt, std::forward<Args>(args)...);
   }
 
   template <typename It, typename... Args>
@@ -226,9 +229,7 @@ private:
     if (!channel.enabled()) {
       return;
     }
-    fmt::memory_buffer buffer;
-    fmt::format_to(buffer, fmt, std::forward<Args>(args)...);
-    channel(it_begin, it_end, "{}{}", prefix, to_c_str(buffer));
+    channel(log_label, it_begin, it_end, fmt, std::forward<Args>(args)...);
   }
 
   template <typename... Args>
@@ -237,9 +238,7 @@ private:
     if (!channel.enabled()) {
       return;
     }
-    fmt::memory_buffer buffer;
-    fmt::format_to(buffer, fmt, std::forward<Args>(args)...);
-    channel(msg, len, "{}{}", prefix, to_c_str(buffer));
+    channel(log_label, msg, len, fmt, std::forward<Args>(args)...);
   }
 };
 

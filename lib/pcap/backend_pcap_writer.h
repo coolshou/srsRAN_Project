@@ -34,10 +34,15 @@ class task_executor;
 class pcap_pdu_data
 {
 public:
-  pcap_pdu_data(byte_buffer payload_) : payload_buf(std::move(payload_)) {}
+  explicit pcap_pdu_data(byte_buffer payload_) : payload_buf(std::move(payload_)) {}
+
   pcap_pdu_data(span<const uint8_t> context_header, byte_buffer payload)
   {
-    if (not header_buf.append(byte_buffer{context_header})) {
+    auto header = byte_buffer::create(context_header);
+    if (header.is_error()) {
+      return;
+    }
+    if (not header_buf.append(std::move(header.value()))) {
       return;
     }
     if (not payload_buf.append(std::move(payload))) {
@@ -91,8 +96,6 @@ private:
 
   pcap_file_writer  writer;
   std::atomic<bool> is_open{true};
-
-  std::mutex close_mutex;
 };
 
 } // namespace srsran

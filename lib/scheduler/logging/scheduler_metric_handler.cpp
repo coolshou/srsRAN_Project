@@ -30,12 +30,16 @@ scheduler_metrics_handler::scheduler_metrics_handler(msecs                      
 {
 }
 
-void scheduler_metrics_handler::handle_ue_creation(du_ue_index_t ue_index, rnti_t rnti, pci_t pcell_pci)
+void scheduler_metrics_handler::handle_ue_creation(du_ue_index_t ue_index,
+                                                   rnti_t        rnti,
+                                                   pci_t         pcell_pci,
+                                                   unsigned      num_prbs)
 {
   ues.emplace(ue_index);
   ues[ue_index].rnti     = rnti;
   ues[ue_index].ue_index = ue_index;
   ues[ue_index].pci      = pcell_pci;
+  ues[ue_index].nof_prbs = num_prbs;
   rnti_to_ue_index_lookup.emplace(rnti, ue_index);
 }
 
@@ -60,19 +64,25 @@ void scheduler_metrics_handler::handle_crc_indication(const ul_crc_pdu_indicatio
     if (crc_pdu.tb_crc_success) {
       u.data.sum_ul_tb_bytes += tbs.value();
     }
+    if (crc_pdu.time_advance_offset.has_value()) {
+      u.last_ta = crc_pdu.time_advance_offset->to_seconds();
+    }
   }
 }
 
-void scheduler_metrics_handler::handle_csi_report(du_ue_index_t ue_index, const csi_report_data& csi)
+void scheduler_metrics_handler::handle_pucch_sinr(ue_metric_context& u, float sinr)
 {
-  if (ues.contains(ue_index)) {
-    auto& u = ues[ue_index];
-    if (csi.first_tb_wideband_cqi.has_value()) {
-      u.last_cqi = csi.first_tb_wideband_cqi->to_uint();
-    }
-    if (csi.ri.has_value()) {
-      u.last_ri = csi.ri->to_uint();
-    }
+  u.data.nof_pucch_snr_reports++;
+  u.data.sum_pucch_snrs += sinr;
+}
+
+void scheduler_metrics_handler::handle_csi_report(ue_metric_context& u, const csi_report_data& csi)
+{
+  if (csi.first_tb_wideband_cqi.has_value()) {
+    u.last_cqi = csi.first_tb_wideband_cqi->to_uint();
+  }
+  if (csi.ri.has_value()) {
+    u.last_ri = csi.ri->to_uint();
   }
 }
 
@@ -100,13 +110,42 @@ void scheduler_metrics_handler::handle_harq_timeout(du_ue_index_t ue_index, bool
   }
 }
 
-void scheduler_metrics_handler::handle_pucch_sinr(du_ue_index_t ue_index, optional<float> pucch_sinr)
+void scheduler_metrics_handler::handle_uci_pdu_indication(const uci_indication::uci_pdu& pdu)
 {
-  if (ues.contains(ue_index)) {
-    auto& u = ues[ue_index];
-    if (pucch_sinr.has_value()) {
-      u.data.nof_pucch_snr_reports++;
-      u.data.sum_pucch_snrs += pucch_sinr.value();
+  if (ues.contains(pdu.ue_index)) {
+    auto& u = ues[pdu.ue_index];
+
+    if (variant_holds_alternative<uci_indication::uci_pdu::uci_pucch_f0_or_f1_pdu>(pdu.pdu)) {
+      auto& f1 = variant_get<uci_indication::uci_pdu::uci_pucch_f0_or_f1_pdu>(pdu.pdu);
+
+      if (f1.ul_sinr.has_value()) {
+        handle_pucch_sinr(u, f1.ul_sinr.value());
+      }
+
+      if (f1.time_advance_offset.has_value()) {
+        u.last_ta = f1.time_advance_offset.value().to_seconds();
+      }
+    } else if (variant_holds_alternative<uci_indication::uci_pdu::uci_pucch_f2_or_f3_or_f4_pdu>(pdu.pdu)) {
+      auto& f2 = variant_get<uci_indication::uci_pdu::uci_pucch_f2_or_f3_or_f4_pdu>(pdu.pdu);
+
+      if (f2.ul_sinr.has_value()) {
+        handle_pucch_sinr(u, f2.ul_sinr.value());
+      }
+
+      if (f2.csi.has_value()) {
+        handle_csi_report(u, f2.csi.value());
+      }
+
+      if (f2.time_advance_offset.has_value()) {
+        u.last_ta = f2.time_advance_offset.value().to_seconds();
+      }
+    } else {
+      // PUSCH case.
+      auto& pusch = variant_get<uci_indication::uci_pdu::uci_pusch_pdu>(pdu.pdu);
+
+      if (pusch.csi.has_value()) {
+        handle_csi_report(u, pusch.csi.value());
+      }
     }
   }
 }
@@ -131,7 +170,11 @@ void scheduler_metrics_handler::handle_ul_phr_indication(const ul_phr_indication
     auto& u = ues[phr_ind.ue_index];
 
     // Store last PHR.
-    u.last_phr = phr_ind.phr;
+    if (not phr_ind.phr.get_phr().empty()) {
+      // Log the floor of the average of the PH interval.
+      interval<int> rg = phr_ind.phr.get_phr().front().ph;
+      u.last_phr       = (rg.start() + rg.stop()) / 2;
+    }
   }
 }
 
@@ -171,6 +214,13 @@ void scheduler_metrics_handler::handle_slot_result(const sched_result& slot_resu
       u.data.dl_mcs += cw.mcs_index.to_uint();
       u.data.nof_dl_cws++;
     }
+    if (dl_grant.pdsch_cfg.rbs.is_type0()) {
+      u.data.dl_prbs_used +=
+          convert_rbgs_to_prbs(dl_grant.pdsch_cfg.rbs.type0(), {0, u.nof_prbs}, get_nominal_rbg_size(u.nof_prbs, true))
+              .count();
+    } else if (dl_grant.pdsch_cfg.rbs.is_type1()) {
+      u.data.dl_prbs_used += (dl_grant.pdsch_cfg.rbs.type1().length());
+    }
   }
 
   for (const ul_sched_info& ul_grant : slot_result.ul.puschs) {
@@ -178,6 +228,14 @@ void scheduler_metrics_handler::handle_slot_result(const sched_result& slot_resu
     if (it == rnti_to_ue_index_lookup.end()) {
       // UE not found.
       continue;
+    }
+    if (ul_grant.pusch_cfg.rbs.is_type0()) {
+      ues[it->second].data.ul_prbs_used += convert_rbgs_to_prbs(ul_grant.pusch_cfg.rbs.type0(),
+                                                                {0, ues[it->second].nof_prbs},
+                                                                get_nominal_rbg_size(ues[it->second].nof_prbs, true))
+                                               .count();
+    } else if (ul_grant.pusch_cfg.rbs.is_type1()) {
+      ues[it->second].data.ul_prbs_used += (ul_grant.pusch_cfg.rbs.type1().length());
     }
     ue_metric_context& u = ues[it->second];
     u.data.ul_mcs += ul_grant.pusch_cfg.mcs_index.to_uint();
@@ -214,6 +272,8 @@ scheduler_metrics_handler::ue_metric_context::compute_report(std::chrono::millis
   ret.dl_mcs        = sch_mcs_index{mcs};
   mcs               = data.nof_puschs > 0 ? std::roundf(static_cast<float>(data.ul_mcs) / data.nof_puschs) : 0;
   ret.ul_mcs        = sch_mcs_index{mcs};
+  ret.dl_prbs_used  = data.nof_dl_cws > 0 ? static_cast<double>(data.dl_prbs_used / data.nof_dl_cws) : 0;
+  ret.ul_prbs_used  = data.nof_puschs > 0 ? static_cast<double>(data.ul_prbs_used / data.nof_puschs) : 0;
   ret.dl_brate_kbps = static_cast<double>(data.sum_dl_tb_bytes * 8U) / metric_report_period.count();
   ret.ul_brate_kbps = static_cast<double>(data.sum_ul_tb_bytes * 8U) / metric_report_period.count();
   ret.dl_nof_ok     = data.count_uci_harq_acks;
@@ -227,7 +287,10 @@ scheduler_metrics_handler::ue_metric_context::compute_report(std::chrono::millis
   for (const unsigned value : last_dl_bs) {
     ret.dl_bs += value;
   }
-  // TODO: update PUSCH and PUCCH SNR metrics based on indications.
+  if (last_ta >= 0) {
+    ret.last_ta = std::chrono::microseconds{static_cast<unsigned>(last_ta * 1e6)};
+  }
+  ret.last_phr = last_phr;
 
   // Reset UE stats metrics on every report.
   reset();

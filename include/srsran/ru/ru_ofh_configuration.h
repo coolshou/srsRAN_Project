@@ -28,6 +28,7 @@
 
 namespace srsran {
 
+class ru_error_notifier;
 class ru_timing_notifier;
 class ru_uplink_plane_rx_symbol_notifier;
 class task_executor;
@@ -46,9 +47,9 @@ struct ru_ofh_sector_configuration {
   optional<bs_channel_bandwidth_fr1> ru_operating_bw;
 
   /// DU transmission window timing parameters.
-  ofh::du_tx_window_timing_parameters tx_window_timing_params;
+  ofh::tx_window_timing_parameters tx_window_timing_params;
   /// Reception window timing parameters.
-  ofh::du_rx_window_timing_parameters rx_window_timing_params;
+  ofh::rx_window_timing_parameters rx_window_timing_params;
 
   /// Enables the Control-Plane PRACH message signalling.
   bool is_prach_control_plane_enabled = false;
@@ -60,6 +61,8 @@ struct ru_ofh_sector_configuration {
   bool ignore_ecpri_payload_size_field = false;
   /// If set to true, the sequence id encoded in a eCPRI packet is ignored.
   bool ignore_ecpri_seq_id_field = false;
+  /// If set to true, warn of unreceived Radio Unit frames.
+  bool warn_unreceived_ru_frames = true;
   /// Uplink compression parameters.
   ofh::ru_compression_params ul_compression_params;
   /// Downlink compression parameters.
@@ -73,7 +76,7 @@ struct ru_ofh_sector_configuration {
   /// IQ data scaling to be applied prior to Downlink data compression.
   float iq_scaling;
 
-  /// Ethernet interface name.
+  /// Ethernet interface name or identifier.
   std::string interface;
   /// Promiscuous mode flag.
   bool is_promiscuous_mode_enabled;
@@ -128,8 +131,10 @@ struct ru_ofh_sector_dependencies {
   task_executor* receiver_executor = nullptr;
   /// Transmitter task executor.
   task_executor* transmitter_executor = nullptr;
-  /// Ethernet gateway.
-  std::unique_ptr<ether::gateway> eth_gateway;
+  /// Optional Ethernet gateway.
+  optional<std::unique_ptr<ether::gateway>> eth_gateway;
+  /// Optional Ethernet receiver.
+  optional<std::unique_ptr<ether::receiver>> eth_receiver;
 };
 
 /// Radio Unit dependencies for the Open Fronthaul implementation.
@@ -138,6 +143,8 @@ struct ru_ofh_dependencies {
   srslog::basic_logger* logger = nullptr;
   /// Radio Unit timing notifier.
   ru_timing_notifier* timing_notifier = nullptr;
+  /// Radio Unit error notifier.
+  ru_error_notifier* error_notifier = nullptr;
   /// Radio Unit received symbol notifier.
   ru_uplink_plane_rx_symbol_notifier* rx_symbol_notifier = nullptr;
   /// Realtime timing task executor.

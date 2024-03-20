@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "rlc_sdu_queue.h"
+#include "rlc_sdu_queue_lockfree.h"
 #include "rlc_tx_entity.h"
 #include "srsran/support/executors/task_executor.h"
 #include "fmt/format.h"
@@ -53,9 +53,9 @@ private:
   rlc_tx_um_state st;
 
   // TX SDU buffers
-  rlc_sdu_queue sdu_queue;
-  rlc_sdu       sdu;
-  uint32_t      next_so = 0; // The segment offset for the next generated PDU
+  rlc_sdu_queue_lockfree sdu_queue;
+  rlc_sdu                sdu;
+  uint32_t               next_so = 0; // The segment offset for the next generated PDU
 
   // Mutexes
   std::mutex mutex;
@@ -92,6 +92,10 @@ public:
                    task_executor&                       pcell_executor_,
                    bool                                 metrics_enabled,
                    rlc_pcap&                            pcap_);
+
+  void stop() final{
+      // There are no timers to be stopped here.
+  };
 
   // Interfaces for higher layers
   void handle_sdu(rlc_sdu sdu_) override;

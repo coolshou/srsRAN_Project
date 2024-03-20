@@ -41,7 +41,12 @@ cu_up_processor_impl::cu_up_processor_impl(const cu_up_processor_config_t cu_up_
   context.cu_up_index = cfg.cu_up_index;
 
   // create e1
-  e1ap = create_e1ap(e1ap_notifier, e1ap_ev_notifier, e1ap_cu_cp_notif, task_sched.get_timer_manager(), ctrl_exec);
+  e1ap = create_e1ap(e1ap_notifier,
+                     e1ap_ev_notifier,
+                     e1ap_cu_cp_notif,
+                     task_sched.get_timer_manager(),
+                     ctrl_exec,
+                     cfg.max_nof_supported_ues);
   e1ap_ev_notifier.connect_cu_up_processor(*this);
 }
 
@@ -68,7 +73,7 @@ void cu_up_processor_impl::send_cu_up_e1_setup_response()
   e1ap->handle_cu_up_e1_setup_response(response);
 }
 
-void cu_up_processor_impl::send_cu_up_e1_setup_failure(cause_t cause)
+void cu_up_processor_impl::send_cu_up_e1_setup_failure(e1ap_cause_t cause)
 {
   cu_up_e1_setup_response response;
   response.success = false;

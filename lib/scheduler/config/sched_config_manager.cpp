@@ -90,8 +90,6 @@ const cell_configuration* sched_config_manager::add_cell(const sched_cell_config
   // Update DU cell index to group lookup.
   du_cell_to_cell_group_index.emplace(msg.cell_index, msg.cell_group_index);
 
-  logger.info("cell={}: Cell configured successfully.", msg.cell_index);
-
   return &*added_cells[msg.cell_index];
 }
 
@@ -205,7 +203,8 @@ void sched_config_manager::handle_ue_config_complete(du_ue_index_t ue_index, std
 
     if (ue_cfg_list[ue_index] == nullptr) {
       // UE creation case.
-      metrics_handler.handle_ue_creation(ue_index, next_cfg->crnti, next_cfg->pcell_common_cfg().pci);
+      metrics_handler.handle_ue_creation(
+          ue_index, next_cfg->crnti, next_cfg->pcell_common_cfg().pci, next_cfg->pcell_common_cfg().nof_dl_prbs);
     }
 
     // Stores new UE config and deletes old config.

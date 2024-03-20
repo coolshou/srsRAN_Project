@@ -43,7 +43,7 @@ public:
   explicit scheduler_metrics_handler(msecs metrics_report_period, scheduler_ue_metrics_notifier& notifier);
 
   /// \brief Register creation of a UE.
-  void handle_ue_creation(du_ue_index_t ue_index, rnti_t rnti, pci_t pcell_pci) override;
+  void handle_ue_creation(du_ue_index_t ue_index, rnti_t rnti, pci_t pcell_pci, unsigned num_prbs) override;
 
   /// \brief Register removal of a UE.
   void handle_ue_deletion(du_ue_index_t ue_index) override;
@@ -51,17 +51,14 @@ public:
   /// \brief Register CRC indication.
   void handle_crc_indication(const ul_crc_pdu_indication& crc_pdu, units::bytes tbs);
 
-  /// \brief Register CSI report metric.
-  void handle_csi_report(du_ue_index_t ue_index, const csi_report_data& csi);
-
   /// \brief Register HARQ-ACK UCI indication.
   void handle_dl_harq_ack(du_ue_index_t ue_index, bool ack, units::bytes tbs);
 
   /// \brief Register HARQ timeout.
   void handle_harq_timeout(du_ue_index_t ue_index, bool is_dl) override;
 
-  /// \brief Register PUCCH SINR.
-  void handle_pucch_sinr(du_ue_index_t ue_index, optional<float> pucch_sinr);
+  /// \brief Handle UCI PDU indication.
+  void handle_uci_pdu_indication(const uci_indication::uci_pdu& pdu);
 
   /// \brief Handle UL BSR indication.
   void handle_ul_bsr_indication(const ul_bsr_indication_message& bsr);
@@ -96,14 +93,18 @@ private:
       double   sum_pucch_snrs        = 0;
       unsigned nof_pucch_snr_reports = 0;
       unsigned nof_pusch_snr_reports = 0;
+      unsigned dl_prbs_used          = 0;
+      unsigned ul_prbs_used          = 0;
     };
     pci_t                                  pci;
+    unsigned                               nof_prbs;
     du_ue_index_t                          ue_index;
     rnti_t                                 rnti;
     uint8_t                                last_cqi = 0;
     uint8_t                                last_ri  = 1;
     unsigned                               last_bsr = 0;
-    phr_report                             last_phr;
+    optional<int>                          last_phr;
+    double                                 last_ta = -1;
     std::array<unsigned, MAX_NOF_RB_LCIDS> last_dl_bs{0};
     non_persistent_data                    data;
 
@@ -111,6 +112,9 @@ private:
 
     void reset();
   };
+
+  void handle_pucch_sinr(ue_metric_context& u, float sinr);
+  void handle_csi_report(ue_metric_context& u, const csi_report_data& csi);
 
   void report_metrics();
   void handle_slot_result(const sched_result& slot_result);

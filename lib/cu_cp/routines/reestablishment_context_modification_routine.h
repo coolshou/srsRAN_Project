@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "srsran/cu_cp/du_processor.h"
+#include "../du_processor/du_processor_impl_interface.h"
 #include "srsran/support/async/async_task.h"
 
 namespace srsran {
@@ -63,9 +63,6 @@ private:
   du_processor_rrc_ue_control_message_notifier& rrc_ue_notifier;            // to trigger RRC Reconfiguration at UE
   up_resource_manager&                          rrc_ue_up_resource_manager; // to get RRC DRB config
   srslog::basic_logger&                         logger;
-
-  // failure message
-  cu_cp_ue_context_release_request ue_context_release_request;
 
   // (sub-)routine requests
   e1ap_bearer_context_modification_request bearer_context_modification_request;

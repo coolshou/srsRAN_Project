@@ -62,7 +62,7 @@ generate_section1_control_parameters(const data_flow_cplane_type_1_context& cont
 {
   cplane_section_type1_parameters msg_params;
 
-  msg_params.comp_params = comp;
+  msg_params.compr_params = comp;
 
   // Initialize radio application header.
   init_radio_app_header_parameters(
@@ -97,10 +97,10 @@ generate_prach_control_parameters(const data_flow_cplane_scheduling_prach_contex
 {
   cplane_section_type3_parameters msg_params;
 
-  msg_params.comp_params = comp;
-  msg_params.scs         = cplane_convert_scs(context.prach_scs);
-  msg_params.time_offset = context.time_offset;
-  msg_params.cpLength    = 0;
+  msg_params.compr_params = comp;
+  msg_params.scs          = cplane_convert_scs(context.prach_scs);
+  msg_params.time_offset  = context.time_offset;
+  msg_params.cpLength     = 0;
   // TODO: see if this parameter needs to be derived from the PRACH context.
   msg_params.fft_size = cplane_fft_size::fft_4096;
 
@@ -143,6 +143,7 @@ data_flow_cplane_scheduling_commands_impl::data_flow_cplane_scheduling_commands_
     const data_flow_cplane_scheduling_commands_impl_config&  config,
     data_flow_cplane_scheduling_commands_impl_dependencies&& dependencies) :
   logger(*dependencies.logger),
+  nof_symbols_per_slot(get_nsymb_per_slot(config.cp)),
   ru_nof_prbs(config.ru_nof_prbs),
   dl_compr_params(config.dl_compr_params),
   ul_compr_params(config.ul_compr_params),
@@ -166,15 +167,24 @@ data_flow_cplane_scheduling_commands_impl::data_flow_cplane_scheduling_commands_
 void data_flow_cplane_scheduling_commands_impl::enqueue_section_type_1_message(
     const data_flow_cplane_type_1_context& context)
 {
-  data_direction direction = context.direction;
-  slot_point     slot      = context.slot;
+  data_direction    direction = context.direction;
+  slot_point        slot      = context.slot;
+  slot_symbol_point symbol_point(slot, 0, nof_symbols_per_slot);
   logger.debug("Packing a {} type 1 Control-Plane message for slot '{}' and eAxC '{}'",
                (direction == data_direction::downlink) ? "downlink" : "uplink",
                slot,
                context.eaxc);
 
   // Get an ethernet frame buffer.
-  scoped_frame_buffer  scoped_buffer(frame_pool, slot, 0U, message_type::control_plane, direction);
+  scoped_frame_buffer scoped_buffer(frame_pool, symbol_point, message_type::control_plane, direction);
+  if (scoped_buffer.empty()) {
+    logger.warning(
+        "Not enough space in the buffer pool to create a {} type 1 Control-Plane message for slot '{}' and eAxC '{}'",
+        (direction == data_direction::downlink) ? "downlink" : "uplink",
+        slot,
+        context.eaxc);
+    return;
+  }
   ether::frame_buffer& frame_buffer = scoped_buffer.get_next_frame();
   span<uint8_t>        buffer       = frame_buffer.data();
 
@@ -218,12 +228,19 @@ void data_flow_cplane_scheduling_commands_impl::enqueue_section_type_1_message(
 void data_flow_cplane_scheduling_commands_impl::enqueue_section_type_3_prach_message(
     const data_flow_cplane_scheduling_prach_context& context)
 {
-  slot_point slot = context.slot;
+  slot_point        slot = context.slot;
+  slot_symbol_point symbol_point(slot, context.start_symbol, nof_symbols_per_slot);
   logger.debug("Packing a type 3 PRACH Control-Plane message for slot '{}' and eAxC '{}'", slot, context.eaxc);
 
   // Get an ethernet frame buffer.
-  scoped_frame_buffer scoped_buffer(
-      frame_pool, slot, context.start_symbol, message_type::control_plane, data_direction::uplink);
+  scoped_frame_buffer scoped_buffer(frame_pool, symbol_point, message_type::control_plane, data_direction::uplink);
+  if (scoped_buffer.empty()) {
+    logger.warning("Not enough space in the buffer pool to create a type 3 PRACH Control-Plane message for slot '{}' "
+                   "and eAxC '{}'",
+                   slot,
+                   context.eaxc);
+    return;
+  }
   ether::frame_buffer& frame_buffer = scoped_buffer.get_next_frame();
   span<uint8_t>        buffer       = frame_buffer.data();
 

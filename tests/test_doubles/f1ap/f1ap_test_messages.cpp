@@ -21,6 +21,9 @@
  */
 
 #include "f1ap_test_messages.h"
+#include "srsran/asn1/f1ap/common.h"
+#include "srsran/asn1/f1ap/f1ap_ies.h"
+#include "srsran/asn1/f1ap/f1ap_pdu_contents_ue.h"
 #include "srsran/f1ap/common/f1ap_message.h"
 #include "srsran/ran/up_transport_layer_info.h"
 #include "srsran/support/test_utils.h"
@@ -48,8 +51,8 @@ static asn1::f1ap::drbs_to_be_setup_item_s generate_drb_am_setup_item(drb_id_t d
   drb_info.snssai.sd.from_string("0027db");
   drb.rlc_mode.value = rlc_mode_opts::rlc_am;
   drb.ul_up_tnl_info_to_be_setup_list.resize(1);
-  auto&                   gtp_tun = drb.ul_up_tnl_info_to_be_setup_list[0].ul_up_tnl_info.set_gtp_tunnel();
-  transport_layer_address addr{"127.0.0.1"};
+  auto& gtp_tun = drb.ul_up_tnl_info_to_be_setup_list[0].ul_up_tnl_info.set_gtp_tunnel();
+  auto  addr    = transport_layer_address::create_from_string("127.0.0.1");
   gtp_tun.transport_layer_address.from_string(addr.to_bitstring());
   gtp_tun.gtp_teid.from_number(1);
 

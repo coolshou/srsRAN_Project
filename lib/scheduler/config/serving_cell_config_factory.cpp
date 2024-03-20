@@ -23,13 +23,13 @@
 #include "srsran/scheduler/config/serving_cell_config_factory.h"
 #include "srsran/adt/optional.h"
 #include "srsran/ran/duplex_mode.h"
-#include "srsran/ran/ofdm_symbol_range.h"
 #include "srsran/ran/pdcch/pdcch_candidates.h"
 #include "srsran/ran/pdcch/pdcch_type0_css_coreset_config.h"
 #include "srsran/ran/pdcch/pdcch_type0_css_occasions.h"
 #include "srsran/ran/pdcch/search_space.h"
 #include "srsran/ran/prach/prach_configuration.h"
 #include "srsran/ran/prach/prach_helper.h"
+#include "srsran/ran/resource_allocation/ofdm_symbol_range.h"
 #include "srsran/scheduler/config/csi_helper.h"
 #include "srsran/srslog/srslog.h"
 #include <set>
@@ -298,28 +298,41 @@ std::vector<pusch_time_domain_resource_allocation>
 srsran::config_helpers::generate_k2_candidates(cyclic_prefix cp, const tdd_ul_dl_config_common& tdd_cfg, uint8_t min_k2)
 {
   static const unsigned SYMBOLS_PER_SLOT = get_nsymb_per_slot(cp);
-  // Maximum number of candidates as per TS 38.331, "maxNrofUL-Allocations".
-  static constexpr unsigned MAX_SIZE = 16;
+
+  const unsigned tdd_period_slots = nof_slots_per_tdd_period(tdd_cfg);
+  const unsigned nof_dl_slots     = nof_full_dl_slots_per_tdd_period(tdd_cfg);
+  const unsigned nof_ul_slots     = nof_full_ul_slots_per_tdd_period(tdd_cfg);
 
   // TODO: This algorithm may need to be revisited for partial UL slots to avoid that the partial slot is always picked.
   std::vector<pusch_time_domain_resource_allocation> result;
-  for (unsigned idx = 0; idx < nof_slots_per_tdd_period(tdd_cfg) and result.size() < MAX_SIZE; ++idx) {
+  for (unsigned idx = 0; idx < tdd_period_slots and result.size() < pusch_constants::MAX_NOF_PUSCH_TD_RES_ALLOCS;
+       ++idx) {
     // For every slot containing DL symbols check for corresponding k2 value.
     if (get_active_tdd_dl_symbols(tdd_cfg, idx, cp).length() > 0) {
-      for (unsigned k2 = min_k2; k2 <= SCHEDULER_MAX_K2 and result.size() < MAX_SIZE; ++k2) {
+      for (unsigned k2 = min_k2;
+           k2 <= SCHEDULER_MAX_K2 and result.size() < pusch_constants::MAX_NOF_PUSCH_TD_RES_ALLOCS;
+           ++k2) {
         // TODO: Consider partial UL slots when scheduler supports it.
         if (get_active_tdd_ul_symbols(tdd_cfg, idx + k2, cp).length() == SYMBOLS_PER_SLOT) {
           if (std::none_of(result.begin(), result.end(), [k2](const auto& res) { return res.k2 == k2; })) {
             result.emplace_back(pusch_time_domain_resource_allocation{
                 k2, sch_mapping_type::typeA, ofdm_symbol_range{0, SYMBOLS_PER_SLOT}});
           }
-          break;
+          // [Implementation-defined] For DL heavy (nof. of DL slots greater than nof. UL slots) TDD configuration nof.
+          // k2 values are generated based on nof. DL slots i.e. one k2 value per DL slot. But in the case of UL
+          // heavy TDD configuration we generate all applicable k2 value(s) for each DL slot to allow multiple UL PDCCH
+          // allocations in the same slot for same UE.
+          if (nof_dl_slots > nof_ul_slots) {
+            break;
+          }
         }
       }
     }
   }
   // Sorting in ascending order is performed to reduce the latency with which PUSCH is scheduled.
-  std::sort(result.begin(), result.end(), [](const auto& lhs, const auto& rhs) { return lhs.k2 < rhs.k2; });
+  std::sort(result.begin(), result.end(), [](const auto& lhs, const auto& rhs) {
+    return lhs.k2 < rhs.k2 or (lhs.k2 == rhs.k2 and lhs.symbols.length() > rhs.symbols.length());
+  });
   return result;
 }
 
@@ -386,7 +399,7 @@ srsran::config_helpers::make_default_ul_config_common(const cell_config_builder_
   cfg.init_ul_bwp.pusch_cfg_common.emplace();
   if (band_helper::get_duplex_mode(params.band.value()) == duplex_mode::FDD) {
     cfg.init_ul_bwp.pusch_cfg_common->pusch_td_alloc_list = {
-        pusch_time_domain_resource_allocation{4, sch_mapping_type::typeA, ofdm_symbol_range{0, 14}}};
+        pusch_time_domain_resource_allocation{params.min_k2, sch_mapping_type::typeA, ofdm_symbol_range{0, 14}}};
   } else {
     // TDD
     // - [Implementation-defined] Ensure k2 value which is less than or equal to minimum value of k1(s) exist in the
@@ -526,88 +539,89 @@ uplink_config srsran::config_helpers::make_default_ue_uplink_config(const cell_c
   // PUCCH Resource Set ID 0. This is for PUCCH Format 1 only (Format 0 not yet supported), used for HARQ-ACK only.
   auto& pucch_res_set_0            = pucch_cfg.pucch_res_set.emplace_back();
   pucch_res_set_0.pucch_res_set_id = 0;
-  pucch_res_set_0.pucch_res_id_list.emplace_back(0);
-  pucch_res_set_0.pucch_res_id_list.emplace_back(1);
-  pucch_res_set_0.pucch_res_id_list.emplace_back(2);
+  pucch_res_set_0.pucch_res_id_list.emplace_back(pucch_res_id_t{0, 0});
+  pucch_res_set_0.pucch_res_id_list.emplace_back(pucch_res_id_t{1, 1});
+  pucch_res_set_0.pucch_res_id_list.emplace_back(pucch_res_id_t{2, 2});
 
   // PUCCH Resource Set ID 1. This is for PUCCH Format 2 only and used for HARQ-ACK + optionally SR and/or CSI.
   auto& pucch_res_set_1            = pucch_cfg.pucch_res_set.emplace_back();
   pucch_res_set_1.pucch_res_set_id = 1;
-  pucch_res_set_1.pucch_res_id_list.emplace_back(3);
-  pucch_res_set_1.pucch_res_id_list.emplace_back(4);
-  pucch_res_set_1.pucch_res_id_list.emplace_back(5);
-  pucch_res_set_1.pucch_res_id_list.emplace_back(6);
-  pucch_res_set_1.pucch_res_id_list.emplace_back(7);
-  pucch_res_set_1.pucch_res_id_list.emplace_back(8);
+  pucch_res_set_1.pucch_res_id_list.emplace_back(pucch_res_id_t{3, 3});
+  pucch_res_set_1.pucch_res_id_list.emplace_back(pucch_res_id_t{4, 4});
+  pucch_res_set_1.pucch_res_id_list.emplace_back(pucch_res_id_t{5, 5});
+  pucch_res_set_1.pucch_res_id_list.emplace_back(pucch_res_id_t{6, 6});
+  pucch_res_set_1.pucch_res_id_list.emplace_back(pucch_res_id_t{7, 7});
+  pucch_res_set_1.pucch_res_id_list.emplace_back(pucch_res_id_t{8, 8});
 
   // PUCCH resource format 1, for HARQ-ACK.
   // >>> PUCCH resource 0.
-  pucch_resource res_basic{.res_id = 0, .starting_prb = params.cell_nof_crbs - 1, .format = pucch_format::FORMAT_1};
+  pucch_resource res_basic{
+      .res_id = pucch_res_id_t{0, 0}, .starting_prb = params.cell_nof_crbs - 1, .format = pucch_format::FORMAT_1};
   res_basic.format_params.emplace<pucch_format_1_cfg>(
       pucch_format_1_cfg{.initial_cyclic_shift = 0, .nof_symbols = 14, .starting_sym_idx = 0, .time_domain_occ = 0});
   pucch_cfg.pucch_res_list.push_back(res_basic);
   // >>> PUCCH resource 1.
   pucch_cfg.pucch_res_list.push_back(res_basic);
   pucch_resource& res1 = pucch_cfg.pucch_res_list.back();
-  res1.res_id          = 1;
+  res1.res_id          = pucch_res_id_t{1, 1};
   res1.starting_prb    = 1;
   // >>> PUCCH resource 2.
   pucch_cfg.pucch_res_list.push_back(res_basic);
   pucch_resource& res2 = pucch_cfg.pucch_res_list.back();
-  res2.res_id          = 2;
+  res2.res_id          = pucch_res_id_t{2, 2};
   res2.starting_prb    = params.cell_nof_crbs - 2;
 
   // PUCCH resource format 2, for HARQ-ACK + optionally SR and/or CSI.
   // >>> PUCCH resource 3.
   pucch_resource res_basic_f2{.starting_prb = 2, .format = pucch_format::FORMAT_2};
-  res_basic_f2.res_id = 3;
+  res_basic_f2.res_id = pucch_res_id_t{3, 3};
   res_basic_f2.format_params.emplace<pucch_format_2_3_cfg>(
       pucch_format_2_3_cfg{.nof_prbs = 1, .nof_symbols = 2, .starting_sym_idx = 0});
   pucch_cfg.pucch_res_list.push_back(res_basic_f2);
   // >>> PUCCH resource 4.
   pucch_cfg.pucch_res_list.push_back(res_basic_f2);
   pucch_resource& res4                                                   = pucch_cfg.pucch_res_list.back();
-  res4.res_id                                                            = 4;
+  res4.res_id                                                            = pucch_res_id_t{4, 4};
   variant_get<pucch_format_2_3_cfg>(res4.format_params).starting_sym_idx = 2;
   // >>> PUCCH resource 5.
   pucch_cfg.pucch_res_list.push_back(res_basic_f2);
   pucch_resource& res5                                                   = pucch_cfg.pucch_res_list.back();
-  res5.res_id                                                            = 5;
+  res5.res_id                                                            = pucch_res_id_t{5, 5};
   variant_get<pucch_format_2_3_cfg>(res5.format_params).starting_sym_idx = 4;
   // >>> PUCCH resource 6.
   pucch_cfg.pucch_res_list.push_back(res_basic_f2);
   pucch_resource& res6                                                   = pucch_cfg.pucch_res_list.back();
-  res6.res_id                                                            = 6;
+  res6.res_id                                                            = pucch_res_id_t{6, 6};
   variant_get<pucch_format_2_3_cfg>(res6.format_params).starting_sym_idx = 6;
   // >>> PUCCH resource 7.
   pucch_cfg.pucch_res_list.push_back(res_basic_f2);
   pucch_resource& res7                                                   = pucch_cfg.pucch_res_list.back();
-  res7.res_id                                                            = 7;
+  res7.res_id                                                            = pucch_res_id_t{7, 7};
   variant_get<pucch_format_2_3_cfg>(res7.format_params).starting_sym_idx = 8;
   // >>> PUCCH resource 8.
   pucch_cfg.pucch_res_list.push_back(res_basic_f2);
   pucch_resource& res8                                                   = pucch_cfg.pucch_res_list.back();
-  res8.res_id                                                            = 8;
+  res8.res_id                                                            = pucch_res_id_t{8, 8};
   variant_get<pucch_format_2_3_cfg>(res8.format_params).starting_sym_idx = 10;
 
   // PUCCH resource format 2, for CSI and optionally for SR.
   // >>> PUCCH resource 9.
   pucch_cfg.pucch_res_list.push_back(res_basic_f2);
   pucch_resource& res9                                                   = pucch_cfg.pucch_res_list.back();
-  res9.res_id                                                            = 9;
+  res9.res_id                                                            = pucch_res_id_t{9, 9};
   variant_get<pucch_format_2_3_cfg>(res9.format_params).starting_sym_idx = 12;
 
   // PUCCH resource format 1, for SR only.
   // >>> PUCCH resource 10.
   pucch_cfg.pucch_res_list.push_back(res_basic);
   pucch_resource& res10 = pucch_cfg.pucch_res_list.back();
-  res10.res_id          = 10;
+  res10.res_id          = pucch_res_id_t{10, 10};
   res10.starting_prb    = 0;
   res10.second_hop_prb  = params.cell_nof_crbs - 1;
 
   pucch_cfg.pucch_res_list.push_back(res_basic);
   pucch_resource& res11 = pucch_cfg.pucch_res_list.back();
-  res11.res_id          = 11;
+  res11.res_id          = pucch_res_id_t{11, 11};
   res11.starting_prb    = params.cell_nof_crbs - 3;
 
   // TODO: add more PUCCH resources.
@@ -617,12 +631,13 @@ uplink_config srsran::config_helpers::make_default_ue_uplink_config(const cell_c
   const unsigned           sr_period = get_nof_slots_per_subframe(params.scs_common) * 40;
   const optional<unsigned> sr_offset =
       params.tdd_ul_dl_cfg_common.has_value() ? find_next_tdd_full_ul_slot(params.tdd_ul_dl_cfg_common.value()) : 0;
+  const unsigned sr_res_id = (unsigned)pucch_cfg.pucch_res_list.size() - 1U;
   pucch_cfg.sr_res_list.push_back(
       scheduling_request_resource_config{.sr_res_id    = 1,
                                          .sr_id        = uint_to_sched_req_id(0),
                                          .period       = (sr_periodicity)sr_period,
                                          .offset       = *sr_offset,
-                                         .pucch_res_id = (unsigned)pucch_cfg.pucch_res_list.size() - 1U});
+                                         .pucch_res_id = pucch_res_id_t{sr_res_id, sr_res_id}});
 
   pucch_cfg.format_1_common_param.emplace();
   pucch_cfg.format_2_common_param.emplace(
@@ -727,7 +742,11 @@ pdcch_config srsran::config_helpers::make_ue_dedicated_pdcch_config(const cell_c
   // >> Add SearchSpace#2.
   pdcch_cfg.search_spaces.push_back(make_default_ue_search_space_config());
   pdcch_cfg.search_spaces[0].set_non_ss0_nof_candidates(
-      {0, 0, compute_max_nof_candidates(aggregation_level::n4, pdcch_cfg.coresets[0]), 0, 0});
+      {0,
+       compute_max_nof_candidates(aggregation_level::n2, pdcch_cfg.coresets[0]),
+       compute_max_nof_candidates(aggregation_level::n4, pdcch_cfg.coresets[0]),
+       0,
+       0});
 
   return pdcch_cfg;
 }

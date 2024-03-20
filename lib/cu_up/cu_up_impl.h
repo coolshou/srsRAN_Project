@@ -44,18 +44,13 @@ class cu_up final : public cu_up_interface
 {
 public:
   explicit cu_up(const cu_up_configuration& cfg_);
-  ~cu_up();
+  ~cu_up() override;
 
   // cu_up_interface
   void start() override;
   void stop() override;
 
-  int get_n3_bind_port() override
-  {
-    uint16_t port = {};
-    ngu_gw->get_bind_port(port);
-    return port;
-  }
+  optional<uint16_t> get_n3_bind_port() override { return ngu_gw->get_bind_port(); }
 
   // cu_up_e1ap_interface
   e1ap_message_handler& get_e1ap_message_handler() override { return *e1ap; }
@@ -83,6 +78,9 @@ private:
 
   // logger
   srslog::basic_logger& logger = srslog::fetch_basic_logger("CU-UP", false);
+
+  // Holds DL executor for the control TEID.
+  std::unique_ptr<ue_executor_mapper> ctrl_exec_mapper;
 
   // Components
   std::atomic<bool>                    e1ap_connected = {false};

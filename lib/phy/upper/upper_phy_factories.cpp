@@ -347,9 +347,13 @@ static std::shared_ptr<uplink_processor_factory> create_ul_processor_factory(con
     report_fatal_error_if_not(prach_factory, "Invalid PRACH detector pool factory.");
   }
 
+  std::shared_ptr<time_alignment_estimator_factory> ta_estimator_factory =
+      create_time_alignment_estimator_dft_factory(dft_factory);
+  report_fatal_error_if_not(ta_estimator_factory, "Invalid TA estimator factory.");
+
   std::shared_ptr<pseudo_random_generator_factory> prg_factory = create_pseudo_random_generator_sw_factory();
   std::shared_ptr<port_channel_estimator_factory>  ch_estimator_factory =
-      create_port_channel_estimator_factory_sw(dft_factory);
+      create_port_channel_estimator_factory_sw(ta_estimator_factory);
 
   std::shared_ptr<channel_equalizer_factory>  equalizer_factory    = create_channel_equalizer_factory_zf();
   std::shared_ptr<channel_modulation_factory> demodulation_factory = create_channel_modulation_sw_factory();
@@ -371,6 +375,8 @@ static std::shared_ptr<uplink_processor_factory> create_ul_processor_factory(con
   report_fatal_error_if_not(decoder_config.segmenter_factory, "Invalid LDPC Rx segmenter factory.");
   decoder_config.nof_pusch_decoder_threads = config.nof_pusch_decoder_threads;
   decoder_config.executor                  = config.pusch_decoder_executor;
+  decoder_config.nof_prb                   = config.ul_bw_rb;
+  decoder_config.nof_layers                = 1;
 
   std::shared_ptr<short_block_detector_factory> short_block_det_factory = create_short_block_detector_factory_sw();
   report_fatal_error_if_not(short_block_det_factory, "Invalid short block detector factory.");
@@ -395,7 +401,6 @@ static std::shared_ptr<uplink_processor_factory> create_ul_processor_factory(con
   pusch_config.demodulator_factory = create_pusch_demodulator_factory_sw(
       equalizer_factory, demodulation_factory, prg_factory, enable_evm, enable_eq_sinr);
   pusch_config.demux_factory              = create_ulsch_demultiplex_factory_sw();
-  pusch_config.decoder_factory            = create_pusch_decoder_factory_sw(decoder_config);
   pusch_config.uci_dec_factory            = uci_dec_factory;
   pusch_config.dec_nof_iterations         = config.ldpc_decoder_iterations;
   pusch_config.dec_enable_early_stop      = config.ldpc_decoder_early_stop;
@@ -403,10 +408,11 @@ static std::shared_ptr<uplink_processor_factory> create_ul_processor_factory(con
   pusch_config.max_nof_concurrent_threads = config.max_ul_thread_concurrency;
 
   // :TODO: check these values in the future. Extract them to more public config.
-  pusch_config.ch_estimate_dimensions.nof_symbols   = 14;
+  pusch_config.ch_estimate_dimensions.nof_symbols   = MAX_NSYMB_PER_SLOT;
   pusch_config.ch_estimate_dimensions.nof_tx_layers = 1;
   pusch_config.ch_estimate_dimensions.nof_prb       = config.ul_bw_rb;
   pusch_config.ch_estimate_dimensions.nof_rx_ports  = config.nof_rx_ports;
+  pusch_config.decoder_factory                      = create_pusch_decoder_factory_sw(decoder_config);
 
   std::shared_ptr<pusch_processor_factory> pusch_factory = create_pusch_processor_factory_sw(pusch_config);
   report_fatal_error_if_not(pusch_factory, "Invalid PUSCH processor factory.");
@@ -421,7 +427,7 @@ static std::shared_ptr<uplink_processor_factory> create_ul_processor_factory(con
 
   // Create channel estimator factory.
   std::shared_ptr<port_channel_estimator_factory> port_chan_estimator_factory =
-      create_port_channel_estimator_factory_sw(dft_factory);
+      create_port_channel_estimator_factory_sw(ta_estimator_factory);
   report_fatal_error_if_not(port_chan_estimator_factory, "Invalid port channel estimator factory.");
 
   std::shared_ptr<dmrs_pucch_estimator_factory> pucch_dmrs_factory =
@@ -563,11 +569,8 @@ public:
     phy_config.dl_processor_pool = create_downlink_processor_pool(downlink_proc_factory, config);
     report_fatal_error_if_not(phy_config.dl_processor_pool, "Invalid downlink processor pool.");
 
-    phy_config.tx_buf_pool = create_tx_buffer_pool(config.tx_buffer_config);
-    report_fatal_error_if_not(phy_config.tx_buf_pool, "Invalid transmit buffer processor pool.");
-
     phy_config.rx_buf_pool = create_rx_buffer_pool(config.rx_buffer_config);
-    report_fatal_error_if_not(phy_config.tx_buf_pool, "Invalid receive buffer processor pool.");
+    report_fatal_error_if_not(phy_config.rx_buf_pool, "Invalid receive buffer processor pool.");
 
     phy_config.ul_processor_pool = create_ul_processor_pool(*ul_processor_fact, config);
     report_fatal_error_if_not(phy_config.ul_processor_pool, "Invalid uplink processor pool.");

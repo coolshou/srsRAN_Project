@@ -95,31 +95,14 @@ void detail::harq_process<IsDownlink>::slot_indication(slot_point slot_tx)
       continue;
     }
 
-    const bool max_retx_exceeded = tb.nof_retxs + 1 > tb.max_nof_harq_retxs;
-
-    if (not max_retx_exceeded) {
-      // ACK went missing, and we only have received NACK/DTX.
-      tb.state = transport_block::state_t::pending_retx;
+    // At least one of the expected ACKs went missing and we haven't received any positive ACK.
+    tb.state = transport_block::state_t::empty;
+    if (max_ack_wait_in_slots != 1) {
+      // Only in non-NTN case, we log a warning.
       logger.warning(id,
-                     "Setting HARQ to \"pending reTx\" state. Cause: HARQ-ACK wait timeout ({} slots) was reached, "
-                     "but there are still missing HARQ-ACKs and none of the received are positive.",
-                     slot_ack_timeout - last_slot_ack);
-    } else {
-      // Max number of reTxs was exceeded. Clear HARQ process.
-      tb.state = transport_block::state_t::empty;
-      fmt::memory_buffer fmtbuf;
-      fmt::format_to(fmtbuf,
                      "Discarding HARQ. Cause: HARQ-ACK wait timeout ({} slots) was reached, but there are still "
-                     "missing HARQ-ACKs, none of the received so far are positive and the maximum number of reTxs {} "
-                     "was exceeded",
-                     slot_ack_timeout - last_slot_ack,
-                     tb.max_nof_harq_retxs);
-
-      if (max_ack_wait_in_slots == 1) {
-        logger.info(id, to_c_str(fmtbuf));
-      } else {
-        logger.warning(id, to_c_str(fmtbuf));
-      }
+                     "missing HARQ-ACKs and none of the received ones are positive.",
+                     slot_ack_timeout - last_slot_ack);
     }
 
     // Report timeout with NACK.
@@ -153,7 +136,7 @@ void detail::harq_process<IsDownlink>::reset()
 }
 
 template <bool IsDownlink>
-void detail::harq_process<IsDownlink>::cancel_harq(unsigned tb_idx)
+void detail::harq_process<IsDownlink>::cancel_harq_retxs(unsigned tb_idx)
 {
   if (empty(tb_idx)) {
     return;
@@ -213,13 +196,15 @@ void dl_harq_process::new_tx(slot_point pdsch_slot,
                              unsigned   max_harq_nof_retxs,
                              uint8_t    harq_bit_idx,
                              cqi_value  cqi,
-                             unsigned   nof_layers)
+                             unsigned   nof_layers,
+                             bool       is_fallback_)
 {
   base_type::tx_common(pdsch_slot, pdsch_slot + k1);
   base_type::new_tx_tb_common(0, max_harq_nof_retxs, harq_bit_idx);
-  prev_tx_params            = {};
-  prev_tx_params.cqi        = cqi;
-  prev_tx_params.nof_layers = nof_layers;
+  prev_tx_params             = {};
+  prev_tx_params.cqi         = cqi;
+  prev_tx_params.nof_layers  = nof_layers;
+  prev_tx_params.is_fallback = is_fallback_;
   prev_tx_params.tb[0].emplace();
   prev_tx_params.tb[1].reset();
   pucch_ack_to_receive = 0;
@@ -376,9 +361,9 @@ void ul_harq_process::save_alloc_params(dci_ul_rnti_config_type dci_cfg_type, co
   prev_tx_params.rbs          = pusch.rbs;
 }
 
-void ul_harq_process::cancel_harq()
+void ul_harq_process::cancel_harq_retxs()
 {
-  base_type::cancel_harq(0);
+  base_type::cancel_harq_retxs(0);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

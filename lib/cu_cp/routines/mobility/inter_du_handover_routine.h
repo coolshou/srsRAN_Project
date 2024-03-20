@@ -22,8 +22,8 @@
 
 #pragma once
 
-#include "../../ue_manager_impl.h"
-#include "srsran/cu_cp/du_processor.h"
+#include "../../du_processor/du_processor_impl_interface.h"
+#include "../../ue_manager/ue_manager_impl.h"
 #include "srsran/support/async/async_task.h"
 #include "srsran/support/async/eager_async_task.h"
 
@@ -85,7 +85,7 @@ private:
   e1ap_bearer_context_modification_response
       bearer_context_modification_response; // to inform CU-UP about the new TEID for UL F1u traffic
   f1ap_ue_context_modification_response source_ue_context_modification_response;
-  bool                                  context_transfer_success = false;
+  bool                                  reconf_result = false;
 };
 
 } // namespace srs_cu_cp

@@ -105,6 +105,14 @@ public:
   bool has_decode_function_been_called() const { return decode_function_called; }
 };
 
+/// Dummy Ethernet receiver class.
+class dummy_eth_receiver : public ether::receiver
+{
+  void start(ether::frame_notifier& notifier) override{};
+
+  void stop() override{};
+};
+
 } // namespace
 
 class ofh_message_receiver_fixture : public ::testing::Test
@@ -134,6 +142,8 @@ public:
   message_receiver_config generate_config()
   {
     message_receiver_config config;
+    config.nof_symbols = 14;
+    config.scs         = subcarrier_spacing::kHz30;
     config.vlan_params = vlan_params;
     config.ul_eaxc     = ul_eaxc;
     config.prach_eaxc  = ul_prach_eaxc;
@@ -146,13 +156,6 @@ public:
     message_receiver_dependencies dependencies;
     dependencies.logger         = &srslog::fetch_basic_logger("TEST");
     dependencies.window_checker = &window_checker;
-
-    dependencies.uplane_decoder =
-        create_dynamic_compr_method_ofh_user_plane_packet_decoder(*dependencies.logger,
-                                                                  srsran::subcarrier_spacing::kHz30,
-                                                                  cyclic_prefix::NORMAL,
-                                                                  MAX_NOF_PRBS,
-                                                                  std::make_unique<iq_decompressor_dummy>());
 
     {
       auto temp                    = std::make_unique<data_flow_uplane_uplink_prach_spy>();
@@ -180,6 +183,7 @@ public:
       ecpri_decoder              = temp.get();
       dependencies.ecpri_decoder = std::move(temp);
     }
+    dependencies.eth_receiver   = std::make_unique<dummy_eth_receiver>();
     dependencies.seq_id_checker = std::make_unique<sequence_id_checker_dummy_impl>();
 
     return dependencies;
