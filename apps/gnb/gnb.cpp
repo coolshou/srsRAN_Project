@@ -56,7 +56,7 @@
 #include "apps/services/metrics_hub.h"
 #include "apps/services/rlc_metrics_plotter_json.h"
 
-#include "apps/modules/flexible_du/split_ru_dynamic/dynamic_du_factory.h"
+#include "apps/units/flexible_du/split_ru_dynamic/dynamic_du_factory.h"
 #include "srsran/phy/upper/upper_phy_timing_notifier.h"
 
 #include "srsran/ru/ru_adapters.h"
@@ -69,14 +69,19 @@
 #include "apps/services/e2_metric_connector_manager.h"
 #include "srsran/support/sysinfo.h"
 
+#include "apps/units/cu_cp/cu_cp_logger_registrator.h"
+#include "apps/units/cu_cp/cu_cp_unit_config_cli11_schema.h"
+#include "apps/units/cu_cp/cu_cp_unit_config_validator.h"
+#include "apps/units/cu_up//cu_up_unit_config_validator.h"
+#include "apps/units/cu_up/cu_up_logger_registrator.h"
+#include "apps/units/cu_up/cu_up_unit_config_cli11_schema.h"
+
 #include <atomic>
 
-#include "../modules/cu_cp/logger_registrator.h"
-#include "../modules/cu_cp/pcap_factory.h"
-#include "../modules/cu_up/logger_registrator.h"
-#include "../modules/cu_up/pcap_factory.h"
-#include "../modules/flexible_du/du_high/pcap_factory.h"
-#include "../modules/flexible_du/split_ru_dynamic/logger_registrator.h"
+#include "../units/cu_cp/pcap_factory.h"
+#include "../units/cu_up/pcap_factory.h"
+#include "../units/flexible_du/du_high/pcap_factory.h"
+#include "../units/flexible_du/split_ru_dynamic/logger_registrator.h"
 
 #ifdef DPDK_FOUND
 #include "srsran/hal/dpdk/dpdk_eal_factory.h"
@@ -188,7 +193,9 @@ static void initialize_log(const std::string& filename)
   srslog::init();
 }
 
-static void register_app_logs(const log_appconfig& log_cfg)
+static void register_app_logs(const log_appconfig&            log_cfg,
+                              const cu_cp_unit_logger_config& cu_cp_loggers,
+                              const cu_up_unit_logger_config& cu_up_loggers)
 {
   // Set log-level of app and all non-layer specific components to app level.
   for (const auto& id : {"GNB", "ALL", "SCTP-GW", "IO-EPOLL", "UDP-GW", "PCAP"}) {
@@ -202,9 +209,11 @@ static void register_app_logs(const log_appconfig& log_cfg)
   e2ap_logger.set_hex_dump_max_size(log_cfg.hex_max_size);
 
   // Register the loggers of the modules.
-  modules::cu_cp::register_logs(log_cfg);
-  modules::cu_up::register_logs(log_cfg);
   modules::flexible_du::split_ru_dynamic::register_logs(log_cfg);
+
+  // Register units logs.
+  register_cu_cp_loggers(cu_cp_loggers);
+  register_cu_up_loggers(cu_up_loggers);
 }
 
 int main(int argc, char** argv)
@@ -226,6 +235,12 @@ int main(int argc, char** argv)
   // Configure CLI11 with the gNB application configuration schema.
   configure_cli11_with_gnb_appconfig_schema(app, gnb_parsed_cfg);
 
+  cu_cp_unit_config cu_cp_config;
+  configure_cli11_with_cu_cp_unit_config_schema(app, cu_cp_config);
+
+  cu_up_unit_config cu_up_config;
+  configure_cli11_with_cu_up_unit_config_schema(app, cu_up_config);
+
   // Parse arguments.
   CLI11_PARSE(app, argc, argv);
 
@@ -235,13 +250,14 @@ int main(int argc, char** argv)
   derive_auto_params(gnb_cfg);
 
   // Check the modified configuration.
-  if (!validate_appconfig(gnb_cfg)) {
+  if (!validate_appconfig(gnb_cfg) || !validate_cu_cp_unit_config(cu_cp_config) ||
+      !validate_cu_up_unit_config(cu_up_config)) {
     report_error("Invalid configuration detected.\n");
   }
 
   // Set up logging.
   initialize_log(gnb_cfg.log_cfg.filename);
-  register_app_logs(gnb_cfg.log_cfg);
+  register_app_logs(gnb_cfg.log_cfg, cu_cp_config.loggers, cu_up_config.loggers);
 
   srslog::basic_logger& gnb_logger = srslog::fetch_basic_logger("GNB");
   if (not gnb_cfg.log_cfg.tracing_filename.empty()) {
@@ -289,7 +305,7 @@ int main(int argc, char** argv)
   check_cpu_governor(gnb_logger);
   check_drm_kms_polling(gnb_logger);
 
-  worker_manager workers{gnb_cfg};
+  worker_manager workers{gnb_cfg, cu_up_config.gtpu_queue_size};
 
   // Set layer-specific pcap options.
   const auto& low_prio_cpu_mask = gnb_cfg.expert_execution_cfg.affinities.low_priority_cpu_cfg.mask;
@@ -357,7 +373,7 @@ int main(int argc, char** argv)
   e2_gateway_remote_connector e2_gw{*epoll_broker, e2_du_nw_config, *e2ap_p};
 
   // Create CU-CP config.
-  srs_cu_cp::cu_cp_configuration cu_cp_cfg = generate_cu_cp_config(gnb_cfg);
+  srs_cu_cp::cu_cp_configuration cu_cp_cfg = generate_cu_cp_config(gnb_cfg, cu_cp_config);
   cu_cp_cfg.cu_cp_executor                 = workers.cu_cp_exec;
   cu_cp_cfg.cu_cp_e2_exec                  = workers.cu_cp_e2_exec;
   cu_cp_cfg.ngap_notifier                  = ngap_adapter.get();
@@ -367,10 +383,8 @@ int main(int argc, char** argv)
   std::unique_ptr<srsran::srs_cu_cp::cu_cp> cu_cp_obj = create_cu_cp(cu_cp_cfg);
 
   // Create console helper object for commands and metrics printing.
-  console_helper console(*epoll_broker,
-                         json_channel,
-                         cu_cp_obj->get_mobility_manager_ho_trigger_handler(),
-                         gnb_cfg.metrics_cfg.autostart_stdout_metrics);
+  console_helper console(
+      *epoll_broker, json_channel, cu_cp_obj->get_command_handler(), gnb_cfg.metrics_cfg.autostart_stdout_metrics);
   console.on_app_starting();
 
   // Connect NGAP adpter to CU-CP to pass NGAP messages.
@@ -393,7 +407,7 @@ int main(int argc, char** argv)
   }
 
   // Create CU-UP config.
-  srsran::srs_cu_up::cu_up_configuration cu_up_cfg = generate_cu_up_config(gnb_cfg);
+  srsran::srs_cu_up::cu_up_configuration cu_up_cfg = generate_cu_up_config(cu_up_config);
   cu_up_cfg.ctrl_executor                          = workers.cu_up_ctrl_exec;
   cu_up_cfg.cu_up_e2_exec                          = workers.cu_up_e2_exec;
   cu_up_cfg.ue_exec_pool                           = workers.cu_up_exec_mapper.get();
@@ -402,7 +416,7 @@ int main(int argc, char** argv)
   cu_up_cfg.f1u_gateway           = f1u_conn->get_f1u_cu_up_gateway();
   cu_up_cfg.gtpu_pcap             = cu_up_pcaps[modules::cu_up::to_value(modules::cu_up::pcap_type::GTPU)].get();
   cu_up_cfg.timers                = cu_timers;
-  cu_up_cfg.qos                   = generate_cu_up_qos_config(gnb_cfg);
+  cu_up_cfg.qos                   = generate_cu_up_qos_config(gnb_cfg, cu_up_config);
 
   // Create NG-U gateway.
   std::unique_ptr<srs_cu_up::ngu_gateway> ngu_gw;

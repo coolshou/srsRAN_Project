@@ -57,6 +57,9 @@
 using namespace srsran;
 using namespace srs_du;
 
+/// Constant used to bound the number of bytes pushed to the DU DL F1-U interface per slot.
+const unsigned MAX_F1U_DL_BITRATE_PER_PORT_BPS = 500e6;
+
 /// \brief Parameters of the benchmark.
 struct bench_params {
   /// \brief Number of runs for the benchmark. Each repetition corresponds to a slot.
@@ -169,6 +172,12 @@ static void parse_args(int argc, char** argv, bench_params& params)
         exit(0);
     }
   }
+
+  // apply limits.
+  subcarrier_spacing scs = params.dplx_mode == duplex_mode::FDD ? subcarrier_spacing::kHz15 : subcarrier_spacing::kHz30;
+  double             slot_dur              = 0.001 / get_nof_slots_per_subframe(scs);
+  unsigned           max_dl_bytes_per_slot = MAX_F1U_DL_BITRATE_PER_PORT_BPS * slot_dur / 8;
+  params.dl_bytes_per_slot                 = std::min(max_dl_bytes_per_slot, params.dl_bytes_per_slot);
 }
 
 static void print_args(const bench_params& params)
@@ -187,7 +196,7 @@ static void print_args(const bench_params& params)
     }
   }
   const double slot_dur_sec = params.dplx_mode == srsran::duplex_mode::FDD ? 0.001 : 0.0005;
-  fmt::print("- F1-U DL Bitrate [Mbps]: {}\n", params.dl_bytes_per_slot * 1e6 * slot_dur_sec);
+  fmt::print("- F1-U DL Bitrate [Mbps]: {}\n", params.dl_bytes_per_slot * 8.0 * 1.0e-6 / slot_dur_sec);
   fmt::print("- F1-U DL PDU size [bytes]: {}\n", params.pdu_size);
   fmt::print("- BSR size [bytes]: {}\n", params.ul_bsr_bytes);
   fmt::print("- Max DL RB grant size [RBs]: {}\n", params.max_dl_rb_grant);
@@ -259,7 +268,7 @@ private:
         handle_success_outcome(msg.pdu.successful_outcome());
         break;
       default:
-        report_fatal_error("Unreachable code in this benchmark");
+        report_fatal_error("Received invalid PDU type {} in this benchmark", msg.pdu.type().value);
     }
   }
 
@@ -290,7 +299,7 @@ private:
         du_rx_pdu_notifier->on_new_message(msg);
       } break;
       default:
-        report_fatal_error("Unreachable code in this benchmark");
+        report_fatal_error("Unhandled PDU type {} in this benchmark", init_msg.value.type().to_string());
     }
   }
 
@@ -329,21 +338,22 @@ public:
 class cu_up_simulator : public f1u_du_gateway
 {
 public:
-  static_vector<f1u_dummy_bearer, MAX_NOF_DU_UES>             bearer_list;
+  static_vector<f1u_dummy_bearer*, MAX_NOF_DU_UES>            bearer_list;
   static_vector<srs_du::f1u_rx_sdu_notifier*, MAX_NOF_DU_UES> du_notif_list;
 
-  f1u_bearer* create_du_bearer(uint32_t                       ue_index,
-                               drb_id_t                       drb_id,
-                               srs_du::f1u_config             config,
-                               const up_transport_layer_info& dl_tnl,
-                               const up_transport_layer_info& ul_tnl,
-                               srs_du::f1u_rx_sdu_notifier&   du_rx,
-                               timer_factory                  timers,
-                               task_executor&                 ue_executor) override
+  std::unique_ptr<f1u_bearer> create_du_bearer(uint32_t                       ue_index,
+                                               drb_id_t                       drb_id,
+                                               srs_du::f1u_config             config,
+                                               const up_transport_layer_info& dl_tnl,
+                                               const up_transport_layer_info& ul_tnl,
+                                               srs_du::f1u_rx_sdu_notifier&   du_rx,
+                                               timer_factory                  timers,
+                                               task_executor&                 ue_executor) override
   {
+    auto f1u_bearer = std::make_unique<f1u_dummy_bearer>();
     du_notif_list.push_back(&du_rx);
-    bearer_list.emplace_back();
-    return &bearer_list.back();
+    bearer_list.push_back(f1u_bearer.get());
+    return f1u_bearer;
   }
 
   void remove_du_bearer(const up_transport_layer_info& dl_tnl) override {}
@@ -562,7 +572,7 @@ public:
                 span<unsigned>                    du_cell_cores,
                 const cell_config_builder_params& builder_params = {}) :
     params(builder_params),
-    dl_buffer_state_bytes(dl_buffer_state_bytes_),
+    f1u_dl_pdu_bytes_per_slot(dl_buffer_state_bytes_),
     f1u_pdu_size(f1u_pdu_size_),
     workers(du_cell_cores),
     ul_bsr_bytes(ul_bsr_bytes_)
@@ -754,41 +764,45 @@ public:
     // more PDUs.
     static const size_t SATURATION_DL_BS_BYTES = 1e5;
 
-    if (dl_buffer_state_bytes == 0) {
+    if (f1u_dl_pdu_bytes_per_slot == 0) {
       // Early return.
       return;
     }
-    if (metrics_handler.tot_dl_bs > SATURATION_DL_BS_BYTES) {
+    uint64_t bytes_to_sched = f1u_dl_total_bytes.load(std::memory_order_relaxed);
+    bytes_to_sched -= std::min(bytes_to_sched, sim_phy.metrics.nof_dl_bytes);
+    if (bytes_to_sched > SATURATION_DL_BS_BYTES) {
       // Saturation of the DU DL detected. We throttle the F1-U interface to avoid depleting the byte buffer pool.
       return;
     }
+
     while (not workers.dl_exec.defer([this]() {
       static std::array<uint32_t, MAX_NOF_DU_UES> pdcp_sn_list{0};
-      const unsigned nof_dl_pdus_per_slot = divide_ceil(dl_buffer_state_bytes, this->f1u_pdu_size.value());
-      const unsigned last_dl_pdu_size     = dl_buffer_state_bytes % this->f1u_pdu_size.value();
+      const unsigned nof_dl_pdus_per_slot = divide_ceil(f1u_dl_pdu_bytes_per_slot, this->f1u_pdu_size.value());
+      const unsigned last_dl_pdu_size     = f1u_dl_pdu_bytes_per_slot % this->f1u_pdu_size.value();
 
-      // Forward DL buffer occupancy updates to all bearers.
-      for (unsigned bearer_idx = 0; bearer_idx != sim_cu_up.du_notif_list.size(); ++bearer_idx) {
-        const auto& du_notif = sim_cu_up.du_notif_list[bearer_idx];
-        for (unsigned i = 0; i != nof_dl_pdus_per_slot; ++i) {
-          // Update PDCP SN.
-          pdcp_sn_list[bearer_idx] = (pdcp_sn_list[bearer_idx] + 1) % (1U << 18U);
-          // We perform a deep-copy of the byte buffer to better simulate a real deployment, where there is stress over
-          // the byte buffer pool.
-          auto pdu_copy = pdcp_pdu.deep_copy();
-          if (pdu_copy.is_error()) {
-            test_logger.warning("Byte buffer segment pool depleted");
+      // Forward DL buffer occupancy updates to all bearers in a Round-robin fashion.
+      for (unsigned i = 0; i != nof_dl_pdus_per_slot; ++i) {
+        unsigned    bearer_idx = f1u_dl_rr_count++ % sim_cu_up.du_notif_list.size();
+        const auto& du_notif   = sim_cu_up.du_notif_list[bearer_idx];
+
+        // Update PDCP SN.
+        pdcp_sn_list[bearer_idx] = (pdcp_sn_list[bearer_idx] + 1) % (1U << 18U);
+        // We perform a deep-copy of the byte buffer to better simulate a real deployment, where there is stress over
+        // the byte buffer pool.
+        auto pdu_copy = pdcp_pdu.deep_copy();
+        if (pdu_copy.is_error()) {
+          test_logger.warning("Byte buffer segment pool depleted");
+          return;
+        }
+        if (i == nof_dl_pdus_per_slot - 1 and last_dl_pdu_size != 0) {
+          // If it is last DL PDU.
+          if (!pdu_copy.value().resize(last_dl_pdu_size)) {
+            test_logger.warning("Unable to resize PDU to {} bytes", last_dl_pdu_size);
             return;
           }
-          if (i == nof_dl_pdus_per_slot - 1 and last_dl_pdu_size != 0) {
-            // If it is last DL PDU.
-            if (!pdu_copy.value().resize(last_dl_pdu_size)) {
-              test_logger.warning("Unable to resize PDU to {} bytes", last_dl_pdu_size);
-              return;
-            }
-          }
-          du_notif->on_new_sdu(pdcp_tx_pdu{.buf = std::move(pdu_copy.value()), .pdcp_sn = pdcp_sn_list[bearer_idx]});
         }
+        f1u_dl_total_bytes.fetch_add(pdu_copy.value().length(), std::memory_order_relaxed);
+        du_notif->on_new_sdu(pdcp_tx_pdu{.buf = std::move(pdu_copy.value()), .pdcp_sn = pdcp_sn_list[bearer_idx]});
       }
     })) {
       // keep trying to push new PDUs.
@@ -991,7 +1005,7 @@ public:
       crc_pdu.rnti           = pusch.pusch_cfg.rnti;
       crc_pdu.harq_id        = pusch.pusch_cfg.harq_id;
       crc_pdu.tb_crc_success = true;
-      crc_pdu.ul_sinr_metric = 21.0;
+      crc_pdu.ul_sinr_dB     = 21.0;
     }
     if (not sim_phy.slot_ul_result.ul_res->puschs.empty()) {
       pending_crc.push_back(std::move(crc));
@@ -1002,7 +1016,7 @@ public:
   cell_config_builder_params params;
   du_high_configuration      cfg{};
   /// Size of the DL buffer status to push for DL Tx.
-  unsigned     dl_buffer_state_bytes;
+  unsigned     f1u_dl_pdu_bytes_per_slot;
   units::bytes f1u_pdu_size{DEFAULT_DL_PDU_SIZE};
 
   srslog::basic_logger&              test_logger = srslog::fetch_basic_logger("TEST");
@@ -1042,6 +1056,11 @@ public:
 
   /// Size of the UL Buffer status report to push for UL Tx.
   unsigned ul_bsr_bytes;
+
+  // Round-robin indexer for pushing DL PDUs to attached UEs.
+  unsigned f1u_dl_rr_count = 0;
+  // Sum of total F1-U DL bytes pushed into DU.
+  std::atomic<uint64_t> f1u_dl_total_bytes{0};
 };
 
 /// \brief Generate custom cell configuration builder params based on duplex mode.

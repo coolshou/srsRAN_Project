@@ -36,16 +36,11 @@ namespace srsran {
 namespace srs_cu_cp {
 
 struct ngap_ue_t {
-  ngap_rrc_ue_pdu_notifier&           rrc_ue_pdu_notifier;
-  ngap_rrc_ue_control_notifier&       rrc_ue_ctrl_notifier;
-  ngap_du_processor_control_notifier& du_processor_ctrl_notifier;
+  ngap_rrc_ue_pdu_notifier&     rrc_ue_pdu_notifier;
+  ngap_rrc_ue_control_notifier& rrc_ue_ctrl_notifier;
 
-  ngap_ue_t(ngap_rrc_ue_pdu_notifier&           rrc_ue_pdu_notifier_,
-            ngap_rrc_ue_control_notifier&       rrc_ue_ctrl_notifier_,
-            ngap_du_processor_control_notifier& du_processor_ctrl_notifier_) :
-    rrc_ue_pdu_notifier(rrc_ue_pdu_notifier_),
-    rrc_ue_ctrl_notifier(rrc_ue_ctrl_notifier_),
-    du_processor_ctrl_notifier(du_processor_ctrl_notifier_)
+  ngap_ue_t(ngap_rrc_ue_pdu_notifier& rrc_ue_pdu_notifier_, ngap_rrc_ue_control_notifier& rrc_ue_ctrl_notifier_) :
+    rrc_ue_pdu_notifier(rrc_ue_pdu_notifier_), rrc_ue_ctrl_notifier(rrc_ue_ctrl_notifier_)
   {
   }
 };
@@ -53,12 +48,15 @@ struct ngap_ue_t {
 class cu_cp_ue final : public du_ue, public ngap_ue, public rrc_ue_task_scheduler
 {
 public:
-  cu_cp_ue(const ue_index_t              ue_index_,
-           const up_resource_manager_cfg up_cfg,
-           ue_task_scheduler             task_sched_,
-           const pci_t                   pci_    = INVALID_PCI,
-           const rnti_t                  c_rnti_ = rnti_t::INVALID_RNTI) :
-    ue_index(ue_index_), task_sched(std::move(task_sched_)), up_mng(create_up_resource_manager(up_cfg))
+  cu_cp_ue(const ue_index_t               ue_index_,
+           const up_resource_manager_cfg& up_cfg,
+           ue_task_scheduler              task_sched_,
+           const pci_t                    pci_    = INVALID_PCI,
+           const rnti_t                   c_rnti_ = rnti_t::INVALID_RNTI) :
+    ue_index(ue_index_),
+    task_sched(std::move(task_sched_)),
+    up_mng(create_up_resource_manager(up_cfg)),
+    rrc_ue_cu_cp_ev_notifier(ue_index)
   {
     if (pci_ != INVALID_PCI) {
       pci = pci_;
@@ -181,22 +179,13 @@ public:
     return ngap_ue_context.value().rrc_ue_ctrl_notifier;
   }
 
-  /// \brief Get the DU processor control notifier of the UE.
-  ngap_du_processor_control_notifier& get_du_processor_control_notifier() override
-  {
-    srsran_assert(ngap_ue_context.has_value(), "ue={}: NGAP UE was not created", ue_index);
-    return ngap_ue_context.value().du_processor_ctrl_notifier;
-  }
-
   /// \brief Add the context for the NGAP UE.
   /// \param[in] rrc_ue_pdu_notifier The RRC UE PDU notifier for the UE.
   /// \param[in] rrc_ue_ctrl_notifier The RRC UE ctrl notifier for the UE.
-  /// \param[in] du_processor_ctrl_notifier The DU processor ctrl notifier for the UE.
-  void add_ngap_ue_context(ngap_rrc_ue_pdu_notifier&           rrc_ue_pdu_notifier,
-                           ngap_rrc_ue_control_notifier&       rrc_ue_ctrl_notifier,
-                           ngap_du_processor_control_notifier& du_processor_ctrl_notifier)
+  void add_ngap_ue_context(ngap_rrc_ue_pdu_notifier&     rrc_ue_pdu_notifier,
+                           ngap_rrc_ue_control_notifier& rrc_ue_ctrl_notifier)
   {
-    ngap_ue_context.emplace(rrc_ue_pdu_notifier, rrc_ue_ctrl_notifier, du_processor_ctrl_notifier);
+    ngap_ue_context.emplace(rrc_ue_pdu_notifier, rrc_ue_ctrl_notifier);
   }
 
   bool ngap_ue_created() { return ngap_ue_context.has_value(); }
@@ -312,12 +301,10 @@ public:
   /// \param[in] ue_index Index of the UE to add the notifiers to.
   /// \param[in] rrc_ue_pdu_notifier RRC UE PDU notifier for the UE.
   /// \param[in] rrc_ue_ctrl_notifier RRC UE control notifier for the UE.
-  /// \param[in] du_processor_ctrl_notifier DU processor control notifier for the UE.
   /// \return Pointer to the NGAP UE if found, nullptr otherwise.
-  ngap_ue* set_ue_ng_context(ue_index_t                          ue_index,
-                             ngap_rrc_ue_pdu_notifier&           rrc_ue_pdu_notifier_,
-                             ngap_rrc_ue_control_notifier&       rrc_ue_ctrl_notifier_,
-                             ngap_du_processor_control_notifier& du_processor_ctrl_notifier_) override;
+  ngap_ue* set_ue_ng_context(ue_index_t                    ue_index,
+                             ngap_rrc_ue_pdu_notifier&     rrc_ue_pdu_notifier_,
+                             ngap_rrc_ue_control_notifier& rrc_ue_ctrl_notifier_) override;
 
   /// \brief Find the NGAP UE with the given UE index.
   /// \param[in] ue_index Index of the UE to be found.

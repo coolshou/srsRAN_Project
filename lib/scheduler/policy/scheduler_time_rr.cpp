@@ -164,13 +164,14 @@ du_ue_index_t round_robin_apply(const ue_repository& ue_db, du_ue_index_t next_u
 }
 
 /// Allocate UE PDSCH grant.
-static alloc_outcome alloc_dl_ue(const ue&                    u,
-                                 const ue_resource_grid_view& res_grid,
-                                 ue_pdsch_allocator&          pdsch_alloc,
-                                 bool                         is_retx,
-                                 bool                         ue_with_srb_data_only,
-                                 srslog::basic_logger&        logger,
-                                 optional<unsigned>           dl_new_tx_max_nof_rbs_per_ue_per_slot = {})
+static alloc_outcome alloc_dl_ue(const ue&                         u,
+                                 const ue_resource_grid_view&      res_grid,
+                                 ue_pdsch_allocator&               pdsch_alloc,
+                                 bool                              is_retx,
+                                 bool                              ue_with_srb_data_only,
+                                 srslog::basic_logger&             logger,
+                                 const scheduler_ue_expert_config& ue_expert_cfg,
+                                 optional<unsigned>                dl_new_tx_max_nof_rbs_per_ue_per_slot = {})
 {
   if (not is_retx) {
     if (not u.has_pending_dl_newtx_bytes()) {
@@ -212,7 +213,19 @@ static alloc_outcome alloc_dl_ue(const ue&                    u,
       const dl_harq_process&                       h        = param_candidate.harq();
       const dci_dl_rnti_config_type                dci_type = param_candidate.dci_dl_rnti_cfg_type();
       const cell_slot_resource_grid&               grid     = res_grid.get_pdsch_grid(ue_cc.cell_index, pdsch.k0);
-      const crb_bitmap used_crbs = grid.used_crbs(ss.bwp->dl_common->generic_params.scs, ss.dl_crb_lims, pdsch.symbols);
+      // Apply RB allocation limits.
+      const unsigned start_rb = std::max(ue_expert_cfg.pdsch_crb_limits.start(), ss.dl_crb_lims.start());
+      const unsigned end_rb   = std::min(ue_expert_cfg.pdsch_crb_limits.stop(), ss.dl_crb_lims.stop());
+      if (start_rb >= end_rb) {
+        logger.debug("ue={} rnti={} PDSCH allocation skipped. Cause: Invalid RB allocation range [{}, {})",
+                     ue_cc.ue_index,
+                     ue_cc.rnti(),
+                     start_rb,
+                     end_rb);
+        continue;
+      }
+      const crb_interval dl_crb_lims = {start_rb, end_rb};
+      const crb_bitmap   used_crbs = grid.used_crbs(ss.bwp->dl_common->generic_params.scs, dl_crb_lims, pdsch.symbols);
       if (used_crbs.all()) {
         logger.debug(
             "ue={} rnti={} PDSCH allocation skipped. Cause: No more RBs available", ue_cc.ue_index, ue_cc.rnti());
@@ -241,10 +254,6 @@ static alloc_outcome alloc_dl_ue(const ue&                    u,
         return alloc_outcome::skip_ue;
       }
 
-      // In case of retx, ensure the RI does not change.
-      const unsigned nof_dl_layers =
-          is_retx ? h.last_alloc_params().nof_layers : ue_cc.channel_state_manager().get_nof_dl_layers();
-
       // [Implementation-defined] In case of partial slots and nof. PRBs allocated equals to 1 probability of KO is
       // high due to code not being able to cope with interference. So the solution is to increase the PRB allocation
       // to greater than 1 PRB.
@@ -260,17 +269,13 @@ static alloc_outcome alloc_dl_ue(const ue&                    u,
         are_crbs_valid = ue_grant_crbs.length() == h.last_alloc_params().rbs.type1().length();
       }
       if (are_crbs_valid) {
-        const aggregation_level aggr_lvl =
-            ue_cc.get_aggregation_level(ue_cc.channel_state_manager().get_wideband_cqi(), ss, true);
         const alloc_outcome result = pdsch_alloc.allocate_dl_grant(ue_pdsch_grant{&u,
                                                                                   ue_cc.cell_index,
                                                                                   h.id,
                                                                                   ss.cfg->get_id(),
                                                                                   param_candidate.pdsch_td_res_index(),
                                                                                   ue_grant_crbs,
-                                                                                  aggr_lvl,
-                                                                                  mcs_prbs.mcs,
-                                                                                  nof_dl_layers});
+                                                                                  mcs_prbs.mcs});
         // If the allocation failed due to invalid parameters, we continue iteration.
         if (result != alloc_outcome::invalid_params) {
           return result;
@@ -282,14 +287,15 @@ static alloc_outcome alloc_dl_ue(const ue&                    u,
 }
 
 /// Allocate UE PUSCH grant.
-static alloc_outcome alloc_ul_ue(const ue&                    u,
-                                 const ue_resource_grid_view& res_grid,
-                                 ue_pusch_allocator&          pusch_alloc,
-                                 bool                         is_retx,
-                                 bool                         schedule_sr_only,
-                                 srslog::basic_logger&        logger,
-                                 unsigned                     pusch_td_res_idx,
-                                 optional<unsigned>           ul_new_tx_max_nof_rbs_per_ue_per_slot = {})
+static alloc_outcome alloc_ul_ue(const ue&                         u,
+                                 const ue_resource_grid_view&      res_grid,
+                                 ue_pusch_allocator&               pusch_alloc,
+                                 bool                              is_retx,
+                                 bool                              schedule_sr_only,
+                                 srslog::basic_logger&             logger,
+                                 unsigned                          pusch_td_res_idx,
+                                 const scheduler_ue_expert_config& ue_expert_cfg,
+                                 optional<unsigned>                ul_new_tx_max_nof_rbs_per_ue_per_slot = {})
 {
   unsigned pending_newtx_bytes = 0;
   if (not is_retx) {
@@ -372,8 +378,20 @@ static alloc_outcome alloc_ul_ue(const ue&                    u,
 
       const cell_slot_resource_grid& grid =
           res_grid.get_pusch_grid(ue_cc.cell_index, pusch_td.k2 + cell_cfg_common.ntn_cs_koffset);
-      const prb_bitmap used_crbs =
-          grid.used_crbs(ss->bwp->ul_common->generic_params.scs, ss->ul_crb_lims, pusch_td.symbols);
+      // Apply RB allocation limits.
+      const unsigned start_rb = std::max(ue_expert_cfg.pusch_crb_limits.start(), ss->ul_crb_lims.start());
+      const unsigned end_rb   = std::min(ue_expert_cfg.pusch_crb_limits.stop(), ss->ul_crb_lims.stop());
+      if (start_rb >= end_rb) {
+        logger.debug("ue={} rnti={} PUSCH allocation skipped. Cause: Invalid RB allocation range [{}, {})",
+                     ue_cc.ue_index,
+                     ue_cc.rnti(),
+                     start_rb,
+                     end_rb);
+        continue;
+      }
+      const crb_interval ul_crb_lims = {start_rb, end_rb};
+      const prb_bitmap   used_crbs =
+          grid.used_crbs(ss->bwp->ul_common->generic_params.scs, ul_crb_lims, pusch_td.symbols);
       if (used_crbs.all()) {
         logger.debug(
             "ue={} rnti={} PUSCH allocation skipped. Cause: No more RBs available", ue_cc.ue_index, ue_cc.rnti());
@@ -442,10 +460,8 @@ static alloc_outcome alloc_ul_ue(const ue&                    u,
         are_crbs_valid = ue_grant_crbs.length() == h->last_tx_params().rbs.type1().length();
       }
       if (are_crbs_valid) {
-        const aggregation_level aggr_lvl =
-            ue_cc.get_aggregation_level(ue_cc.channel_state_manager().get_wideband_cqi(), *ss, false);
         const alloc_outcome result = pusch_alloc.allocate_ul_grant(ue_pusch_grant{
-            &u, ue_cc.cell_index, h->id, ue_grant_crbs, pusch_td_res_idx, ss->cfg->get_id(), aggr_lvl, mcs_prbs.mcs});
+            &u, ue_cc.cell_index, h->id, ue_grant_crbs, pusch_td_res_idx, ss->cfg->get_id(), mcs_prbs.mcs});
         // If the allocation failed due to invalid parameters, we continue the iteration.
         if (result != alloc_outcome::invalid_params) {
           return result;
@@ -472,7 +488,7 @@ void scheduler_time_rr::dl_sched(ue_pdsch_allocator&          pdsch_alloc,
 {
   // First schedule re-transmissions.
   auto retx_ue_function = [this, &res_grid, &pdsch_alloc](const ue& u) {
-    return alloc_dl_ue(u, res_grid, pdsch_alloc, true, false, logger);
+    return alloc_dl_ue(u, res_grid, pdsch_alloc, true, false, logger, expert_cfg);
   };
   next_dl_ue_index = round_robin_apply(ues, next_dl_ue_index, retx_ue_function);
 
@@ -481,13 +497,15 @@ void scheduler_time_rr::dl_sched(ue_pdsch_allocator&          pdsch_alloc,
   if (dl_new_tx_max_nof_rbs_per_ue_per_slot > 0) {
     // Second, schedule UEs with SRB data.
     auto srb_newtx_ue_function = [this, &res_grid, &pdsch_alloc, dl_new_tx_max_nof_rbs_per_ue_per_slot](const ue& u) {
-      return alloc_dl_ue(u, res_grid, pdsch_alloc, false, true, logger, dl_new_tx_max_nof_rbs_per_ue_per_slot);
+      return alloc_dl_ue(
+          u, res_grid, pdsch_alloc, false, true, logger, expert_cfg, dl_new_tx_max_nof_rbs_per_ue_per_slot);
     };
     next_dl_ue_index = round_robin_apply(ues, next_dl_ue_index, srb_newtx_ue_function);
 
     // Then, schedule new transmissions.
     auto tx_ue_function = [this, &res_grid, &pdsch_alloc, dl_new_tx_max_nof_rbs_per_ue_per_slot](const ue& u) {
-      return alloc_dl_ue(u, res_grid, pdsch_alloc, false, false, logger, dl_new_tx_max_nof_rbs_per_ue_per_slot);
+      return alloc_dl_ue(
+          u, res_grid, pdsch_alloc, false, false, logger, expert_cfg, dl_new_tx_max_nof_rbs_per_ue_per_slot);
     };
     next_dl_ue_index = round_robin_apply(ues, next_dl_ue_index, tx_ue_function);
   }
@@ -513,7 +531,7 @@ void scheduler_time_rr::ul_sched(ue_pusch_allocator&          pusch_alloc,
   // First schedule UL data re-transmissions.
   for (unsigned pusch_td_res_idx : pusch_td_res_index_list) {
     auto data_retx_ue_function = [this, &res_grid, &pusch_alloc, pusch_td_res_idx](const ue& u) {
-      return alloc_ul_ue(u, res_grid, pusch_alloc, true, false, logger, pusch_td_res_idx);
+      return alloc_ul_ue(u, res_grid, pusch_alloc, true, false, logger, pusch_td_res_idx, expert_cfg);
     };
     next_ul_ue_index = round_robin_apply(ues, next_ul_ue_index, data_retx_ue_function);
   }
@@ -521,7 +539,7 @@ void scheduler_time_rr::ul_sched(ue_pusch_allocator&          pusch_alloc,
   // Then, schedule all pending SR.
   for (unsigned pusch_td_res_idx : pusch_td_res_index_list) {
     auto sr_ue_function = [this, &res_grid, &pusch_alloc, pusch_td_res_idx](const ue& u) {
-      return alloc_ul_ue(u, res_grid, pusch_alloc, false, true, logger, pusch_td_res_idx);
+      return alloc_ul_ue(u, res_grid, pusch_alloc, false, true, logger, pusch_td_res_idx, expert_cfg);
     };
     next_ul_ue_index = round_robin_apply(ues, next_ul_ue_index, sr_ue_function);
   }
@@ -531,14 +549,18 @@ void scheduler_time_rr::ul_sched(ue_pusch_allocator&          pusch_alloc,
       compute_max_nof_rbs_per_ue_per_slot(ues, false, res_grid, expert_cfg);
   if (ul_new_tx_max_nof_rbs_per_ue_per_slot > 0) {
     for (unsigned pusch_td_res_idx : pusch_td_res_index_list) {
-      auto data_tx_ue_function = [this,
-                                  &res_grid,
-                                  &pusch_alloc,
-                                  ul_new_tx_max_nof_rbs_per_ue_per_slot,
-                                  pusch_td_res_idx](const ue& u) {
-        return alloc_ul_ue(
-            u, res_grid, pusch_alloc, false, false, logger, pusch_td_res_idx, ul_new_tx_max_nof_rbs_per_ue_per_slot);
-      };
+      auto data_tx_ue_function =
+          [this, &res_grid, &pusch_alloc, ul_new_tx_max_nof_rbs_per_ue_per_slot, pusch_td_res_idx](const ue& u) {
+            return alloc_ul_ue(u,
+                               res_grid,
+                               pusch_alloc,
+                               false,
+                               false,
+                               logger,
+                               pusch_td_res_idx,
+                               expert_cfg,
+                               ul_new_tx_max_nof_rbs_per_ue_per_slot);
+          };
       next_ul_ue_index = round_robin_apply(ues, next_ul_ue_index, data_tx_ue_function);
     }
   }

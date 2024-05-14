@@ -33,13 +33,11 @@
 namespace srsran {
 namespace srs_cu_cp {
 
-class f1ap_ue_transaction_manager;
-
 class f1ap_cu_impl final : public f1ap_cu
 {
 public:
   f1ap_cu_impl(const f1ap_configuration&    f1ap_cfg_,
-               f1ap_message_notifier&       f1ap_pdu_notifier_,
+               f1ap_message_notifier&       tx_pdu_notifier_,
                f1ap_du_processor_notifier&  f1ap_du_processor_notifier_,
                f1ap_du_management_notifier& f1ap_du_management_notifier_,
                timer_manager&               timers_,
@@ -134,8 +132,8 @@ private:
   /// \param[in] msg The UE Context Release Request message.
   void handle_ue_context_release_request(const asn1::f1ap::ue_context_release_request_s& msg);
 
-  /// \brief Log F1AP RX PDU.
-  void log_rx_pdu(const f1ap_message& pdu);
+  /// \brief Log F1AP PDU.
+  void log_pdu(bool is_rx, const f1ap_message& pdu);
 
   const f1ap_configuration cfg;
   srslog::basic_logger&    logger;

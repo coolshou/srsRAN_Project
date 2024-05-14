@@ -39,19 +39,19 @@ pdu_session_manager_impl::pdu_session_manager_impl(ue_index_t                   
                                                    network_interface_config&                        net_config_,
                                                    n3_interface_config&                             n3_config_,
                                                    cu_up_ue_logger&                                 logger_,
-                                                   unique_timer&                        ue_inactivity_timer_,
-                                                   timer_factory                        ue_dl_timer_factory_,
-                                                   timer_factory                        ue_ul_timer_factory_,
-                                                   timer_factory                        ue_ctrl_timer_factory_,
-                                                   f1u_cu_up_gateway&                   f1u_gw_,
-                                                   gtpu_teid_pool&                      f1u_teid_allocator_,
-                                                   gtpu_tunnel_tx_upper_layer_notifier& gtpu_tx_notifier_,
-                                                   gtpu_demux_ctrl&                     gtpu_rx_demux_,
-                                                   task_executor&                       ue_dl_exec_,
-                                                   task_executor&                       ue_ul_exec_,
-                                                   task_executor&                       ue_ctrl_exec_,
-                                                   task_executor&                       crypto_exec_,
-                                                   dlt_pcap&                            gtpu_pcap_) :
+                                                   unique_timer&                               ue_inactivity_timer_,
+                                                   timer_factory                               ue_dl_timer_factory_,
+                                                   timer_factory                               ue_ul_timer_factory_,
+                                                   timer_factory                               ue_ctrl_timer_factory_,
+                                                   f1u_cu_up_gateway&                          f1u_gw_,
+                                                   gtpu_teid_pool&                             f1u_teid_allocator_,
+                                                   gtpu_tunnel_common_tx_upper_layer_notifier& gtpu_tx_notifier_,
+                                                   gtpu_demux_ctrl&                            gtpu_rx_demux_,
+                                                   task_executor&                              ue_dl_exec_,
+                                                   task_executor&                              ue_ul_exec_,
+                                                   task_executor&                              ue_ctrl_exec_,
+                                                   task_executor&                              crypto_exec_,
+                                                   dlt_pcap&                                   gtpu_pcap_) :
   ue_index(ue_index_),
   qos_cfg(std::move(qos_cfg_)),
   security_info(security_info_),
@@ -272,8 +272,12 @@ pdu_session_setup_result pdu_session_manager_impl::setup_pdu_session(const e1ap_
   // Allocate local TEID
   new_session->local_teid = allocate_local_teid(new_session->pdu_session_id);
 
-  pdu_session_result.gtp_tunnel = up_transport_layer_info(
-      transport_layer_address::create_from_string(net_config.n3_bind_addr), new_session->local_teid);
+  // Advertise either local or external IP address of N3 interface
+  const std::string& n3_addr = net_config.n3_ext_addr.empty() || net_config.n3_ext_addr == "auto"
+                                   ? net_config.n3_bind_addr
+                                   : net_config.n3_ext_addr;
+  pdu_session_result.gtp_tunnel =
+      up_transport_layer_info(transport_layer_address::create_from_string(n3_addr), new_session->local_teid);
 
   // Create SDAP entity
   sdap_entity_creation_message sdap_msg = {ue_index, session.pdu_session_id, &new_session->sdap_to_gtpu_adapter};

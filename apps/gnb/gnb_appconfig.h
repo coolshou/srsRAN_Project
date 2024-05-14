@@ -41,7 +41,6 @@
 #include "srsran/ran/pucch/pucch_configuration.h"
 #include "srsran/ran/pusch/pusch_mcs.h"
 #include "srsran/ran/rnti.h"
-#include "srsran/ran/s_nssai.h"
 #include "srsran/ran/sib/system_info_config.h"
 #include "srsran/ran/slot_pdu_capacity_constants.h"
 #include "srsran/ran/subcarrier_spacing.h"
@@ -185,10 +184,14 @@ struct pdsch_appconfig {
   std::vector<unsigned> rv_sequence = {0, 2, 3, 1};
   /// MCS table to use for PDSCH
   pdsch_mcs_table mcs_table = pdsch_mcs_table::qam64;
-  /// Minimum number of RBs for Resource Allocation of UE PDSCHs.
+  /// Minimum number of RBs for resource allocation of UE PDSCHs.
   unsigned min_rb_size = 1;
-  /// Maximum number of RBs for Resource Allocation of UE PDSCHs.
+  /// Maximum number of RBs for resource allocation of UE PDSCHs.
   unsigned max_rb_size = MAX_NOF_PRBS;
+  /// Start RB for resource allocation of UE PDSCHs.
+  unsigned start_rb = 0;
+  /// End RB for resource allocation of UE PDSCHs.
+  unsigned end_rb = MAX_NOF_PRBS;
   /// Maximum number of PDSCH grants per slot.
   unsigned max_pdschs_per_slot = MAX_PDSCH_PDUS_PER_SLOT;
   /// Maximum number of DL or UL PDCCH allocation attempts per slot.
@@ -271,6 +274,14 @@ struct pusch_appconfig {
   float olla_max_snr_offset{5.0};
   /// Position for additional DM-RS in UL (see TS 38.211, clause 6.4.1.1.3).
   unsigned dmrs_add_pos{2};
+  /// Minimum number of RBs for resource allocation of UE PUSCHs.
+  unsigned min_rb_size = 1;
+  /// Maximum number of RBs for resource allocation of UE PUSCHs.
+  unsigned max_rb_size = MAX_NOF_PRBS;
+  /// Start RB for resource allocation of UE PUSCHs.
+  unsigned start_rb = 0;
+  /// End RB for resource allocation of UE PUSCHs.
+  unsigned end_rb = MAX_NOF_PRBS;
 };
 
 struct pucch_appconfig {
@@ -650,6 +661,7 @@ struct amf_appconfig {
   std::string n2_bind_interface      = "auto";
   std::string n3_bind_addr           = "auto";
   std::string n3_bind_interface      = "auto";
+  std::string n3_ext_addr            = "auto";
   int         sctp_rto_initial       = 120;
   int         sctp_rto_min           = 120;
   int         sctp_rto_max           = 500;
@@ -673,81 +685,6 @@ struct e2_appconfig {
   int         sctp_max_init_timeo    = 500;         ///< SCTP max init timeout for RIC connection
   bool        e2sm_kpm_enabled       = false;       ///< Whether to enable KPM service module
   bool        e2sm_rc_enabled        = false;       ///< Whether to enable RC service module
-};
-
-struct cu_cp_neighbor_cell_appconfig_item {
-  uint64_t              nr_cell_id;     ///< Cell id.
-  std::vector<uint64_t> report_cfg_ids; ///< Report config ids
-};
-
-/// \brief Each item describes the relationship between one cell to all other cells.
-struct cu_cp_cell_appconfig_item {
-  uint64_t           nr_cell_id; ///< Cell id.
-  optional<unsigned> periodic_report_cfg_id;
-
-  // These parameters must only be set for external cells
-  // TODO: Add optional SSB parameters.
-  optional<unsigned> gnb_id_bit_length; ///< gNodeB identifier bit length.
-  optional<pci_t>    pci;               ///< PCI.
-  optional<nr_band>  band;              ///< NR band.
-  optional<unsigned> ssb_arfcn;         ///< SSB ARFCN.
-  optional<unsigned> ssb_scs;           ///< SSB subcarrier spacing.
-  optional<unsigned> ssb_period;        ///< SSB period.
-  optional<unsigned> ssb_offset;        ///< SSB offset.
-  optional<unsigned> ssb_duration;      ///< SSB duration.
-
-  std::vector<cu_cp_neighbor_cell_appconfig_item> ncells; ///< Vector of cells that are a neighbor of this cell.
-};
-
-/// \brief Report configuration, for now only supporting the A3 event.
-struct cu_cp_report_appconfig {
-  unsigned           report_cfg_id;
-  std::string        report_type;
-  optional<unsigned> report_interval_ms;
-  std::string        a3_report_type;
-  optional<int> a3_offset_db; ///< [-30..30] Note the actual value is field value * 0.5 dB. E.g. putting a value of -6
-                              ///< here results in -3dB offset.
-  optional<unsigned> a3_hysteresis_db;
-  optional<unsigned> a3_time_to_trigger_ms;
-};
-
-/// \brief All mobility related configuration parameters.
-struct mobility_appconfig {
-  std::vector<cu_cp_cell_appconfig_item> cells;          ///< List of all cells known to the CU-CP.
-  std::vector<cu_cp_report_appconfig>    report_configs; ///< Report config.
-  bool trigger_handover_from_measurements = false;       ///< Whether to start HO if neighbor cell measurements arrive.
-};
-
-/// \brief RRC specific configuration parameters.
-struct rrc_appconfig {
-  bool     force_reestablishment_fallback = false;
-  unsigned rrc_procedure_timeout_ms       = 720; ///< Timeout for RRC procedures (2 * default SRB maxRetxThreshold *
-                                                 ///< t-PollRetransmit = 2 * 8 * 45ms = 720ms, see TS 38.331 Sec 9.2.1).
-};
-
-/// \brief Security configuration parameters.
-struct security_appconfig {
-  std::string integrity_protection       = "not_needed";
-  std::string confidentiality_protection = "required";
-  std::string nea_preference_list        = "nea0,nea2,nea1,nea3";
-  std::string nia_preference_list        = "nia2,nia1,nia3";
-};
-
-/// \brief F1AP-CU configuration parameters.
-struct f1ap_cu_appconfig {
-  /// Timeout for the UE context setup procedure in milliseconds.
-  unsigned ue_context_setup_timeout = 1000;
-};
-
-struct cu_cp_appconfig {
-  uint16_t           max_nof_dus               = 6;
-  uint16_t           max_nof_cu_ups            = 6;
-  int                inactivity_timer          = 120; // in seconds
-  unsigned           pdu_session_setup_timeout = 3;   // in seconds (must be larger than T310)
-  mobility_appconfig mobility_config;
-  rrc_appconfig      rrc_config;
-  security_appconfig security_config;
-  f1ap_cu_appconfig  f1ap_config;
 };
 
 struct cu_up_appconfig {
@@ -777,11 +714,9 @@ struct log_appconfig {
   std::string f1ap_level  = "warning";
   std::string f1u_level   = "warning";
   std::string pdcp_level  = "warning";
-  std::string rrc_level   = "warning";
   std::string ngap_level  = "warning";
   std::string sdap_level  = "warning";
   std::string gtpu_level  = "warning";
-  std::string sec_level   = "warning";
   std::string fapi_level  = "warning";
   std::string ofh_level   = "warning";
   std::string e2ap_level  = "warning";
@@ -843,8 +778,6 @@ struct metrics_appconfig {
   struct pdcp_metrics {
     unsigned report_period = 0; // PDCP report period in ms
   } pdcp;
-  unsigned cu_cp_statistics_report_period = 1; // Statistics report period in seconds
-  unsigned cu_up_statistics_report_period = 1; // Statistics report period in seconds
   /// JSON metrics reporting.
   bool        enable_json_metrics      = false;
   std::string addr                     = "127.0.0.1";
@@ -927,28 +860,29 @@ struct test_mode_appconfig {
 struct ru_sdr_expert_appconfig {
   /// System time-based throttling. See \ref lower_phy_configuration::system_time_throttling for more information.
   float lphy_dl_throttling = 0.0F;
-  /// \brief Enables discontinuous transmission mode for the radio front-ends supporting it.
+  /// \brief Selects the radio transmission mode.
   ///
-  /// Discontinuous Transmission (DTX) is a power-saving technique used in radio communication where the transmitter is
-  /// turned off during periods of silence or when no data needs to be transmitted. This flag allows the user to
-  /// activate DTX for radio front-ends that support this transmission mode.
+  /// Selects the radio transmission mode between the available options:
+  ///   - continuous: The radio keeps the transmitter chain active, even when there are no transmission requests.
+  ///   - discontinuous: The transmitter stops when there is no data to transmit.
+  ///   - same-port: like discontinuous mode, but using the same port to transmit and receive.
   ///
-  /// When DTX is enabled, the radio transmitter intelligently manages its transmission state, reducing power
-  /// consumption during idle or silent periods. This is particularly beneficial in scenarios where power efficiency is
-  /// a critical consideration, such as battery-operated devices.
-  bool discontinuous_tx_mode = false;
+  /// \remark The discontinuous and same-port transmission modes may not be supported for some radio devices.
+  std::string transmission_mode = "continuous";
   /// \brief Power ramping time of the transmit chain in microseconds.
   ///
   /// This parameter represents the duration, in microseconds, required for the transmit chain to reach its full power
   /// level.
   ///
-  /// In discontinuous transmission mode, the transmitter is powered on ahead of the actual data transmission. By doing
-  /// so, the data-carrying samples remain unaffected by any transient effects or fluctuations in the transmit chain
-  /// during the power ramping time. The maximum supported power ramping time is equivalent to the duration of two NR
-  /// slots.
+  /// In discontinuous and same-port transmission modes, the transmitter is powered on ahead of the actual data
+  /// transmission. By doing so, the data-carrying samples remain unaffected by any transient effects or fluctuations in
+  /// the transmit chain during the power ramping time. The maximum supported power ramping time is equivalent to the
+  /// duration of two NR slots.
   ///
   /// \note It is recommended to configure this parameter carefully, taking into account the characteristics of the
   /// transmit chain in order to achieve optimal performance.
+  /// \note In same-port transmission mode, reception is interrupted on the TRX port as soon as the power ramping guard
+  /// time starts.
   /// \note Powering up the transmitter ahead of time requires starting the transmission earlier, and reduces the time
   /// window for the radio to transmit the provided samples.
   float power_ramping_time_us = 0.0F;
@@ -1258,14 +1192,8 @@ struct gnb_appconfig {
   std::string ran_node_name = "srsgnb01";
   /// AMF configuration.
   amf_appconfig amf_cfg;
-  /// CU-CP configuration.
-  cu_cp_appconfig cu_cp_cfg;
-  /// CU-UP configuration.
-  cu_up_appconfig cu_up_cfg;
   /// DU configuration.
   du_appconfig du_cfg;
-  /// F1AP configuration.
-  f1ap_cu_appconfig f1ap_cfg;
   /// \brief E2 configuration.
   e2_appconfig e2_cfg;
   /// Radio Unit configuration.
@@ -1282,9 +1210,6 @@ struct gnb_appconfig {
 
   /// SRB configuration.
   std::map<srb_id_t, srb_appconfig> srb_cfg;
-
-  /// Network slice configuration.
-  std::vector<s_nssai_t> slice_cfg = {s_nssai_t{1}};
 
   /// Expert physical layer configuration.
   expert_upper_phy_appconfig expert_phy_cfg;

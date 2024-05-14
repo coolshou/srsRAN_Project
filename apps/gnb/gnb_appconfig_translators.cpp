@@ -21,6 +21,8 @@
  */
 
 #include "gnb_appconfig_translators.h"
+#include "apps/units/cu_cp/cu_cp_unit_config.h"
+#include "apps/units/cu_up/cu_up_unit_config.h"
 #include "gnb_appconfig.h"
 #include "srsran/cu_cp/cu_cp_configuration_helpers.h"
 #include "srsran/cu_up/cu_up_configuration_helpers.h"
@@ -46,6 +48,155 @@ using namespace std::chrono_literals;
 
 /// Static configuration that the gnb supports.
 static constexpr cyclic_prefix cp = cyclic_prefix::NORMAL;
+
+static std::map<five_qi_t, srs_cu_cp::cu_cp_qos_config> generate_cu_cp_qos_config(const cu_cp_unit_config& config)
+{
+  std::map<five_qi_t, srs_cu_cp::cu_cp_qos_config> out_cfg = {};
+  if (config.qos_cfg.empty()) {
+    out_cfg = config_helpers::make_default_cu_cp_qos_config_list();
+    return out_cfg;
+  }
+
+  for (const auto& qos : config.qos_cfg) {
+    if (out_cfg.find(qos.five_qi) != out_cfg.end()) {
+      report_error("Duplicate 5QI configuration: {}\n", qos.five_qi);
+    }
+    // Convert PDCP config
+    pdcp_config& out_pdcp = out_cfg[qos.five_qi].pdcp;
+
+    // RB type
+    out_pdcp.rb_type = pdcp_rb_type::drb;
+
+    // RLC mode
+    rlc_mode mode = {};
+    if (!from_string(mode, qos.rlc.mode)) {
+      report_error("Invalid RLC mode: {}, mode={}\n", qos.five_qi, qos.rlc.mode);
+    }
+    if (mode == rlc_mode::um_bidir || mode == rlc_mode::um_unidir_ul || mode == rlc_mode::um_unidir_dl) {
+      out_pdcp.rlc_mode = pdcp_rlc_mode::um;
+    } else if (mode == rlc_mode::am) {
+      out_pdcp.rlc_mode = pdcp_rlc_mode::am;
+    } else {
+      report_error("Invalid RLC mode: {}, mode={}\n", qos.five_qi, qos.rlc.mode);
+    }
+
+    // Integrity Protection required
+    out_pdcp.integrity_protection_required = qos.pdcp.integrity_protection_required;
+
+    // Ciphering required
+    out_pdcp.ciphering_required = true;
+
+    // > Tx
+    // >> SN size
+    if (!pdcp_sn_size_from_uint(out_pdcp.tx.sn_size, qos.pdcp.tx.sn_field_length)) {
+      report_error("Invalid PDCP TX SN: {}, SN={}\n", qos.five_qi, qos.pdcp.tx.sn_field_length);
+    }
+
+    // >> discard timer
+    out_pdcp.tx.discard_timer = pdcp_discard_timer{};
+    if (!pdcp_discard_timer_from_int(out_pdcp.tx.discard_timer.value(), qos.pdcp.tx.discard_timer)) {
+      report_error("Invalid PDCP discard timer. 5QI {} discard_timer {}\n", qos.five_qi, qos.pdcp.tx.discard_timer);
+    }
+
+    // >> status report required
+    out_pdcp.tx.status_report_required = qos.pdcp.tx.status_report_required;
+
+    // > Rx
+    // >> SN size
+    if (!pdcp_sn_size_from_uint(out_pdcp.rx.sn_size, qos.pdcp.rx.sn_field_length)) {
+      report_error("Invalid PDCP RX SN: {}, SN={}\n", qos.five_qi, qos.pdcp.rx.sn_field_length);
+    }
+
+    // >> out of order delivery
+    out_pdcp.rx.out_of_order_delivery = qos.pdcp.rx.out_of_order_delivery;
+
+    // >> t-Reordering
+    if (!pdcp_t_reordering_from_int(out_pdcp.rx.t_reordering, qos.pdcp.rx.t_reordering)) {
+      report_error("Invalid PDCP t-Reordering. {} t-Reordering {}\n", qos.five_qi, qos.pdcp.rx.t_reordering);
+    }
+  }
+  return out_cfg;
+}
+
+static security::preferred_integrity_algorithms
+generate_preferred_integrity_algorithms_list(const cu_cp_unit_config& config)
+{
+  // String splitter helper
+  auto split = [](const std::string& s, char delim) -> std::vector<std::string> {
+    std::vector<std::string> result;
+    std::stringstream        ss(s);
+    for (std::string item; getline(ss, item, delim);) {
+      result.push_back(item);
+    }
+    return result;
+  };
+
+  // > Remove spaces, convert to lower case and split on comma
+  std::string nia_preference_list = config.security_config.nia_preference_list;
+  nia_preference_list.erase(std::remove_if(nia_preference_list.begin(), nia_preference_list.end(), ::isspace),
+                            nia_preference_list.end());
+  std::transform(nia_preference_list.begin(),
+                 nia_preference_list.end(),
+                 nia_preference_list.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+  std::vector<std::string> nea_v = split(nia_preference_list, ',');
+
+  security::preferred_integrity_algorithms algo_list = {};
+  int                                      idx       = 0;
+  for (const std::string& nea : nea_v) {
+    if (nea == "nia0") {
+      algo_list[idx] = security::integrity_algorithm::nia0;
+    } else if (nea == "nia1") {
+      algo_list[idx] = security::integrity_algorithm::nia1;
+    } else if (nea == "nia2") {
+      algo_list[idx] = security::integrity_algorithm::nia2;
+    } else if (nea == "nia3") {
+      algo_list[idx] = security::integrity_algorithm::nia3;
+    }
+    idx++;
+  }
+  return algo_list;
+}
+
+static security::preferred_ciphering_algorithms
+generate_preferred_ciphering_algorithms_list(const cu_cp_unit_config& config)
+{
+  // String splitter helper
+  auto split = [](const std::string& s, char delim) -> std::vector<std::string> {
+    std::vector<std::string> result;
+    std::stringstream        ss(s);
+    for (std::string item; getline(ss, item, delim);) {
+      result.push_back(item);
+    }
+    return result;
+  };
+
+  // > Remove spaces, convert to lower case and split on comma
+  std::string nea_preference_list = config.security_config.nea_preference_list;
+  nea_preference_list.erase(std::remove_if(nea_preference_list.begin(), nea_preference_list.end(), ::isspace),
+                            nea_preference_list.end());
+  std::transform(nea_preference_list.begin(),
+                 nea_preference_list.end(),
+                 nea_preference_list.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+  std::vector<std::string> nea_v = split(nea_preference_list, ',');
+
+  security::preferred_ciphering_algorithms algo_list = {};
+  int                                      idx       = 0;
+  for (const std::string& nea : nea_v) {
+    if (nea == "nea0") {
+      algo_list[idx] = security::ciphering_algorithm::nea0;
+    } else if (nea == "nea1") {
+      algo_list[idx] = security::ciphering_algorithm::nea1;
+    } else if (nea == "nea2") {
+      algo_list[idx] = security::ciphering_algorithm::nea2;
+    } else if (nea == "nea3") {
+      algo_list[idx] = security::ciphering_algorithm::nea3;
+    }
+    idx++;
+  }
+  return algo_list;
+}
 
 srs_cu_cp::rrc_ssb_mtc srsran::generate_rrc_ssb_mtc(unsigned period, unsigned offset, unsigned duration)
 {
@@ -91,52 +242,53 @@ srsran::sctp_network_gateway_config srsran::generate_ngap_nw_config(const gnb_ap
   return out_cfg;
 }
 
-srs_cu_cp::cu_cp_configuration srsran::generate_cu_cp_config(const gnb_appconfig& config)
+srs_cu_cp::cu_cp_configuration srsran::generate_cu_cp_config(const gnb_appconfig&     config,
+                                                             const cu_cp_unit_config& cu_cfg)
 {
-  const base_cell_appconfig& cell = config.cells_cfg.front().cell;
-
   srs_cu_cp::cu_cp_configuration out_cfg = config_helpers::make_default_cu_cp_config();
-  out_cfg.max_nof_dus                    = config.cu_cp_cfg.max_nof_dus;
-  out_cfg.max_nof_cu_ups                 = config.cu_cp_cfg.max_nof_cu_ups;
+  out_cfg.max_nof_dus                    = cu_cfg.max_nof_dus;
+  out_cfg.max_nof_cu_ups                 = cu_cfg.max_nof_cu_ups;
 
-  out_cfg.ngap_config.gnb_id               = config.gnb_id;
-  out_cfg.ngap_config.ran_node_name        = config.ran_node_name;
-  out_cfg.ngap_config.plmn                 = cell.plmn;
-  out_cfg.ngap_config.tac                  = cell.tac;
-  out_cfg.ngap_config.slice_configurations = config.slice_cfg;
+  out_cfg.ngap_config.gnb_id               = cu_cfg.gnb_id;
+  out_cfg.ngap_config.ran_node_name        = cu_cfg.ran_node_name;
+  out_cfg.ngap_config.slice_configurations = cu_cfg.slice_cfg;
 
-  out_cfg.rrc_config.gnb_id                         = config.gnb_id;
-  out_cfg.rrc_config.force_reestablishment_fallback = config.cu_cp_cfg.rrc_config.force_reestablishment_fallback;
-  out_cfg.rrc_config.rrc_procedure_timeout_ms       = config.cu_cp_cfg.rrc_config.rrc_procedure_timeout_ms;
-  out_cfg.rrc_config.int_algo_pref_list             = generate_preferred_integrity_algorithms_list(config);
-  out_cfg.rrc_config.enc_algo_pref_list             = generate_preferred_ciphering_algorithms_list(config);
-  out_cfg.rrc_config.drb_config                     = generate_cu_cp_qos_config(config);
+  // :TODO: What happens when there are multiple cells?
+  const base_cell_appconfig& cell = config.cells_cfg.front().cell;
+  out_cfg.ngap_config.plmn        = cell.plmn;
+  out_cfg.ngap_config.tac         = cell.tac;
+
+  out_cfg.rrc_config.gnb_id                         = cu_cfg.gnb_id;
+  out_cfg.rrc_config.force_reestablishment_fallback = cu_cfg.rrc_config.force_reestablishment_fallback;
+  out_cfg.rrc_config.rrc_procedure_timeout_ms       = cu_cfg.rrc_config.rrc_procedure_timeout_ms;
+  out_cfg.rrc_config.int_algo_pref_list             = generate_preferred_integrity_algorithms_list(cu_cfg);
+  out_cfg.rrc_config.enc_algo_pref_list             = generate_preferred_ciphering_algorithms_list(cu_cfg);
+  out_cfg.rrc_config.drb_config                     = generate_cu_cp_qos_config(cu_cfg);
 
   if (!from_string(out_cfg.default_security_indication.integrity_protection_ind,
-                   config.cu_cp_cfg.security_config.integrity_protection)) {
-    report_error("Invalid value for integrity_protection={}\n", config.cu_cp_cfg.security_config.integrity_protection);
+                   cu_cfg.security_config.integrity_protection)) {
+    report_error("Invalid value for integrity_protection={}\n", cu_cfg.security_config.integrity_protection);
   }
   if (!from_string(out_cfg.default_security_indication.confidentiality_protection_ind,
-                   config.cu_cp_cfg.security_config.confidentiality_protection)) {
+                   cu_cfg.security_config.confidentiality_protection)) {
     report_error("Invalid value for confidentiality_protection={}\n",
-                 config.cu_cp_cfg.security_config.confidentiality_protection);
+                 cu_cfg.security_config.confidentiality_protection);
   }
 
-  out_cfg.ue_config.inactivity_timer            = std::chrono::seconds{config.cu_cp_cfg.inactivity_timer};
-  out_cfg.ue_config.max_nof_supported_ues       = config.cu_cp_cfg.max_nof_dus * srsran::srs_cu_cp::MAX_NOF_UES_PER_DU;
-  out_cfg.ngap_config.pdu_session_setup_timeout = std::chrono::seconds{config.cu_cp_cfg.pdu_session_setup_timeout};
-  out_cfg.statistics_report_period = std::chrono::seconds{config.metrics_cfg.cu_cp_statistics_report_period};
+  out_cfg.ue_config.inactivity_timer            = std::chrono::seconds{cu_cfg.inactivity_timer};
+  out_cfg.ue_config.max_nof_supported_ues       = cu_cfg.max_nof_dus * srsran::srs_cu_cp::MAX_NOF_UES_PER_DU;
+  out_cfg.ngap_config.pdu_session_setup_timeout = std::chrono::seconds{cu_cfg.pdu_session_setup_timeout};
+  out_cfg.statistics_report_period              = std::chrono::seconds{cu_cfg.metrics.cu_cp_statistics_report_period};
 
   out_cfg.mobility_config.mobility_manager_config.trigger_handover_from_measurements =
-      config.cu_cp_cfg.mobility_config.trigger_handover_from_measurements;
+      cu_cfg.mobility_config.trigger_handover_from_measurements;
 
   // F1AP-CU config.
-  out_cfg.f1ap_config.ue_context_setup_timeout =
-      std::chrono::milliseconds{config.cu_cp_cfg.f1ap_config.ue_context_setup_timeout};
-  out_cfg.f1ap_config.json_log_enabled = config.log_cfg.f1ap_json_enabled;
+  out_cfg.f1ap_config.ue_context_setup_timeout = std::chrono::milliseconds{cu_cfg.f1ap_config.ue_context_setup_timeout};
+  out_cfg.f1ap_config.json_log_enabled         = cu_cfg.loggers.f1ap_json_enabled;
 
   // Convert appconfig's cell list into cell manager type.
-  for (const auto& app_cfg_item : config.cu_cp_cfg.mobility_config.cells) {
+  for (const auto& app_cfg_item : cu_cfg.mobility_config.cells) {
     srs_cu_cp::cell_meas_config meas_cfg_item;
     meas_cfg_item.serving_cell_cfg.nci = app_cfg_item.nr_cell_id;
     if (app_cfg_item.periodic_report_cfg_id.has_value()) {
@@ -177,7 +329,7 @@ srs_cu_cp::cu_cp_configuration srsran::generate_cu_cp_config(const gnb_appconfig
   }
 
   // Convert report config.
-  for (const auto& report_cfg_item : config.cu_cp_cfg.mobility_config.report_configs) {
+  for (const auto& report_cfg_item : cu_cfg.mobility_config.report_configs) {
     srs_cu_cp::rrc_report_cfg_nr report_cfg;
 
     if (report_cfg_item.report_type == "periodical") {
@@ -266,18 +418,19 @@ srs_cu_cp::cu_cp_configuration srsran::generate_cu_cp_config(const gnb_appconfig
   return out_cfg;
 }
 
-srs_cu_up::cu_up_configuration srsran::generate_cu_up_config(const gnb_appconfig& config)
+srs_cu_up::cu_up_configuration srsran::generate_cu_up_config(const cu_up_unit_config& config)
 {
   srs_cu_up::cu_up_configuration out_cfg;
-  out_cfg.statistics_report_period     = std::chrono::seconds{config.metrics_cfg.cu_up_statistics_report_period};
-  out_cfg.n3_cfg.gtpu_reordering_timer = std::chrono::milliseconds{config.cu_up_cfg.gtpu_reordering_timer_ms};
-  out_cfg.n3_cfg.warn_on_drop          = config.cu_up_cfg.warn_on_drop;
+  out_cfg.statistics_report_period     = std::chrono::seconds{config.metrics.cu_up_statistics_report_period};
+  out_cfg.n3_cfg.gtpu_reordering_timer = std::chrono::milliseconds{config.gtpu_reordering_timer_ms};
+  out_cfg.n3_cfg.warn_on_drop          = config.warn_on_drop;
 
   if (config.amf_cfg.n3_bind_addr == "auto") {
     out_cfg.net_cfg.n3_bind_addr = config.amf_cfg.bind_addr;
   } else {
     out_cfg.net_cfg.n3_bind_addr = config.amf_cfg.n3_bind_addr;
   }
+  out_cfg.net_cfg.n3_ext_addr       = config.amf_cfg.n3_ext_addr;
   out_cfg.net_cfg.n3_bind_interface = config.amf_cfg.n3_bind_interface;
   out_cfg.net_cfg.n3_rx_max_mmsg    = config.amf_cfg.udp_rx_max_msgs;
   out_cfg.net_cfg.f1u_bind_addr = config.amf_cfg.bind_addr; // FIXME: check if this can be removed for co-located case
@@ -880,160 +1033,12 @@ std::vector<du_cell_config> srsran::generate_du_cell_config(const gnb_appconfig&
   return out_cfg;
 }
 
-srsran::security::preferred_integrity_algorithms
-srsran::generate_preferred_integrity_algorithms_list(const gnb_appconfig& config)
-{
-  // String splitter helper
-  auto split = [](const std::string& s, char delim) -> std::vector<std::string> {
-    std::vector<std::string> result;
-    std::stringstream        ss(s);
-    for (std::string item; getline(ss, item, delim);) {
-      result.push_back(item);
-    }
-    return result;
-  };
-
-  // > Remove spaces, convert to lower case and split on comma
-  std::string nia_preference_list = config.cu_cp_cfg.security_config.nia_preference_list;
-  nia_preference_list.erase(std::remove_if(nia_preference_list.begin(), nia_preference_list.end(), ::isspace),
-                            nia_preference_list.end());
-  std::transform(nia_preference_list.begin(),
-                 nia_preference_list.end(),
-                 nia_preference_list.begin(),
-                 [](unsigned char c) { return std::tolower(c); });
-  std::vector<std::string> nea_v = split(nia_preference_list, ',');
-
-  security::preferred_integrity_algorithms algo_list = {};
-  int                                      idx       = 0;
-  for (const std::string& nea : nea_v) {
-    if (nea == "nia0") {
-      algo_list[idx] = security::integrity_algorithm::nia0;
-    } else if (nea == "nia1") {
-      algo_list[idx] = security::integrity_algorithm::nia1;
-    } else if (nea == "nia2") {
-      algo_list[idx] = security::integrity_algorithm::nia2;
-    } else if (nea == "nia3") {
-      algo_list[idx] = security::integrity_algorithm::nia3;
-    }
-    idx++;
-  }
-  return algo_list;
-}
-
-srsran::security::preferred_ciphering_algorithms
-srsran::generate_preferred_ciphering_algorithms_list(const gnb_appconfig& config)
-{
-  // String splitter helper
-  auto split = [](const std::string& s, char delim) -> std::vector<std::string> {
-    std::vector<std::string> result;
-    std::stringstream        ss(s);
-    for (std::string item; getline(ss, item, delim);) {
-      result.push_back(item);
-    }
-    return result;
-  };
-
-  // > Remove spaces, convert to lower case and split on comma
-  std::string nea_preference_list = config.cu_cp_cfg.security_config.nea_preference_list;
-  nea_preference_list.erase(std::remove_if(nea_preference_list.begin(), nea_preference_list.end(), ::isspace),
-                            nea_preference_list.end());
-  std::transform(nea_preference_list.begin(),
-                 nea_preference_list.end(),
-                 nea_preference_list.begin(),
-                 [](unsigned char c) { return std::tolower(c); });
-  std::vector<std::string> nea_v = split(nea_preference_list, ',');
-
-  security::preferred_ciphering_algorithms algo_list = {};
-  int                                      idx       = 0;
-  for (const std::string& nea : nea_v) {
-    if (nea == "nea0") {
-      algo_list[idx] = security::ciphering_algorithm::nea0;
-    } else if (nea == "nea1") {
-      algo_list[idx] = security::ciphering_algorithm::nea1;
-    } else if (nea == "nea2") {
-      algo_list[idx] = security::ciphering_algorithm::nea2;
-    } else if (nea == "nea3") {
-      algo_list[idx] = security::ciphering_algorithm::nea3;
-    }
-    idx++;
-  }
-  return algo_list;
-}
-
-std::map<five_qi_t, srs_cu_cp::cu_cp_qos_config> srsran::generate_cu_cp_qos_config(const gnb_appconfig& config)
-{
-  std::map<five_qi_t, srs_cu_cp::cu_cp_qos_config> out_cfg = {};
-  if (config.qos_cfg.empty()) {
-    out_cfg = config_helpers::make_default_cu_cp_qos_config_list();
-    return out_cfg;
-  }
-
-  for (const qos_appconfig& qos : config.qos_cfg) {
-    if (out_cfg.find(qos.five_qi) != out_cfg.end()) {
-      report_error("Duplicate 5QI configuration: {}\n", qos.five_qi);
-    }
-    // Convert PDCP config
-    pdcp_config& out_pdcp = out_cfg[qos.five_qi].pdcp;
-
-    // RB type
-    out_pdcp.rb_type = pdcp_rb_type::drb;
-
-    // RLC mode
-    rlc_mode mode = {};
-    if (!from_string(mode, qos.rlc.mode)) {
-      report_error("Invalid RLC mode: {}, mode={}\n", qos.five_qi, qos.rlc.mode);
-    }
-    if (mode == rlc_mode::um_bidir || mode == rlc_mode::um_unidir_ul || mode == rlc_mode::um_unidir_dl) {
-      out_pdcp.rlc_mode = pdcp_rlc_mode::um;
-    } else if (mode == rlc_mode::am) {
-      out_pdcp.rlc_mode = pdcp_rlc_mode::am;
-    } else {
-      report_error("Invalid RLC mode: {}, mode={}\n", qos.five_qi, qos.rlc.mode);
-    }
-
-    // Integrity Protection required
-    out_pdcp.integrity_protection_required = qos.pdcp.integrity_protection_required;
-
-    // Ciphering required
-    out_pdcp.ciphering_required = true;
-
-    // > Tx
-    // >> SN size
-    if (!pdcp_sn_size_from_uint(out_pdcp.tx.sn_size, qos.pdcp.tx.sn_field_length)) {
-      report_error("Invalid PDCP TX SN: {}, SN={}\n", qos.five_qi, qos.pdcp.tx.sn_field_length);
-    }
-
-    // >> discard timer
-    out_pdcp.tx.discard_timer = pdcp_discard_timer{};
-    if (!pdcp_discard_timer_from_int(out_pdcp.tx.discard_timer.value(), qos.pdcp.tx.discard_timer)) {
-      report_error("Invalid PDCP discard timer. 5QI {} discard_timer {}\n", qos.five_qi, qos.pdcp.tx.discard_timer);
-    }
-
-    // >> status report required
-    out_pdcp.tx.status_report_required = qos.pdcp.tx.status_report_required;
-
-    // > Rx
-    // >> SN size
-    if (!pdcp_sn_size_from_uint(out_pdcp.rx.sn_size, qos.pdcp.rx.sn_field_length)) {
-      report_error("Invalid PDCP RX SN: {}, SN={}\n", qos.five_qi, qos.pdcp.rx.sn_field_length);
-    }
-
-    // >> out of order delivery
-    out_pdcp.rx.out_of_order_delivery = qos.pdcp.rx.out_of_order_delivery;
-
-    // >> t-Reordering
-    if (!pdcp_t_reordering_from_int(out_pdcp.rx.t_reordering, qos.pdcp.rx.t_reordering)) {
-      report_error("Invalid PDCP t-Reordering. {} t-Reordering {}\n", qos.five_qi, qos.pdcp.rx.t_reordering);
-    }
-  }
-  return out_cfg;
-}
-
-std::map<five_qi_t, srs_cu_up::cu_up_qos_config> srsran::generate_cu_up_qos_config(const gnb_appconfig& config)
+std::map<five_qi_t, srs_cu_up::cu_up_qos_config> srsran::generate_cu_up_qos_config(const gnb_appconfig&     config,
+                                                                                   const cu_up_unit_config& cu_up_cfg)
 {
   std::map<five_qi_t, srs_cu_up::cu_up_qos_config> out_cfg = {};
   if (config.qos_cfg.empty()) {
-    out_cfg = config_helpers::make_default_cu_up_qos_config_list(config.cu_up_cfg.warn_on_drop,
+    out_cfg = config_helpers::make_default_cu_up_qos_config_list(cu_up_cfg.warn_on_drop,
                                                                  timer_duration(config.metrics_cfg.pdcp.report_period));
     return out_cfg;
   }
@@ -1041,7 +1046,7 @@ std::map<five_qi_t, srs_cu_up::cu_up_qos_config> srsran::generate_cu_up_qos_conf
   // Generate a temporary DU QoS config to obtain custom config parameters from the RLC counterpart
   std::map<five_qi_t, du_qos_config> du_qos = generate_du_qos_config(config);
 
-  for (const qos_appconfig& qos : config.qos_cfg) {
+  for (const auto& qos : cu_up_cfg.qos_cfg) {
     if (out_cfg.find(qos.five_qi) != out_cfg.end()) {
       report_error("Duplicate 5QI configuration: {}\n", qos.five_qi);
     }
@@ -1050,7 +1055,7 @@ std::map<five_qi_t, srs_cu_up::cu_up_qos_config> srsran::generate_cu_up_qos_conf
     }
     // Convert PDCP custom config
     pdcp_custom_config& out_pdcp_custom = out_cfg[qos.five_qi].pdcp_custom_cfg;
-    out_pdcp_custom.tx.warn_on_drop     = config.cu_up_cfg.warn_on_drop;
+    out_pdcp_custom.tx.warn_on_drop     = cu_up_cfg.warn_on_drop;
     out_pdcp_custom.metrics_period      = timer_duration(config.metrics_cfg.pdcp.report_period);
 
     // Obtain RLC config parameters from the respective RLC mode
@@ -1069,7 +1074,7 @@ std::map<five_qi_t, srs_cu_up::cu_up_qos_config> srsran::generate_cu_up_qos_conf
 
     // Convert F1-U config
     srs_cu_up::f1u_config& f1u_cfg = out_cfg[qos.five_qi].f1u_cfg;
-    f1u_cfg.warn_on_drop           = config.cu_up_cfg.warn_on_drop;
+    f1u_cfg.warn_on_drop           = cu_up_cfg.warn_on_drop;
   }
   return out_cfg;
 }
@@ -1349,7 +1354,7 @@ static void generate_radio_config(radio_configuration::radio& out_cfg, const gnb
   out_cfg.otw_format       = radio_configuration::to_otw_format(ru_cfg.otw_format);
   out_cfg.clock.clock      = radio_configuration::to_clock_source(ru_cfg.clock_source);
   out_cfg.clock.sync       = radio_configuration::to_clock_source(ru_cfg.synch_source);
-  out_cfg.discontinuous_tx = ru_cfg.expert_cfg.discontinuous_tx_mode;
+  out_cfg.tx_mode          = radio_configuration::to_transmission_mode(ru_cfg.expert_cfg.transmission_mode);
   out_cfg.power_ramping_us = ru_cfg.expert_cfg.power_ramping_time_us;
 
   const std::vector<std::string>& zmq_tx_addr = extract_zmq_ports(ru_cfg.device_arguments, "tx_port");
@@ -1627,40 +1632,56 @@ std::vector<upper_phy_config> srsran::generate_du_low_config(const gnb_appconfig
     const base_cell_appconfig& cell = config.cells_cfg[i].cell;
     upper_phy_config           cfg;
 
-    // Get bandwidth in PRB.
-    const unsigned bw_rb = band_helper::get_n_rbs_from_bw(cell.channel_bw_mhz, cell.common_scs, frequency_range::FR1);
-    // Build the biggest CORESET possible assuming a duration of 2 symbols and the maximum channel bandwidth.
-    coreset_configuration coreset;
-    coreset.id       = to_coreset_id(1);
-    coreset.duration = 2;
-    coreset.set_freq_domain_resources(~freq_resource_bitmap(bw_rb / pdcch_constants::NOF_RB_PER_FREQ_RESOURCE));
+    // Get band, frequency range and duplex mode from the band.
+    nr_band               band       = cell.band.value();
+    const frequency_range freq_range = band_helper::get_freq_range(band);
+    const duplex_mode     duplex     = band_helper::get_duplex_mode(band);
 
-    // Calculate the maximum number of users per slot. Pick the minimum of CCE assuming the CORESET above and the
-    // maximum of PDU per slot.
-    const unsigned max_nof_users_slot = std::min(coreset.get_nof_cces(), static_cast<unsigned>(MAX_UE_PDUS_PER_SLOT));
-    // Assume a maximum of 16 HARQ processes for PUSCH and PDSCH.
-    const unsigned max_harq_process = MAX_NOF_HARQS;
+    // Get bandwidth in PRB.
+    const unsigned bw_rb = band_helper::get_n_rbs_from_bw(cell.channel_bw_mhz, cell.common_scs, freq_range);
     // Deduce the number of slots per subframe.
     const unsigned nof_slots_per_subframe = get_nof_slots_per_subframe(cell.common_scs);
     // Deduce the number of slots per frame.
     unsigned nof_slots_per_frame = nof_slots_per_subframe * NOF_SUBFRAMES_PER_FRAME;
     // Number of slots per system frame.
     unsigned nof_slots_per_system_frame = NOF_SFNS * nof_slots_per_frame;
-    // Assume the PUSCH HARQ softbuffer expiration time is 100ms.
-    const unsigned expire_pusch_harq_timeout_slots = 100 * nof_slots_per_subframe;
-    // Assume the maximum number of active PUSCH and PDSCH HARQ processes is twice the maximum number of users per slot
-    // for the maximum number of HARQ processes.
-    const unsigned nof_buffers = 2 * max_nof_users_slot * max_harq_process;
-    // Deduce the maximum number of codeblocks that can be scheduled for PUSCH in one slot.
+    // PUSCH HARQ process lifetime in slots. It assumes the maximum lifetime is 100ms.
+    unsigned expire_pusch_harq_timeout_slots = 100 * nof_slots_per_subframe;
+
+    // Calculate the number of UL slots in a frame and in a PUSCH HARQ process lifetime.
+    unsigned nof_ul_slots_in_harq_lifetime = expire_pusch_harq_timeout_slots;
+    unsigned nof_ul_slots_per_frame        = nof_slots_per_frame;
+    if (duplex == duplex_mode::TDD && cell.tdd_ul_dl_cfg.has_value()) {
+      const tdd_ul_dl_pattern_appconfig& pattern1     = cell.tdd_ul_dl_cfg->pattern1;
+      unsigned                           period_slots = pattern1.dl_ul_period_slots;
+      unsigned nof_ul_slots = pattern1.nof_ul_slots + ((pattern1.nof_ul_symbols != 0) ? 1 : 0);
+      if (cell.tdd_ul_dl_cfg->pattern2.has_value()) {
+        const tdd_ul_dl_pattern_appconfig& pattern2 = cell.tdd_ul_dl_cfg->pattern2.value();
+        period_slots += pattern2.dl_ul_period_slots;
+        nof_ul_slots += pattern2.nof_ul_slots + ((pattern2.nof_ul_symbols != 0) ? 1 : 0);
+      }
+      nof_ul_slots_per_frame        = divide_ceil(nof_slots_per_frame, period_slots) * nof_ul_slots;
+      nof_ul_slots_in_harq_lifetime = divide_ceil(expire_pusch_harq_timeout_slots, period_slots) * nof_ul_slots;
+    }
+
+    // Deduce the maximum number of codeblocks that can be scheduled for PUSCH in one slot assuming:
+    // - The maximum number of resource elements used for data for each scheduled resource block;
+    // - the cell bandwidth;
+    // - the highest modulation order possible; and
+    // - the maximum coding rate.
     const unsigned max_nof_pusch_cb_slot =
-        (pusch_constants::MAX_NRE_PER_RB * bw_rb * get_bits_per_symbol(modulation_scheme::QAM256)) /
-        ldpc::MAX_MESSAGE_SIZE;
-    // Assume the minimum number of codeblocks per softbuffer.
-    const unsigned min_cb_softbuffer = 2;
-    // Assume that the maximum number of receive codeblocks is equal to the number of HARQ processes times the maximum
-    // number of codeblocks per slot.
-    const unsigned max_rx_nof_codeblocks =
-        std::max(max_harq_process * max_nof_pusch_cb_slot, min_cb_softbuffer * nof_buffers);
+        divide_ceil(pusch_constants::MAX_NRE_PER_RB * bw_rb * get_bits_per_symbol(modulation_scheme::QAM256),
+                    ldpc::MAX_MESSAGE_SIZE);
+
+    // Calculate the maximum number of active PUSCH HARQ processes from:
+    // - the maximum number of users per slot; and
+    // - the number of PUSCH occasions in a HARQ process lifetime.
+    const unsigned nof_buffers = cell.pusch_cfg.max_puschs_per_slot * nof_ul_slots_in_harq_lifetime;
+
+    // Calculate the maximum number of receive codeblocks. It is equal to the product of:
+    // - the maximum number of codeblocks that can be scheduled in one slot; and
+    // - the number of PUSCH occasions in a HARQ process lifetime.
+    const unsigned max_rx_nof_codeblocks = nof_ul_slots_in_harq_lifetime * max_nof_pusch_cb_slot;
 
     // Determine processing pipelines depth. Make sure the number of slots per system frame is divisible by the pipeline
     // depths.
@@ -1672,11 +1693,6 @@ std::vector<upper_phy_config> srsran::generate_du_low_config(const gnb_appconfig
 
     static constexpr unsigned prach_pipeline_depth = 1;
 
-    // Get band, frequency range and duplex mode from the band.
-    nr_band               band       = cell.band.value();
-    const frequency_range freq_range = band_helper::get_freq_range(band);
-    const duplex_mode     duplex     = band_helper::get_duplex_mode(band);
-
     const prach_configuration prach_cfg =
         prach_configuration_get(freq_range, duplex, cell.prach_cfg.prach_config_index.value());
     srsran_assert(prach_cfg.format != prach_format_type::invalid,
@@ -1686,15 +1702,12 @@ std::vector<upper_phy_config> srsran::generate_du_low_config(const gnb_appconfig
                   to_string(freq_range),
                   to_string(duplex));
 
-    // Maximum number of HARQ processes for a PUSCH HARQ process.
-    static constexpr unsigned max_nof_pusch_harq = 16;
-
-    // Maximum concurrent PUSCH processing. If there are no dedicated threads for PUSCH decoding, set the maximum
-    // concurrency to one. Otherwise, assume every possible PUSCH transmission for the maximum number of HARQ could be
-    // enqueued.
-    unsigned max_pusch_concurrency = cell.pusch_cfg.max_puschs_per_slot * max_nof_pusch_harq;
-    if (config.expert_execution_cfg.threads.upper_threads.nof_pusch_decoder_threads == 0) {
-      max_pusch_concurrency = 1;
+    // Maximum number of concurrent PUSCH transmissions. It is the maximum number of PUSCH transmissions that can be
+    // processed simultaneously. If there are no dedicated threads for PUSCH decoding, it sets the queue size to one.
+    // Otherwise, it is set to the maximum number of PUSCH transmissions that can be scheduled in one frame.
+    unsigned max_pusch_concurrency = 1;
+    if (config.expert_execution_cfg.threads.upper_threads.nof_pusch_decoder_threads > 0) {
+      max_pusch_concurrency = cell.pusch_cfg.max_puschs_per_slot * nof_ul_slots_per_frame;
     }
 
     cfg.nof_slots_request_headroom = config.expert_phy_cfg.nof_slots_request_headroom;
@@ -1765,6 +1778,7 @@ scheduler_expert_config srsran::generate_scheduler_expert_config(const gnb_appco
 
   // UE parameters.
   const pdsch_appconfig& pdsch = cell.pdsch_cfg;
+  const pusch_appconfig& pusch = cell.pusch_cfg;
   out_cfg.ue.dl_mcs            = {pdsch.min_ue_mcs, pdsch.max_ue_mcs};
   out_cfg.ue.pdsch_rv_sequence.assign(pdsch.rv_sequence.begin(), pdsch.rv_sequence.end());
   out_cfg.ue.dl_harq_la_cqi_drop_threshold     = pdsch.harq_la_cqi_drop_threshold;
@@ -1773,10 +1787,10 @@ scheduler_expert_config srsran::generate_scheduler_expert_config(const gnb_appco
   out_cfg.ue.max_pdschs_per_slot               = pdsch.max_pdschs_per_slot;
   out_cfg.ue.max_pdcch_alloc_attempts_per_slot = pdsch.max_pdcch_alloc_attempts_per_slot;
   out_cfg.ue.pdsch_nof_rbs                     = {pdsch.min_rb_size, pdsch.max_rb_size};
+  out_cfg.ue.pusch_nof_rbs                     = {pusch.min_rb_size, pusch.max_rb_size};
   out_cfg.ue.olla_dl_target_bler               = pdsch.olla_target_bler;
   out_cfg.ue.olla_cqi_inc                      = pdsch.olla_cqi_inc;
   out_cfg.ue.olla_max_cqi_offset               = pdsch.olla_max_cqi_offset;
-  const pusch_appconfig& pusch                 = cell.pusch_cfg;
   if (config.ntn_cfg.has_value()) {
     out_cfg.ue.auto_ack_harq = true;
   }
@@ -1787,6 +1801,8 @@ scheduler_expert_config srsran::generate_scheduler_expert_config(const gnb_appco
   out_cfg.ue.olla_ul_target_bler    = pusch.olla_target_bler;
   out_cfg.ue.olla_ul_snr_inc        = pusch.olla_snr_inc;
   out_cfg.ue.olla_max_ul_snr_offset = pusch.olla_max_snr_offset;
+  out_cfg.ue.pdsch_crb_limits       = {pdsch.start_rb, pdsch.end_rb};
+  out_cfg.ue.pusch_crb_limits       = {pusch.start_rb, pusch.end_rb};
 
   // PUCCH and scheduler expert parameters.
   out_cfg.ue.max_ul_grants_per_slot = cell.ul_common_cfg.max_ul_grants_per_slot;

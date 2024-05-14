@@ -76,7 +76,9 @@ struct mac_ue_create_request {
   std::vector<mac_logical_channel_config> bearers;
   mac_cell_group_config                   mac_cell_group_cfg;
   physical_cell_group_config              phy_cell_group_cfg;
-  const byte_buffer*                      ul_ccch_msg = nullptr;
+  bool                                    initial_fallback = true;
+  const byte_buffer*                      ul_ccch_msg      = nullptr;
+
   // Scheduler-only params.
   sched_ue_config_request sched_cfg;
 };
@@ -138,6 +140,9 @@ public:
 
   /// \brief Forward UL-CCCH message to upper layers.
   virtual bool handle_ul_ccch_msg(du_ue_index_t ue_index, byte_buffer pdu) = 0;
+
+  /// Handle the confirmation that the UE received the last UE dedicated RRC configuration.
+  virtual void handle_ue_config_applied(du_ue_index_t ue_index) = 0;
 };
 
 } // namespace srsran
