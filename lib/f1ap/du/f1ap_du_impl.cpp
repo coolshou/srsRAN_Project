@@ -33,7 +33,7 @@
 #include "srsran/asn1/f1ap/common.h"
 #include "srsran/asn1/f1ap/f1ap.h"
 #include "srsran/f1ap/common/f1ap_message.h"
-#include "srsran/f1ap/du/f1c_connection_client.h"
+#include "srsran/f1ap/gateways/f1c_connection_client.h"
 #include "srsran/ran/nr_cgi.h"
 #include "srsran/support/async/event_signal.h"
 
@@ -396,7 +396,7 @@ void f1ap_du_impl::handle_initiating_message(const asn1::f1ap::init_msg_s& msg)
 
 void f1ap_du_impl::handle_successful_outcome(const asn1::f1ap::successful_outcome_s& outcome)
 {
-  optional<uint8_t> transaction_id = get_transaction_id(outcome);
+  std::optional<uint8_t> transaction_id = get_transaction_id(outcome);
   if (not transaction_id.has_value()) {
     logger.error("Successful outcome of type {} is not supported", outcome.value.type().to_string());
     return;
@@ -410,14 +410,14 @@ void f1ap_du_impl::handle_successful_outcome(const asn1::f1ap::successful_outcom
 
 void f1ap_du_impl::handle_unsuccessful_outcome(const asn1::f1ap::unsuccessful_outcome_s& outcome)
 {
-  optional<uint8_t> transaction_id = get_transaction_id(outcome);
+  std::optional<uint8_t> transaction_id = get_transaction_id(outcome);
   if (not transaction_id.has_value()) {
     logger.error("Unsuccessful outcome of type {} is not supported", outcome.value.type().to_string());
     return;
   }
 
   // Set transaction result and resume suspended procedure.
-  if (not events->transactions.set_response(transaction_id.value(), outcome)) {
+  if (not events->transactions.set_response(transaction_id.value(), make_unexpected(outcome))) {
     logger.warning("Unexpected transaction id={}", transaction_id.value());
   }
 }
@@ -502,14 +502,19 @@ void f1ap_du_impl::handle_paging_request(const asn1::f1ap::paging_s& msg)
     info.is_paging_origin_non_3gpp_access = true;
   }
   for (const auto& asn_nr_cgi : msg->paging_cell_list) {
-    const auto paging_cell_cgi = cgi_from_asn1(asn_nr_cgi->paging_cell_item().nr_cgi);
+    const auto ret = cgi_from_asn1(asn_nr_cgi->paging_cell_item().nr_cgi);
+    if (not ret.has_value()) {
+      logger.error("Invalid CGI in paging cell list");
+      continue;
+    }
+    auto       paging_cell_cgi = ret.value();
     const auto du_cell_it =
         std::find_if(ctxt.served_cells.cbegin(),
                      ctxt.served_cells.cend(),
                      [&paging_cell_cgi](const f1ap_du_cell_context& cell) { return paging_cell_cgi == cell.nr_cgi; });
     // Cell not served by this DU.
     if (du_cell_it == ctxt.served_cells.cend()) {
-      logger.error("Cell with PLMN={} and NCI={} not handled by DU", paging_cell_cgi.plmn, paging_cell_cgi.nci);
+      logger.error("Cell with PLMN={} and NCI={} not handled by DU", paging_cell_cgi.plmn_id, paging_cell_cgi.nci);
       continue;
     }
     info.paging_cells.push_back(to_du_cell_index(std::distance(ctxt.served_cells.cbegin(), du_cell_it)));
@@ -585,8 +590,8 @@ void f1ap_du_impl::log_pdu(bool is_rx, const f1ap_message& msg)
   }
 
   // Fetch UE index.
-  auto                    cu_ue_id = srsran::get_gnb_du_ue_f1ap_id(msg.pdu);
-  optional<du_ue_index_t> ue_idx;
+  auto                         cu_ue_id = srsran::get_gnb_du_ue_f1ap_id(msg.pdu);
+  std::optional<du_ue_index_t> ue_idx;
   if (cu_ue_id.has_value()) {
     auto* ue_ptr = ues.find(cu_ue_id.value());
     if (ue_ptr != nullptr and ue_ptr->context.ue_index != INVALID_DU_UE_INDEX) {

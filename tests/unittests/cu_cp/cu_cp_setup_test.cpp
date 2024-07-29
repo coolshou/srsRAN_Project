@@ -31,7 +31,7 @@ using namespace srs_cu_cp;
 class cu_cp_setup_test : public cu_cp_test_environment, public ::testing::Test
 {
 public:
-  cu_cp_setup_test() : cu_cp_test_environment(cu_cp_test_env_params{8, 8, create_mock_amf()})
+  cu_cp_setup_test() : cu_cp_test_environment(cu_cp_test_env_params{8, 8, 8192, create_mock_amf()})
   {
     // Run NG setup to completion.
     run_ng_setup();
@@ -50,9 +50,9 @@ public:
   }
 
 protected:
-  unsigned                      du_idx    = 0;
-  unsigned                      cu_up_idx = 0;
-  optional<gnb_cu_ue_f1ap_id_t> cu_ue_id;
+  unsigned                           du_idx    = 0;
+  unsigned                           cu_up_idx = 0;
+  std::optional<gnb_cu_ue_f1ap_id_t> cu_ue_id;
 };
 
 TEST_F(cu_cp_setup_test, when_new_ue_sends_rrc_setup_request_then_dl_rrc_message_sent_with_rrc_setup)

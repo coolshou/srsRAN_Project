@@ -21,35 +21,13 @@
  */
 
 #include "gnb_appconfig_validators.h"
-#include "srsran/adt/span.h"
-#include "srsran/pdcp/pdcp_config.h"
-#include "srsran/ran/nr_cgi_helpers.h"
-#include "srsran/ran/prach/prach_helper.h"
-#include "srsran/rlc/rlc_config.h"
+#include "apps/services/logger/logger_appconfig_validator.h"
+#include "apps/units/cu_cp/cu_cp_unit_config.h"
+#include "apps/units/flexible_du/du_high/du_high_config.h"
 
 using namespace srsran;
 
-/// Validates the given AMF configuration. Returns true on success, otherwise false.
-static bool validate_amf_appconfig(const amf_appconfig& config)
-{
-  // only check for non-empty AMF address and default port
-  if (config.ip_addr.empty() or config.port != 38412) {
-    return false;
-  }
-  return true;
-}
-
-/// Validates the given logging configuration. Returns true on success, otherwise false.
-static bool validate_log_appconfig(const log_appconfig& config)
-{
-  if (config.filename.empty()) {
-    return false;
-  }
-
-  return true;
-}
-
-static bool validate_hal_config(const optional<hal_appconfig>& config)
+static bool validate_hal_config(const std::optional<hal_appconfig>& config)
 {
 #ifdef DPDK_FOUND
   if (config && config->eal_args.empty()) {
@@ -67,16 +45,30 @@ static bool validate_hal_config(const optional<hal_appconfig>& config)
 
 bool srsran::validate_appconfig(const gnb_appconfig& config)
 {
-  if (!validate_log_appconfig(config.log_cfg)) {
-    return false;
-  }
-
-  if (!validate_amf_appconfig(config.amf_cfg)) {
+  if (!validate_logger_appconfig(config.log_cfg)) {
     return false;
   }
 
   if (!validate_hal_config(config.hal_config)) {
     return false;
+  }
+
+  return true;
+}
+
+bool srsran::validate_plmn_and_tacs(const du_high_unit_config& du_hi_cfg, const cu_cp_unit_config& cu_cp_cfg)
+{
+  for (const auto& cell : du_hi_cfg.cells_cfg) {
+    if (std::find(cu_cp_cfg.plmns.cbegin(), cu_cp_cfg.plmns.cend(), cell.cell.plmn) == cu_cp_cfg.plmns.cend()) {
+      fmt::print("Could not find cell PLMN '{}' in the CU-CP PLMN list", cell.cell.plmn);
+
+      return false;
+    }
+
+    if (std::find(cu_cp_cfg.tacs.cbegin(), cu_cp_cfg.tacs.cend(), cell.cell.tac) == cu_cp_cfg.tacs.cend()) {
+      fmt::print("Could not find cell TAC '{}' in the CU-CP TAC list", cell.cell.tac);
+      return false;
+    }
   }
 
   return true;

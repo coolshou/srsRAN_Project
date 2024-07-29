@@ -21,8 +21,13 @@
  */
 
 #include "f1ap_du_test_helpers.h"
-#include "../common/f1ap_cu_test_messages.h"
+#include "lib/f1ap/common/f1ap_asn1_utils.h"
+#include "test_doubles/f1ap/f1ap_test_messages.h"
+#include "unittests/f1ap/common/f1ap_du_test_messages.h"
 #include "srsran/asn1/f1ap/common.h"
+#include "srsran/asn1/f1ap/f1ap_pdu_contents_ue.h"
+#include "srsran/du/du_cell_config_helpers.h"
+#include "srsran/support/async/async_test_utils.h"
 #include "srsran/support/test_utils.h"
 
 using namespace srsran;
@@ -39,7 +44,7 @@ f1_setup_request_message srsran::srs_du::generate_f1_setup_request_message()
   f1_setup_request_message      request_msg = {};
   du_manager_params::ran_params ran_params;
   ran_params.gnb_du_name  = "srsgnb";
-  ran_params.gnb_du_id    = 1;
+  ran_params.gnb_du_id    = (gnb_du_id_t)1;
   ran_params.rrc_version  = 1;
   ran_params.du_bind_addr = transport_layer_address::create_from_string("127.0.0.1");
   du_cell_config cell     = config_helpers::make_default_du_cell_config();
@@ -68,7 +73,9 @@ asn1::f1ap::drbs_to_be_setup_item_s srsran::srs_du::generate_drb_am_setup_item(d
       qos_flow_level_qos_params_s::reflective_qos_attribute_opts::subject_to;
   drb_info.snssai.sst.from_string("01");
   drb_info.snssai.sd.from_string("0027db");
-  drb.rlc_mode.value = rlc_mode_opts::rlc_am;
+  drb.rlc_mode.value         = rlc_mode_opts::rlc_am;
+  drb.ie_exts_present        = true;
+  drb.ie_exts.dl_pdcp_sn_len = pdcp_sn_len_opts::twelve_bits;
   drb.ul_up_tnl_info_to_be_setup_list.resize(1);
   auto& gtp_tun = drb.ul_up_tnl_info_to_be_setup_list[0].ul_up_tnl_info.set_gtp_tunnel();
   auto  addr    = transport_layer_address::create_from_string("127.0.0.1");
@@ -128,7 +135,10 @@ asn1::f1ap::drbs_to_be_setup_mod_item_s srsran::srs_du::generate_drb_am_mod_item
       qos_flow_level_qos_params_s::reflective_qos_attribute_opts::subject_to;
   drb_info.snssai.sst.from_string("01");
   drb_info.snssai.sd.from_string("0027db");
-  drb.rlc_mode.value = rlc_mode_opts::rlc_am;
+  drb.rlc_mode.value                 = rlc_mode_opts::rlc_am;
+  drb.ie_exts_present                = true;
+  drb.ie_exts.dl_pdcp_sn_len_present = true;
+  drb.ie_exts.dl_pdcp_sn_len         = pdcp_sn_len_opts::twelve_bits;
   drb.ul_up_tnl_info_to_be_setup_list.resize(1);
   auto& gtp_tun = drb.ul_up_tnl_info_to_be_setup_list[0].ul_up_tnl_info.set_gtp_tunnel();
   auto  addr    = transport_layer_address::create_from_string("127.0.0.1");

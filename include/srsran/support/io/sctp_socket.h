@@ -24,6 +24,7 @@
 
 #include "srsran/adt/expected.h"
 #include "srsran/adt/optional.h"
+#include "srsran/srslog/logger.h"
 #include "srsran/support/io/unique_fd.h"
 #include <chrono>
 #include <cstdint>
@@ -32,18 +33,19 @@
 namespace srsran {
 
 struct sctp_socket_params {
-  int                  ai_family;
-  int                  ai_socktype;
-  int                  ai_protocol;
-  bool                 reuse_addr        = false;
-  bool                 non_blocking_mode = false;
-  std::chrono::seconds rx_timeout{0};
-  optional<int32_t>    rto_initial;
-  optional<int32_t>    rto_min;
-  optional<int32_t>    rto_max;
-  optional<int32_t>    init_max_attempts;
-  optional<int32_t>    max_init_timeo;
-  optional<bool>       nodelay;
+  /// Name of the interface for logging purposes.
+  std::string            if_name;
+  int                    ai_family;
+  int                    ai_socktype;
+  bool                   reuse_addr        = false;
+  bool                   non_blocking_mode = false;
+  std::chrono::seconds   rx_timeout{0};
+  std::optional<int32_t> rto_initial;
+  std::optional<int32_t> rto_min;
+  std::optional<int32_t> rto_max;
+  std::optional<int32_t> init_max_attempts;
+  std::optional<int32_t> max_init_timeo;
+  std::optional<bool>    nodelay;
 };
 
 /// SCTP socket instance.
@@ -72,11 +74,12 @@ public:
   ///
   /// In case the gateway was configured to listen on port 0, i.e. the operating system shall pick a random free port,
   /// this function can be used to get the actual port number.
-  optional<uint16_t> get_listen_port() const;
+  std::optional<uint16_t> get_listen_port() const;
 
 private:
   bool set_sockopts(const sctp_socket_params& params);
 
+  std::string           if_name;
   bool                  non_blocking_mode = false;
   srslog::basic_logger& logger;
 

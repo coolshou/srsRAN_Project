@@ -21,28 +21,58 @@
  */
 
 #include "du_low_config_cli11_schema.h"
+#include "apps/services/logger/logger_appconfig_cli11_utils.h"
 #include "apps/units/flexible_du/support/cli11_cpu_affinities_parser_helper.h"
 #include "du_low_config.h"
+#include "srsran/adt/expected.h"
 #include "srsran/support/cli11_utils.h"
 #include "srsran/support/config_parsers.h"
 
 using namespace srsran;
 
+template <typename Integer>
+static expected<Integer, std::string> parse_int(const std::string& value)
+{
+  try {
+    return std::stoi(value);
+  } catch (const std::invalid_argument& e) {
+    return make_unexpected(e.what());
+  } catch (const std::out_of_range& e) {
+    return make_unexpected(e.what());
+  }
+}
+
 static void configure_cli11_log_args(CLI::App& app, du_low_unit_logger_config& log_params)
 {
-  auto level_check = [](const std::string& value) -> std::string {
-    if (value == "info" || value == "debug" || value == "warning" || value == "error") {
-      return {};
-    }
-    return "Log level value not supported. Accepted values [info,debug,warning,error]";
-  };
+  app_services::add_log_option(app, log_params.phy_level, "--phy_level", "PHY log level");
 
-  add_option(app, "--phy_level", log_params.phy_level, "PHY log level")->capture_default_str()->check(level_check);
   add_option(app,
              "--broadcast_enabled",
              log_params.broadcast_enabled,
              "Enable logging in the physical and MAC layer of broadcast messages and all PRACH opportunities")
       ->always_capture_default();
+  app.add_option("--phy_rx_symbols_filename",
+                 log_params.phy_rx_symbols_filename,
+                 "Set to a valid file path to print the received symbols.")
+      ->always_capture_default();
+  app.add_option_function<std::string>(
+         "--phy_rx_symbols_port",
+         [&log_params](const std::string& value) {
+           if (value == "all") {
+             log_params.phy_rx_symbols_port = std::nullopt;
+           } else {
+             log_params.phy_rx_symbols_port = parse_int<unsigned>(value).value();
+           }
+         },
+         "Set to a valid receive port number to dump the IQ symbols from that port only, or set to \"all\" to dump the "
+         "IQ symbols from all UL receive ports. Only works if \"phy_rx_symbols_filename\" is set.")
+      ->default_str("0")
+      ->check(CLI::NonNegativeNumber | CLI::IsMember({"all"}));
+  app.add_option("--phy_rx_symbols_prach",
+                 log_params.phy_rx_symbols_prach,
+                 "Set to true to dump the IQ symbols from all the PRACH ports. Only works if "
+                 "\"phy_rx_symbols_filename\" is set.")
+      ->capture_default_str();
 
   add_option(
       app, "--hex_max_size", log_params.hex_max_size, "Maximum number of bytes to print in hex (zero for no hex dumps)")

@@ -57,7 +57,7 @@ struct du_low_unit_expert_upper_phy_config {
 
 /// DU low logging functionalities.
 struct du_low_unit_logger_config {
-  std::string phy_level = "warning";
+  srslog::basic_levels phy_level = srslog::basic_levels::warning;
   /// Set to true to log broadcasting messages and all PRACH opportunities.
   bool broadcast_enabled = false;
   /// Maximum number of bytes to write when dumping hex arrays.
@@ -65,7 +65,7 @@ struct du_low_unit_logger_config {
   /// Set to a valid file path to print the received symbols.
   std::string phy_rx_symbols_filename;
   /// Set to a valid Rx port number or empty for all ports.
-  optional<unsigned> phy_rx_symbols_port = 0;
+  std::optional<unsigned> phy_rx_symbols_port = 0;
   /// If true, prints the PRACH frequency-domain symbols.
   bool phy_rx_symbols_prach = false;
 };

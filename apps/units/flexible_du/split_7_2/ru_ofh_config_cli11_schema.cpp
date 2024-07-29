@@ -21,6 +21,7 @@
  */
 
 #include "ru_ofh_config_cli11_schema.h"
+#include "apps/services/logger/logger_appconfig_cli11_utils.h"
 #include "apps/units/flexible_du/support/cli11_cpu_affinities_parser_helper.h"
 #include "ru_ofh_config.h"
 #include "srsran/support/cli11_utils.h"
@@ -249,16 +250,7 @@ static void configure_cli11_ru_ofh_args(CLI::App& app, ru_ofh_unit_parsed_config
 
 static void configure_cli11_log_args(CLI::App& app, ru_ofh_unit_logger_config& log_params)
 {
-  auto level_check = [](const std::string& value) -> std::string {
-    if (value == "info" || value == "debug" || value == "warning" || value == "error") {
-      return {};
-    }
-    return "Log level value not supported. Accepted values [info,debug,warning,error]";
-  };
-
-  add_option(app, "--ofh_level", log_params.ofh_level, "Open Fronthaul log level")
-      ->capture_default_str()
-      ->check(level_check);
+  app_services::add_log_option(app, log_params.ofh_level, "--ofh_level", "Open Fronthaul log level");
 }
 
 static void configure_cli11_cell_affinity_args(CLI::App& app, ru_ofh_unit_cpu_affinities_cell_config& config)
@@ -319,6 +311,13 @@ static void configure_cli11_expert_execution_args(CLI::App& app, ru_ofh_unit_exp
       "Sets the cell CPU affinities configuration on a per cell basis");
 }
 
+static void configure_cli11_hal_args(CLI::App& app, std::optional<ru_ofh_unit_hal_config>& config)
+{
+  config.emplace();
+
+  add_option(app, "--eal_args", config->eal_args, "EAL configuration parameters used to initialize DPDK");
+}
+
 void srsran::configure_cli11_with_ru_ofh_config_schema(CLI::App& app, ru_ofh_unit_parsed_config& parsed_cfg)
 {
   // OFH RU section.
@@ -332,4 +331,21 @@ void srsran::configure_cli11_with_ru_ofh_config_schema(CLI::App& app, ru_ofh_uni
   // Expert execution section.
   CLI::App* expert_subcmd = add_subcommand(app, "expert_execution", "Expert execution configuration")->configurable();
   configure_cli11_expert_execution_args(*expert_subcmd, parsed_cfg.config.expert_execution_cfg);
+
+  // HAL section.
+  CLI::App* hal_subcmd = add_subcommand(app, "hal", "HAL configuration")->configurable();
+  configure_cli11_hal_args(*hal_subcmd, parsed_cfg.config.hal_config);
+}
+
+static void manage_hal_optional(CLI::App& app, std::optional<ru_ofh_unit_hal_config>& hal_config)
+{
+  // Clean the HAL optional.
+  if (app.get_subcommand("hal")->count_all() == 0) {
+    hal_config.reset();
+  }
+}
+
+void srsran::autoderive_ru_ofh_parameters_after_parsing(CLI::App& app, ru_ofh_unit_parsed_config& parsed_cfg)
+{
+  manage_hal_optional(app, parsed_cfg.config.hal_config);
 }

@@ -22,34 +22,15 @@
 
 #pragma once
 
+#include "apps/services/logger/logger_appconfig.h"
 #include "apps/services/os_sched_affinity_manager.h"
 #include "srsran/adt/byte_buffer.h"
-#include "srsran/adt/optional.h"
 #include "srsran/ran/direct_current_offset.h"
 #include "srsran/ran/gnb_id.h"
 #include "srsran/support/executors/unique_thread.h"
 #include <string>
 
 namespace srsran {
-
-struct amf_appconfig {
-  std::string ip_addr                = "127.0.0.1";
-  uint16_t    port                   = 38412;
-  std::string bind_addr              = "127.0.0.1";
-  std::string n2_bind_addr           = "auto";
-  std::string n2_bind_interface      = "auto";
-  std::string n3_bind_addr           = "auto";
-  std::string n3_bind_interface      = "auto";
-  std::string n3_ext_addr            = "auto";
-  int         sctp_rto_initial       = 120;
-  int         sctp_rto_min           = 120;
-  int         sctp_rto_max           = 500;
-  int         sctp_init_max_attempts = 3;
-  int         sctp_max_init_timeo    = 500;
-  bool        sctp_nodelay           = false;
-  int         udp_rx_max_msgs        = 256;
-  bool        no_core                = false;
-};
 
 /// E2 Agent configuration
 struct e2_appconfig {
@@ -70,46 +51,6 @@ struct cu_up_appconfig {
   unsigned gtpu_queue_size          = 2048;
   unsigned gtpu_reordering_timer_ms = 0;
   bool     warn_on_drop             = false;
-};
-
-/// Configuration of logging functionalities.
-struct log_appconfig {
-  /// Path to log file or "stdout" to print to console.
-  std::string filename = "/tmp/gnb.log";
-  /// Default log level for all layers.
-  std::string all_level = "warning";
-  /// Generic log level assigned to library components without layer-specific level.
-  std::string lib_level  = "warning";
-  std::string e2ap_level = "warning";
-  /// Maximum number of bytes to write when dumping hex arrays.
-  int hex_max_size = 0;
-  /// Set to true to log broadcasting messages and all PRACH opportunities.
-  bool broadcast_enabled = false;
-  /// Set to a valid file path to enable tracing and write the trace to the file.
-  std::string tracing_filename;
-};
-
-struct pcap_appconfig {
-  struct {
-    std::string filename = "/tmp/gnb_ngap.pcap";
-    bool        enabled  = false;
-  } ngap;
-  struct {
-    std::string filename = "/tmp/gnb_e1ap.pcap";
-    bool        enabled  = false;
-  } e1ap;
-  struct {
-    std::string filename = "/tmp/gnb_f1ap.pcap";
-    bool        enabled  = false;
-  } f1ap;
-  struct {
-    std::string filename = "/tmp/gnb_e2ap.pcap";
-    bool        enabled  = false;
-  } e2ap;
-  struct {
-    std::string filename = "/tmp/gnb_gtpu.pcap";
-    bool        enabled  = false;
-  } gtpu;
 };
 
 /// Metrics report configuration.
@@ -133,7 +74,7 @@ struct buffer_pool_appconfig {
 /// CPU affinities configuration for the gNB app.
 struct cpu_affinities_appconfig {
   /// CPUs isolation.
-  optional<os_sched_affinity_bitmask> isolated_cpus;
+  std::optional<os_sched_affinity_bitmask> isolated_cpus;
   /// Low priority workers CPU affinity mask.
   os_sched_affinity_config low_priority_cpu_cfg = {sched_affinity_mask_types::low_priority,
                                                    {},
@@ -168,26 +109,24 @@ struct hal_appconfig {
 
 /// Monolithic gnb application configuration.
 struct gnb_appconfig {
-  /// Logging configuration.
-  log_appconfig log_cfg;
-  /// PCAP configuration.
-  pcap_appconfig pcap_cfg;
+  /// Default constructor to update the log filename.
+  gnb_appconfig() { log_cfg.filename = "/tmp/gnb.log"; }
+  /// Loggers configuration.
+  logger_appconfig log_cfg;
   /// Metrics configuration.
   metrics_appconfig metrics_cfg;
   /// gNodeB identifier.
   gnb_id_t gnb_id = {411, 22};
   /// Node name.
   std::string ran_node_name = "srsgnb01";
-  /// AMF configuration.
-  amf_appconfig amf_cfg;
-  /// \brief E2 configuration.
+  /// E2 configuration.
   e2_appconfig e2_cfg;
   /// Buffer pool configuration.
   buffer_pool_appconfig buffer_pool_config;
   /// Expert configuration.
   expert_execution_appconfig expert_execution_cfg;
   /// HAL configuration.
-  optional<hal_appconfig> hal_config;
+  std::optional<hal_appconfig> hal_config;
 };
 
 } // namespace srsran

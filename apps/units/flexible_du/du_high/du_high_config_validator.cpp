@@ -293,6 +293,18 @@ static bool validate_pdsch_cell_unit_config(const du_high_unit_pdsch_config& con
     return false;
   }
 
+  unsigned max_ue_mcs = 28;
+  if (config.mcs_table == pdsch_mcs_table::qam256) {
+    max_ue_mcs = 27;
+  }
+
+  if (config.min_ue_mcs > max_ue_mcs) {
+    fmt::print("Invalid PDSCH min_ue_mcs (i.e., {}) for the selected MCS table (i.e., {}).\n",
+               config.min_ue_mcs,
+               (config.mcs_table == pdsch_mcs_table::qam256) ? "qam256" : "qam64");
+    return false;
+  }
+
   if (not validate_rv_sequence(config.rv_sequence)) {
     return false;
   }
@@ -333,6 +345,18 @@ static bool validate_pusch_cell_unit_config(const du_high_unit_pusch_config& con
     fmt::print("Invalid UE MCS range (i.e., [{}, {}]). The min UE MCS must be less than or equal to the max UE MCS.\n",
                config.min_ue_mcs,
                config.max_ue_mcs);
+    return false;
+  }
+
+  unsigned max_ue_mcs = 28;
+  if (config.mcs_table == pusch_mcs_table::qam256) {
+    max_ue_mcs = 27;
+  }
+
+  if (config.min_ue_mcs > max_ue_mcs) {
+    fmt::print("Invalid PUSCH min_ue_mcs (i.e., {}) for the selected MCS table (i.e., {}).\n",
+               config.min_ue_mcs,
+               (config.mcs_table == pusch_mcs_table::qam256) ? "qam256" : "qam64");
     return false;
   }
 
@@ -378,8 +402,18 @@ static bool validate_pucch_cell_unit_config(const du_high_unit_base_cell_config&
     return false;
   }
 
-  static constexpr std::array<unsigned, 11> valid_sr_period_slots{1, 2, 4, 8, 10, 16, 20, 40, 80, 160, 320};
-  const unsigned sr_period_slots = get_nof_slots_per_subframe(scs_common) * pucch_cfg.sr_period_msec;
+  static constexpr std::array<unsigned, 12> valid_sr_period_slots{1, 2, 4, 5, 8, 10, 16, 20, 40, 80, 160, 320};
+  const auto sr_period_slots = static_cast<unsigned>(get_nof_slots_per_subframe(scs_common) * pucch_cfg.sr_period_msec);
+
+  // Check that the SR period in milliseconds leads to an integer number of slots.
+  if (get_nof_slots_per_subframe(scs_common) * pucch_cfg.sr_period_msec != static_cast<float>(sr_period_slots)) {
+    fmt::print("SR period (i.e., {}ms) times the number of slots per subframe (i.e., {}) must be an integer number of "
+               "slots.\n",
+               pucch_cfg.sr_period_msec,
+               get_nof_slots_per_subframe(scs_common));
+    return false;
+  }
+
   if (std::find(valid_sr_period_slots.begin(), valid_sr_period_slots.end(), sr_period_slots) ==
       valid_sr_period_slots.end()) {
     fmt::print("SR period of {}ms is not valid for {}kHz SCS.\n", pucch_cfg.sr_period_msec, scs_to_khz(scs_common));
@@ -418,21 +452,21 @@ validate_prach_cell_unit_config(const du_high_unit_prach_config& config, nr_band
 
   auto code =
       prach_helper::prach_config_index_is_valid(config.prach_config_index.value(), band_helper::get_duplex_mode(band));
-  if (code.is_error()) {
+  if (not code.has_value()) {
     fmt::print("{}", code.error());
     return false;
   }
 
   code = prach_helper::zero_correlation_zone_is_valid(
       config.zero_correlation_zone, config.prach_config_index.value(), band_helper::get_duplex_mode(band));
-  if (code.is_error()) {
+  if (not code.has_value()) {
     fmt::print("{}", code.error());
     return false;
   }
 
   code = prach_helper::nof_ssb_per_ro_and_nof_cb_preambles_per_ssb_is_valid(config.nof_ssb_per_ro,
                                                                             config.nof_cb_preambles_per_ssb);
-  if (code.is_error()) {
+  if (not code.has_value()) {
     fmt::print("{}", code.error());
     return false;
   }
@@ -568,7 +602,7 @@ static bool validate_dl_arfcn_and_band(const du_high_unit_base_cell_config& conf
   if (config.band.has_value()) {
     error_type<std::string> ret = band_helper::is_dl_arfcn_valid_given_band(
         *config.band, config.dl_arfcn, config.common_scs, config.channel_bw_mhz);
-    if (ret.is_error()) {
+    if (not ret.has_value()) {
       fmt::print("Invalid DL ARFCN={} for band {}. Cause: {}.\n", config.dl_arfcn, band, ret.error());
       return false;
     }
@@ -584,6 +618,9 @@ static bool validate_dl_arfcn_and_band(const du_high_unit_base_cell_config& conf
 
 static bool validate_cell_sib_config(const du_high_unit_base_cell_config& cell_cfg)
 {
+  // See TS 38.331, V17.0.0, \c type1-r17 in \c SIB-TypeInfo-v1700.
+  static const unsigned r17_min_sib_type = 15;
+
   const du_high_unit_sib_config& sib_cfg = cell_cfg.sib_cfg;
 
   for (const auto& si_msg : sib_cfg.si_sched_info) {
@@ -597,18 +634,39 @@ static bool validate_cell_sib_config(const du_high_unit_base_cell_config& cell_c
     }
   }
 
-  // Check if there are repeated SIBs in the SI messages.
-  std::vector<uint8_t> sibs_included;
+  std::vector<uint8_t>  sibs_included;
+  std::vector<unsigned> si_window_positions;
   for (const auto& si_msg : sib_cfg.si_sched_info) {
     for (const uint8_t sib_it : si_msg.sib_mapping_info) {
+      // si-WindowPosition-r17 is part of release 17 specification only. See TS 38.331, V17.0.0, \c SchedulingInfo2-r17.
+      if (sib_it < r17_min_sib_type and si_msg.si_window_position.has_value()) {
+        fmt::print("The SIB{} cannot be configured with SI-window position", sib_it);
+        return false;
+      }
       sibs_included.push_back(sib_it);
+    }
+    if (si_msg.si_window_position.has_value()) {
+      si_window_positions.push_back(si_msg.si_window_position.value());
     }
   }
   std::sort(sibs_included.begin(), sibs_included.end());
+  // Check if there are repeated SIBs in the SI messages.
   const auto duplicate_it = std::adjacent_find(sibs_included.begin(), sibs_included.end());
   if (duplicate_it != sibs_included.end()) {
     fmt::print("The SIB{} cannot be included more than once in the broadcast SI messages", *duplicate_it);
     return false;
+  }
+
+  // Check whether SI window position when provided in SI scheduling information is in ascending order. See TS 38.331,
+  // \c si-WindowPosition.
+  for (unsigned i = 0, j = 0; i < si_window_positions.size() && j < si_window_positions.size(); ++i, ++j) {
+    if (si_window_positions[i] > si_window_positions[j]) {
+      fmt::print("The SI window position in the subsequent entry in SI scheduling information must have higher value "
+                 "than in the previous entry ({}>{})",
+                 si_window_positions[i],
+                 si_window_positions[j]);
+      return false;
+    }
   }
 
   return true;

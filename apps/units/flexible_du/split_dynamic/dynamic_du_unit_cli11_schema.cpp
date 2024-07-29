@@ -135,12 +135,14 @@ void srsran::autoderive_dynamic_du_parameters_after_parsing(CLI::App& app, dynam
   autoderive_du_high_parameters_after_parsing(app, parsed_cfg.du_high_cfg.config);
   // Auto derive SDR parameters.
   autoderive_ru_sdr_parameters_after_parsing(app, sdr_cfg, parsed_cfg.du_high_cfg.config.cells_cfg.size());
+  // Auto derive OFH parameters.
+  autoderive_ru_ofh_parameters_after_parsing(app, ofh_cfg);
 
   // Set the parsed RU.
   manage_ru(app, parsed_cfg);
 
-  if (variant_holds_alternative<ru_dummy_unit_config>(parsed_cfg.ru_cfg)) {
-    auto& dummy = variant_get<ru_dummy_unit_config>(parsed_cfg.ru_cfg);
+  if (std::holds_alternative<ru_dummy_unit_config>(parsed_cfg.ru_cfg)) {
+    auto& dummy = std::get<ru_dummy_unit_config>(parsed_cfg.ru_cfg);
     if (dummy.cell_affinities.size() < parsed_cfg.du_high_cfg.config.cells_cfg.size()) {
       dummy.cell_affinities.resize(parsed_cfg.du_high_cfg.config.cells_cfg.size());
     }
@@ -150,8 +152,8 @@ void srsran::autoderive_dynamic_du_parameters_after_parsing(CLI::App& app, dynam
   const auto& cell             = parsed_cfg.du_high_cfg.config.cells_cfg.front().cell;
   nr_band     band             = cell.band ? cell.band.value() : band_helper::get_band_from_dl_arfcn(cell.dl_arfcn);
   bool        is_zmq_rf_driver = false;
-  if (variant_holds_alternative<ru_sdr_unit_config>(parsed_cfg.ru_cfg)) {
-    is_zmq_rf_driver = variant_get<ru_sdr_unit_config>(parsed_cfg.ru_cfg).device_driver == "zmq";
+  if (std::holds_alternative<ru_sdr_unit_config>(parsed_cfg.ru_cfg)) {
+    is_zmq_rf_driver = std::get<ru_sdr_unit_config>(parsed_cfg.ru_cfg).device_driver == "zmq";
   }
   autoderive_du_low_parameters_after_parsing(app,
                                              parsed_cfg.du_low_cfg,

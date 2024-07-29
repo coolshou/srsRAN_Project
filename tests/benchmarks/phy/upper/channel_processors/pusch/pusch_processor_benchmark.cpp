@@ -136,10 +136,11 @@ static std::atomic<int>      pending_count = {0};
 static std::atomic<unsigned> finish_count  = {0};
 
 #ifdef HWACC_PUSCH_ENABLED
-static bool        ext_softbuffer = true;
-static bool        std_out_sink   = true;
-static std::string hal_log_level  = "error";
-static std::string eal_arguments  = "";
+static bool                 dedicated_queue = true;
+static bool                 ext_softbuffer  = true;
+static bool                 std_out_sink    = true;
+static srslog::basic_levels hal_log_level   = srslog::basic_levels::error;
+static std::string          eal_arguments   = "";
 #endif // HWACC_PUSCH_ENABLED
 
 // Test profile structure, initialized with default profile values.
@@ -209,7 +210,7 @@ static void usage(const char* prog)
 {
   fmt::print("Usage: {} [-m benchmark mode] [-R repetitions] [-B Batch size per thread] [-T number of threads] [-D "
              "LDPC type] [-M rate "
-             "dematcher type] [-P profile] [-x] [-y] [-z error|warning|info|debug] [-h] [eal_args ...]\n",
+             "dematcher type] [-P profile] [-w] [-x] [-y] [-z error|warning|info|debug] [-h] [eal_args ...]\n",
              prog);
   fmt::print("\t-m Benchmark mode. [Default {}]\n", to_string(benchmark_mode));
   fmt::print("\t\t {:<20}It does not print any result.\n", to_string(benchmark_modes::silent));
@@ -232,6 +233,8 @@ static void usage(const char* prog)
     fmt::print("\t\t {:<40} {}\n", profile.name, profile.description);
   }
 #ifdef HWACC_PUSCH_ENABLED
+  fmt::print("\t-w       Force shared hardware-queue use [Default {}]\n",
+             dedicated_queue ? "dedicated_queue" : "shared_queue");
   fmt::print("\t-x       Use the host's memory for the soft-buffer [Default {}]\n", !ext_softbuffer);
   fmt::print("\t-y       Force logging output written to a file [Default {}]\n", std_out_sink ? "std_out" : "file");
   fmt::print("\t-z       Set logging level for the HAL [Default {}]\n", hal_log_level);
@@ -277,7 +280,7 @@ static std::string capture_eal_args(int* argc, char*** argv)
 static int parse_args(int argc, char** argv)
 {
   int opt = 0;
-  while ((opt = getopt(argc, argv, "R:T:t:B:D:M:EP:m:xyz:h")) != -1) {
+  while ((opt = getopt(argc, argv, "R:T:t:B:D:M:EP:m:wxyz:h")) != -1) {
     switch (opt) {
       case 'R':
         nof_repetitions = std::strtol(optarg, nullptr, 10);
@@ -312,15 +315,20 @@ static int parse_args(int argc, char** argv)
         }
         break;
 #ifdef HWACC_PUSCH_ENABLED
+      case 'w':
+        dedicated_queue = false;
+        break;
       case 'x':
         ext_softbuffer = false;
         break;
       case 'y':
         std_out_sink = false;
         break;
-      case 'z':
-        hal_log_level = std::string(optarg);
+      case 'z': {
+        auto level    = srslog::str_to_basic_level(std::string(optarg));
+        hal_log_level = level.has_value() ? level.value() : srslog::basic_levels::error;
         break;
+      }
 #endif // HWACC_PUSCH_ENABLED
       case 'h':
       default:
@@ -395,7 +403,7 @@ static std::vector<test_case_type> generate_test_cases(const test_profile& profi
           config.freq_alloc                  = rb_allocation::make_type1(config.bwp_start_rb, nof_prb);
           config.start_symbol_index          = 0;
           config.nof_symbols                 = profile.nof_symbols;
-          config.tbs_lbrm_bytes              = ldpc::MAX_CODEBLOCK_SIZE / 8;
+          config.tbs_lbrm                    = tbs_lbrm_default;
 
           test_case_set.emplace_back(std::tuple<pusch_processor::pdu_t, unsigned>(config, tbs));
         }
@@ -436,7 +444,7 @@ static std::shared_ptr<hal::hw_accelerator_pusch_dec_factory> create_hw_accelera
 #ifdef HWACC_PUSCH_ENABLED
   // Intefacing to the bbdev-based hardware-accelerator.
   srslog::basic_logger& logger = srslog::fetch_basic_logger("HWACC", false);
-  logger.set_level(srslog::str_to_basic_level(hal_log_level));
+  logger.set_level(hal_log_level);
   dpdk::bbdev_acc_configuration bbdev_config;
   bbdev_config.id                                    = 0;
   bbdev_config.nof_ldpc_enc_lcores                   = 0;
@@ -449,16 +457,17 @@ static std::shared_ptr<hal::hw_accelerator_pusch_dec_factory> create_hw_accelera
   // Interfacing to a shared external HARQ buffer context repository.
   unsigned nof_cbs                   = MAX_NOF_SEGMENTS;
   uint64_t acc100_ext_harq_buff_size = bbdev_accelerator->get_harq_buff_size_bytes();
-  std::shared_ptr<ext_harq_buffer_context_repository> harq_buffer_context =
-      create_ext_harq_buffer_context_repository(nof_cbs, acc100_ext_harq_buff_size, false);
+  std::shared_ptr<hal::ext_harq_buffer_context_repository> harq_buffer_context =
+      hal::create_ext_harq_buffer_context_repository(nof_cbs, acc100_ext_harq_buff_size, false);
   TESTASSERT(harq_buffer_context);
 
   // Set the hardware-accelerator configuration.
-  hw_accelerator_pusch_dec_configuration hw_decoder_config;
+  hal::hw_accelerator_pusch_dec_configuration hw_decoder_config;
   hw_decoder_config.acc_type            = "acc100";
   hw_decoder_config.bbdev_accelerator   = bbdev_accelerator;
   hw_decoder_config.ext_softbuffer      = ext_softbuffer;
   hw_decoder_config.harq_buffer_context = harq_buffer_context;
+  hw_decoder_config.dedicated_queue     = dedicated_queue;
 
   // ACC100 hardware-accelerator implementation.
   return create_hw_accelerator_pusch_dec_factory(hw_decoder_config);
@@ -538,7 +547,7 @@ static pusch_processor_factory& get_pusch_processor_factory()
   TESTASSERT(dmrs_pusch_chan_estimator_factory);
 
   // Create channel equalizer factory.
-  std::shared_ptr<channel_equalizer_factory> eq_factory = create_channel_equalizer_factory_zf();
+  std::shared_ptr<channel_equalizer_factory> eq_factory = create_channel_equalizer_generic_factory();
   TESTASSERT(eq_factory);
 
   // Create PUSCH demodulator factory.
@@ -582,14 +591,28 @@ static pusch_processor_factory& get_pusch_processor_factory()
   pusch_proc_factory_config.ch_estimate_dimensions.nof_symbols  = MAX_NSYMB_PER_SLOT;
   pusch_proc_factory_config.ch_estimate_dimensions.nof_rx_ports = selected_profile.nof_rx_ports;
   pusch_proc_factory_config.ch_estimate_dimensions.nof_tx_layers =
-      std::min(selected_profile.nof_rx_ports, pusch_constants::MAX_NOF_LAYERS);
+      *std::max_element(selected_profile.nof_layers_set.begin(), selected_profile.nof_layers_set.end());
   pusch_proc_factory_config.dec_nof_iterations         = 2;
   pusch_proc_factory_config.dec_enable_early_stop      = true;
   pusch_proc_factory_config.max_nof_concurrent_threads = nof_threads;
   pusch_proc_factory                                   = create_pusch_processor_factory_sw(pusch_proc_factory_config);
   TESTASSERT(pusch_proc_factory);
 
-  pusch_proc_factory = create_pusch_processor_pool(std::move(pusch_proc_factory), nof_threads, true);
+  pusch_proc_factory_config.decoder_factory =
+      create_pusch_decoder_empty_factory(MAX_RB, pusch_constants::MAX_NOF_LAYERS);
+  TESTASSERT(pusch_proc_factory_config.decoder_factory);
+  std::shared_ptr<pusch_processor_factory> uci_proc_factory =
+      create_pusch_processor_factory_sw(pusch_proc_factory_config);
+  TESTASSERT(uci_proc_factory);
+
+  pusch_processor_pool_factory_config pusch_proc_pool_config;
+  pusch_proc_pool_config.factory                = pusch_proc_factory;
+  pusch_proc_pool_config.uci_factory            = uci_proc_factory;
+  pusch_proc_pool_config.nof_regular_processors = nof_threads;
+  pusch_proc_pool_config.nof_uci_processors     = nof_threads;
+  pusch_proc_pool_config.blocking               = true;
+
+  pusch_proc_factory = create_pusch_processor_pool(pusch_proc_pool_config);
   TESTASSERT(pusch_proc_factory);
 
   return *pusch_proc_factory;
@@ -702,7 +725,7 @@ int main(int argc, char** argv)
     srslog::set_default_sink(*log_sink);
     srslog::init();
     srslog::basic_logger& logger = srslog::fetch_basic_logger("EAL", false);
-    logger.set_level(srslog::str_to_basic_level(hal_log_level));
+    logger.set_level(hal_log_level);
     dpdk_interface = dpdk::create_dpdk_eal(eal_arguments, logger);
     TESTASSERT(dpdk_interface, "Failed to open DPDK EAL with arguments.");
   }
