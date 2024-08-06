@@ -71,9 +71,13 @@
 
 #include "apps/services/application_message_banners.h"
 #include "apps/services/application_tracer.h"
+#include "apps/services/buffer_pool/buffer_pool_manager.h"
 #include "apps/services/stdin_command_dispatcher.h"
+#include "apps/units/cu_cp/cu_cp_unit_config_yaml_writer.h"
+#include "apps/units/cu_up/cu_up_unit_config_yaml_writer.h"
 #include "cu_appconfig.h"
 #include "cu_appconfig_validator.h"
+#include "cu_appconfig_yaml_writer.h"
 
 #include <atomic>
 #include <thread>
@@ -137,11 +141,17 @@ static void register_app_logs(const logger_appconfig&         log_cfg,
                               const cu_up_unit_logger_config& cu_up_loggers)
 {
   // Set log-level of app and all non-layer specific components to app level.
-  for (const auto& id : {"CU", "ALL", "SCTP-GW", "IO-EPOLL", "UDP-GW", "PCAP"}) {
+  for (const auto& id : {"ALL", "SCTP-GW", "IO-EPOLL", "UDP-GW", "PCAP"}) {
     auto& logger = srslog::fetch_basic_logger(id, false);
     logger.set_level(log_cfg.lib_level);
     logger.set_hex_dump_max_size(log_cfg.hex_max_size);
   }
+
+  auto& app_logger = srslog::fetch_basic_logger("CU", false);
+  app_logger.set_level(srslog::basic_levels::info);
+  app_services::application_message_banners::log_build_info(app_logger);
+  app_logger.set_level(log_cfg.config_level);
+  app_logger.set_hex_dump_max_size(log_cfg.hex_max_size);
 
   auto& config_logger = srslog::fetch_basic_logger("CONFIG", false);
   config_logger.set_level(log_cfg.config_level);
@@ -225,7 +235,11 @@ int main(int argc, char** argv)
   // Log input configuration.
   srslog::basic_logger& config_logger = srslog::fetch_basic_logger("CONFIG");
   if (config_logger.debug.enabled()) {
-    config_logger.debug("Input configuration (all values): \n{}", app.config_to_str(true, false));
+    YAML::Node node;
+    fill_cu_appconfig_in_yaml_schema(node, cu_cfg);
+    fill_cu_up_config_in_yaml_schema(node, cu_up_config);
+    fill_cu_cp_config_in_yaml_schema(node, cu_cp_config);
+    config_logger.debug("Input configuration (all values): \n{}", YAML::Dump(node));
   } else {
     config_logger.info("Input configuration (only non-default values): \n{}", app.config_to_str(false, false));
   }
@@ -240,10 +254,7 @@ int main(int argc, char** argv)
   // TODO
 
   // Setup size of byte buffer pool.
-  init_byte_buffer_segment_pool(cu_cfg.buffer_pool_config.nof_segments, cu_cfg.buffer_pool_config.segment_size);
-
-  // Log build info
-  cu_logger.info("Built in {} mode using {}", get_build_mode(), get_build_info());
+  app_services::buffer_pool_manager buffer_pool_service(cu_cfg.buffer_pool_config);
 
   // Log CPU architecture.
   // TODO
@@ -281,7 +292,7 @@ int main(int argc, char** argv)
   sctp_network_gateway_config f1c_sctp_cfg = {};
   f1c_sctp_cfg.if_name                     = "F1-C";
   f1c_sctp_cfg.bind_address                = cu_cfg.f1ap_cfg.bind_addr;
-  f1c_sctp_cfg.bind_port                   = 38471;
+  f1c_sctp_cfg.bind_port                   = F1AP_PORT;
   f1c_sctp_cfg.ppid                        = F1AP_PPID;
   f1c_cu_sctp_gateway_config f1c_server_cfg({f1c_sctp_cfg, *epoll_broker, *cu_cp_dlt_pcaps.f1ap});
   std::unique_ptr<srs_cu_cp::f1c_connection_server> cu_f1c_gw = srsran::create_f1c_gateway_server(f1c_server_cfg);

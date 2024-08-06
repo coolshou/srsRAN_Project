@@ -42,11 +42,11 @@ public:
 
   // See interface for the documentation.
   virtual void
-  compress(span<compressed_prb> output, span<const cf_t> input, const ru_compression_params& params) override;
+  compress(span<compressed_prb> output, span<const cbf16_t> input, const ru_compression_params& params) override;
 
   // See interface for the documentation.
   virtual void
-  decompress(span<cf_t> output, span<const compressed_prb> input, const ru_compression_params& params) override;
+  decompress(span<cbf16_t> output, span<const compressed_prb> input, const ru_compression_params& params) override;
 
 protected:
   /// Number of quantized samples per resource block.
@@ -92,14 +92,14 @@ protected:
   /// \param[in]  q      Quantizer object.
   /// \param data_width  Bit width of compressed samples.
   static void
-  decompress_prb_generic(span<cf_t> output, const compressed_prb& c_prb, const quantizer& q, unsigned data_width);
+  decompress_prb_generic(span<cbf16_t> output, const compressed_prb& c_prb, const quantizer& q, unsigned data_width);
 
   /// Quantizes complex float samples using the specified bit width.
   ///
   /// \param[out] out      Quantized samples.
   /// \param[in] in        Span of input float samples.
   /// \param[in] bit_width Number of significant bits used by the quantized samples.
-  void quantize_input(span<int16_t> out, span<const float> in);
+  void quantize_input(span<int16_t> out, span<const bf16_t> in);
 
 private:
   srslog::basic_logger& logger;

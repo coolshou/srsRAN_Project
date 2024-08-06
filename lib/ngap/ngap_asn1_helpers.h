@@ -32,6 +32,7 @@
 #include "srsran/cu_cp/cu_cp_types.h"
 #include "srsran/ngap/ngap_handover.h"
 #include "srsran/ngap/ngap_init_context_setup.h"
+#include "srsran/ngap/ngap_nas.h"
 #include "srsran/ngap/ngap_reset.h"
 #include "srsran/ngap/ngap_setup.h"
 #include "srsran/ngap/ngap_types.h"
@@ -176,6 +177,22 @@ inline void fill_asn1_ng_reset(asn1::ngap::ng_reset_s& asn1_reset, const ngap_ng
   }
 }
 
+/// \brief Fills the common type \c ngap_dl_nas_transport_message struct.
+/// \param[out] msg The common type \c ngap_dl_nas_transport_message struct to fill.
+/// \param[in] ue_index The index of the UE.
+/// \param[in] asn1_msg The ASN.1 type DLNASTransport.
+inline void fill_ngap_dl_nas_transport_message(ngap_dl_nas_transport_message&        msg,
+                                               ue_index_t                            ue_index,
+                                               const asn1::ngap::dl_nas_transport_s& asn1_msg)
+{
+  msg.ue_index = ue_index;
+  msg.nas_pdu  = asn1_msg->nas_pdu.copy();
+  if (asn1_msg->ue_cap_info_request_present &&
+      asn1_msg->ue_cap_info_request == asn1::ngap::ue_cap_info_request_opts::options::requested) {
+    msg.ue_cap_info_request = true;
+  }
+}
+
 /// \brief Convert common type Initial UE Message to NGAP Initial UE Message.
 /// \param[out] asn1_msg The ASN1 NGAP Initial UE Message.
 /// \param[in] msg The CU-CP Initial UE Message.
@@ -197,9 +214,9 @@ inline void fill_asn1_initial_ue_message(asn1::ngap::init_ue_msg_s&      asn1_ms
   if (msg.five_g_s_tmsi.has_value()) {
     // TS 23.003 - 5G-S-TMSI contains AMF Set ID, AMF Pointer and 5G TMSI.
     asn1_msg->five_g_s_tmsi_present = true;
-    asn1_msg->five_g_s_tmsi.amf_set_id.from_number(msg.five_g_s_tmsi.value().amf_set_id);
-    asn1_msg->five_g_s_tmsi.amf_pointer.from_number(msg.five_g_s_tmsi.value().amf_pointer);
-    asn1_msg->five_g_s_tmsi.five_g_tmsi.from_number(msg.five_g_s_tmsi.value().five_g_tmsi);
+    asn1_msg->five_g_s_tmsi.amf_set_id.from_number(msg.five_g_s_tmsi.value().get_amf_set_id());
+    asn1_msg->five_g_s_tmsi.amf_pointer.from_number(msg.five_g_s_tmsi.value().get_amf_pointer());
+    asn1_msg->five_g_s_tmsi.five_g_tmsi.from_number(msg.five_g_s_tmsi.value().get_five_g_tmsi());
   }
 
   if (msg.amf_set_id.has_value()) {
@@ -849,9 +866,7 @@ inline void fill_asn1_ue_context_release_complete(asn1::ngap::ue_context_release
 inline void fill_cu_cp_paging_message(cu_cp_paging_message& paging, const asn1::ngap::paging_s& asn1_paging)
 {
   // add ue paging id
-  paging.ue_paging_id.amf_set_id  = asn1_paging->ue_paging_id.five_g_s_tmsi().amf_set_id.to_number();
-  paging.ue_paging_id.amf_pointer = asn1_paging->ue_paging_id.five_g_s_tmsi().amf_pointer.to_number();
-  paging.ue_paging_id.five_g_tmsi = asn1_paging->ue_paging_id.five_g_s_tmsi().five_g_tmsi.to_number();
+  paging.ue_paging_id = ngap_asn1_to_ue_paging_id(asn1_paging->ue_paging_id);
 
   // add paging drx
   if (asn1_paging->paging_drx_present) {

@@ -21,6 +21,7 @@
  */
 
 #include "cu_cp_routine_manager.h"
+#include "../routines/initial_context_setup_routine.h"
 #include "../routines/mobility/inter_cu_handover_target_routine.h"
 #include "../routines/mobility/inter_du_handover_routine.h"
 #include "../routines/pdu_session_resource_modification_routine.h"
@@ -50,12 +51,27 @@ bool cu_cp_routine_manager::schedule_async_task(async_task<void> task)
   return main_ctrl_loop.schedule(std::move(task));
 }
 
+async_task<expected<ngap_init_context_setup_response, ngap_init_context_setup_failure>>
+cu_cp_routine_manager::start_initial_context_setup_routine(
+    const ngap_init_context_setup_request&       request,
+    rrc_ue_interface&                            rrc_ue,
+    ngap_ue_radio_capability_management_handler& ngap_ue_radio_cap_handler,
+    ue_security_manager&                         security_mng,
+    f1ap_ue_context_manager&                     f1ap_ue_ctxt_mng,
+    cu_cp_ngap_handler&                          pdu_session_setup_handler)
+{
+  return launch_async<initial_context_setup_routine>(
+      request, rrc_ue, ngap_ue_radio_cap_handler, security_mng, f1ap_ue_ctxt_mng, pdu_session_setup_handler, logger);
+}
+
 async_task<cu_cp_pdu_session_resource_setup_response> cu_cp_routine_manager::start_pdu_session_resource_setup_routine(
     const cu_cp_pdu_session_resource_setup_request& setup_msg,
     const srsran::security::sec_as_config&          security_cfg,
     e1ap_bearer_context_manager&                    e1ap_bearer_ctxt_mng,
     f1ap_ue_context_manager&                        f1ap_ue_ctxt_mng,
     du_processor_rrc_ue_control_message_notifier&   rrc_ue_ctrl_notifier,
+    cu_cp_rrc_ue_interface&                         cu_cp_notifier,
+    ue_task_scheduler&                              ue_task_sched,
     up_resource_manager&                            up_resource_mng)
 {
   return launch_async<pdu_session_resource_setup_routine>(setup_msg,
@@ -65,6 +81,8 @@ async_task<cu_cp_pdu_session_resource_setup_response> cu_cp_routine_manager::sta
                                                           e1ap_bearer_ctxt_mng,
                                                           f1ap_ue_ctxt_mng,
                                                           rrc_ue_ctrl_notifier,
+                                                          cu_cp_notifier,
+                                                          ue_task_sched,
                                                           up_resource_mng,
                                                           logger);
 }
@@ -75,10 +93,18 @@ cu_cp_routine_manager::start_pdu_session_resource_modification_routine(
     e1ap_bearer_context_manager&                     e1ap_bearer_ctxt_mng,
     f1ap_ue_context_manager&                         f1ap_ue_ctxt_mng,
     du_processor_rrc_ue_control_message_notifier&    rrc_ue_ctrl_notifier,
+    cu_cp_rrc_ue_interface&                          cu_cp_notifier,
+    ue_task_scheduler&                               ue_task_sched,
     up_resource_manager&                             up_resource_mng)
 {
-  return launch_async<pdu_session_resource_modification_routine>(
-      modify_msg, e1ap_bearer_ctxt_mng, f1ap_ue_ctxt_mng, rrc_ue_ctrl_notifier, up_resource_mng, logger);
+  return launch_async<pdu_session_resource_modification_routine>(modify_msg,
+                                                                 e1ap_bearer_ctxt_mng,
+                                                                 f1ap_ue_ctxt_mng,
+                                                                 rrc_ue_ctrl_notifier,
+                                                                 cu_cp_notifier,
+                                                                 ue_task_sched,
+                                                                 up_resource_mng,
+                                                                 logger);
 }
 
 async_task<cu_cp_pdu_session_resource_release_response>
@@ -86,17 +112,17 @@ cu_cp_routine_manager::start_pdu_session_resource_release_routine(
     const cu_cp_pdu_session_resource_release_command& release_cmd,
     e1ap_bearer_context_manager&                      e1ap_bearer_ctxt_mng,
     f1ap_ue_context_manager&                          f1ap_ue_ctxt_mng,
-    ngap_control_message_handler&                     ngap_handler,
     du_processor_rrc_ue_control_message_notifier&     rrc_ue_ctrl_notifier,
-    ue_task_scheduler&                                task_sched,
+    cu_cp_rrc_ue_interface&                           cu_cp_notifier,
+    ue_task_scheduler&                                ue_task_sched,
     up_resource_manager&                              up_resource_mng)
 {
   return launch_async<pdu_session_resource_release_routine>(release_cmd,
                                                             e1ap_bearer_ctxt_mng,
                                                             f1ap_ue_ctxt_mng,
-                                                            ngap_handler,
                                                             rrc_ue_ctrl_notifier,
-                                                            task_sched,
+                                                            cu_cp_notifier,
+                                                            ue_task_sched,
                                                             up_resource_mng,
                                                             logger);
 }
@@ -117,10 +143,19 @@ async_task<bool> cu_cp_routine_manager::start_reestablishment_context_modificati
     e1ap_bearer_context_manager&                  e1ap_bearer_ctxt_mng,
     f1ap_ue_context_manager&                      f1ap_ue_ctxt_mng,
     du_processor_rrc_ue_control_message_notifier& rrc_ue_ctrl_notifier,
+    cu_cp_rrc_ue_interface&                       cu_cp_notifier,
+    ue_task_scheduler&                            ue_task_sched,
     up_resource_manager&                          ue_up_resource_manager)
 {
-  return launch_async<reestablishment_context_modification_routine>(
-      ue_index, up_sec, e1ap_bearer_ctxt_mng, f1ap_ue_ctxt_mng, rrc_ue_ctrl_notifier, ue_up_resource_manager, logger);
+  return launch_async<reestablishment_context_modification_routine>(ue_index,
+                                                                    up_sec,
+                                                                    e1ap_bearer_ctxt_mng,
+                                                                    f1ap_ue_ctxt_mng,
+                                                                    rrc_ue_ctrl_notifier,
+                                                                    cu_cp_notifier,
+                                                                    ue_task_sched,
+                                                                    ue_up_resource_manager,
+                                                                    logger);
 }
 
 async_task<cu_cp_inter_du_handover_response>

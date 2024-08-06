@@ -21,6 +21,7 @@
  */
 
 #include "mobility_test_helpers.h"
+#include "srsran/asn1/f1ap/f1ap_pdu_contents_ue.h"
 #include "srsran/support/async/async_test_utils.h"
 #include "srsran/support/test_utils.h"
 #include <gtest/gtest.h>
@@ -44,9 +45,10 @@ protected:
     source_pci                   = 1;
     amf_ue_id_t amf_ue_id        = uint_to_amf_ue_id(
         test_rgen::uniform_int<uint64_t>(amf_ue_id_to_uint(amf_ue_id_t::min), amf_ue_id_to_uint(amf_ue_id_t::max)));
-    ran_ue_id_t            ran_ue_id        = uint_to_ran_ue_id(0);
-    gnb_cu_cp_ue_e1ap_id_t cu_cp_ue_e1ap_id = int_to_gnb_cu_cp_ue_e1ap_id(0);
-    gnb_cu_up_ue_e1ap_id_t cu_up_ue_e1ap_id = int_to_gnb_cu_up_ue_e1ap_id(0);
+    ran_ue_id_t                   ran_ue_id        = uint_to_ran_ue_id(0);
+    std::vector<pdu_session_id_t> psis             = {uint_to_pdu_session_id(1)};
+    gnb_cu_cp_ue_e1ap_id_t        cu_cp_ue_e1ap_id = int_to_gnb_cu_cp_ue_e1ap_id(0);
+    gnb_cu_up_ue_e1ap_id_t        cu_up_ue_e1ap_id = int_to_gnb_cu_up_ue_e1ap_id(0);
 
     // Connect AMF, DU, CU-UP.
     test_preamble_all_connected(du_index, source_pci);
@@ -54,7 +56,7 @@ protected:
     test_du_attach(target_du_index, target_du_id, target_nrcell_id, target_pci);
     // Attach UE.
     test_preamble_ue_full_attach(
-        du_index, du_ue_id, cu_ue_id, source_rnti, amf_ue_id, ran_ue_id, cu_cp_ue_e1ap_id, cu_up_ue_e1ap_id);
+        du_index, du_ue_id, cu_ue_id, source_rnti, amf_ue_id, ran_ue_id, psis, cu_cp_ue_e1ap_id, cu_up_ue_e1ap_id);
 
     // Assert single UE attached to source DU.
     ASSERT_EQ(get_nof_ues_in_source_du(), 1);
@@ -114,10 +116,7 @@ protected:
   {
     e1ap_message bearer_context_modification_fail =
         generate_bearer_context_modification_failure(int_to_gnb_cu_cp_ue_e1ap_id(0), int_to_gnb_cu_up_ue_e1ap_id(0));
-    cu_cp_obj->get_e1_handler()
-        .get_cu_up(uint_to_cu_up_index(0))
-        .get_message_handler()
-        .handle_message(bearer_context_modification_fail);
+    e1ap_gw.get_cu_up(0).on_new_message(bearer_context_modification_fail);
   }
 
   /// \brief Inject Bearer Context Modification Response.
@@ -125,10 +124,7 @@ protected:
   {
     e1ap_message bearer_context_modification_resp =
         generate_bearer_context_modification_response(int_to_gnb_cu_cp_ue_e1ap_id(0), int_to_gnb_cu_up_ue_e1ap_id(0));
-    cu_cp_obj->get_e1_handler()
-        .get_cu_up(uint_to_cu_up_index(0))
-        .get_message_handler()
-        .handle_message(bearer_context_modification_resp);
+    e1ap_gw.get_cu_up(0).on_new_message(bearer_context_modification_resp);
   }
 
   /// \brief Inject Bearer Context Release Complete.
@@ -136,10 +132,7 @@ protected:
   {
     e1ap_message bearer_context_release_complete =
         generate_bearer_context_release_complete(int_to_gnb_cu_cp_ue_e1ap_id(0), int_to_gnb_cu_up_ue_e1ap_id(0));
-    cu_cp_obj->get_e1_handler()
-        .get_cu_up(uint_to_cu_up_index(0))
-        .get_message_handler()
-        .handle_message(bearer_context_release_complete);
+    e1ap_gw.get_cu_up(0).on_new_message(bearer_context_release_complete);
   }
 
   /// \brief Inject UE Context Modification Response.
@@ -258,6 +251,17 @@ TEST_F(inter_du_handover_routine_test, when_ho_succeeds_then_source_ue_is_remove
 
   // Start handover by injecting measurement report
   inject_rrc_meas_report();
+
+  // check that the UE Context Setup Request contains the UE capabilities
+  ASSERT_EQ(f1c_gw.last_tx_pdus(1).back().pdu.type(), asn1::f1ap::f1ap_pdu_c::types_opts::options::init_msg);
+  ASSERT_EQ(f1c_gw.last_tx_pdus(1).back().pdu.init_msg().value.type().value,
+            asn1::f1ap::f1ap_elem_procs_o::init_msg_c::types_opts::ue_context_setup_request);
+  ASSERT_NE(f1c_gw.last_tx_pdus(1)
+                .back()
+                .pdu.init_msg()
+                .value.ue_context_setup_request()
+                ->cu_to_du_rrc_info.ue_cap_rat_container_list.size(),
+            0U);
 
   // Inject UE Context Setup Response
   inject_ue_context_setup_response();

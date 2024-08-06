@@ -70,8 +70,7 @@ pucch_info srsran::build_pucch_info(const bwp_configuration* bwp_cfg,
   return pucch_test;
 }
 
-// Verify if the PUCCH scheduler output (or PUCCH PDU) is correct.
-bool srsran::assess_ul_pucch_info(const pucch_info& expected, const pucch_info& test)
+bool srsran::pucch_info_match(const pucch_info& expected, const pucch_info& test)
 {
   bool is_equal = expected.crnti == test.crnti && *expected.bwp_cfg == *test.bwp_cfg && expected.format == test.format;
   is_equal      = is_equal && expected.resources.prbs == test.resources.prbs &&
@@ -138,6 +137,7 @@ test_bench::test_bench(const test_bench_params& params,
   max_pucchs_per_slot{max_pucchs_per_slot_},
   max_ul_grants_per_slot{max_ul_grants_per_slot_},
   pucch_f2_more_prbs{params.pucch_f2_more_prbs},
+  use_format_0(params.use_format_0),
   pucch_alloc{cell_cfg, max_pucchs_per_slot, max_ul_grants_per_slot},
   uci_alloc(pucch_alloc),
   uci_sched{cell_cfg, uci_alloc, ues},
@@ -177,6 +177,17 @@ test_bench::test_bench(const test_bench_params& params,
   }
 
   if (params.cfg_for_mimo_4x4) {
+    auto& pucch_cfg = ue_req.cfg.cells->back().serv_cell_cfg.ul_config->init_ul_bwp.pucch_cfg.value();
+    pucch_cfg.format_2_common_param.value().max_c_rate = max_pucch_code_rate::dot_35;
+    const auto& res_f2                                 = std::find_if(pucch_cfg.pucch_res_list.begin(),
+                                      pucch_cfg.pucch_res_list.end(),
+                                      [](const auto& pucch) { return pucch.format == pucch_format::FORMAT_2; });
+    srsran_assert(res_f2 != pucch_cfg.pucch_res_list.end(), "PUCCH format 2 not found");
+    const auto& res_f2_cfg = std::get<pucch_format_2_3_cfg>(res_f2->format_params);
+    pucch_cfg.format_max_payload[pucch_format_to_uint(pucch_format::FORMAT_2)] =
+        get_pucch_format2_max_payload(res_f2_cfg.nof_prbs,
+                                      res_f2_cfg.nof_symbols,
+                                      to_max_code_rate_float(pucch_cfg.format_2_common_param.value().max_c_rate));
     ue_req.cfg.cells->back().serv_cell_cfg.csi_meas_cfg =
         csi_helper::make_csi_meas_config(csi_helper::csi_builder_params{.nof_ports = 4});
     auto& beta_offsets = std::get<uci_on_pusch::beta_offsets_semi_static>(ue_req.cfg.cells->back()
@@ -191,6 +202,17 @@ test_bench::test_bench(const test_bench_params& params,
       ue_req.cfg.cells->back().serv_cell_cfg.csi_meas_cfg.value().csi_report_cfg_list[0].report_cfg_type);
   csi_report.report_slot_period = params.csi_period;
   csi_report.report_slot_offset = params.csi_offset;
+
+  if (use_format_0) {
+    pucch_builder_params pucch_params{};
+    pucch_params.f0_or_f1_params.emplace<pucch_f0_params>();
+    pucch_builder.setup(
+        cell_cfg.ul_cfg_common.init_ul_bwp, params.is_tdd ? cell_cfg.tdd_cfg_common : std::nullopt, pucch_params);
+    bool new_ue_added = pucch_builder.add_build_new_ue_pucch_cfg(ue_req.cfg.cells.value().back().serv_cell_cfg);
+    if (not new_ue_added) {
+      srsran_terminate("UE PUCCH configuration couldn't be built");
+    }
+  }
 
   ue_ded_cfgs.push_back(std::make_unique<ue_configuration>(ue_req.ue_index, ue_req.crnti, cell_cfg_list, ue_req.cfg));
   ues.add_ue(
@@ -225,6 +247,10 @@ void test_bench::add_ue()
   ue_req.cfg.cells->begin()->serv_cell_cfg.ul_config.emplace(test_helpers::make_test_ue_uplink_config(cfg_params));
 
   ue_req.crnti = to_rnti(static_cast<std::underlying_type<rnti_t>::type>(last_allocated_rnti) + 1);
+
+  srsran_assert(not use_format_0 or
+                    pucch_builder.add_build_new_ue_pucch_cfg(ue_req.cfg.cells.value().back().serv_cell_cfg),
+                "UE PUCCH configuration couldn't be built");
 
   ue_ded_cfgs.push_back(std::make_unique<ue_configuration>(ue_req.ue_index, ue_req.crnti, cell_cfg_list, ue_req.cfg));
   ues.add_ue(

@@ -120,7 +120,7 @@ async_task<ue_index_t> f1ap_cu_impl::handle_ue_context_release_command(const f1a
     });
   }
 
-  return launch_async<ue_context_release_procedure>(msg, ue_ctxt_list[msg.ue_index], tx_pdu_notifier);
+  return launch_async<ue_context_release_procedure>(msg, ue_ctxt_list[msg.ue_index], tx_pdu_notifier, cfg.proc_timeout);
 }
 
 async_task<f1ap_ue_context_modification_response>
@@ -359,6 +359,7 @@ void f1ap_cu_impl::handle_successful_outcome(const asn1::f1ap::successful_outcom
       logger.warning("cu_ue={}: Discarding received \"{}\". Cause: UE was not found.",
                      *cu_ue_id,
                      outcome.value.type().to_string());
+      return;
     }
   }
 
@@ -385,6 +386,7 @@ void f1ap_cu_impl::handle_unsuccessful_outcome(const asn1::f1ap::unsuccessful_ou
       logger.warning("cu_ue={}: Discarding received \"{}\". Cause: UE was not found.",
                      *cu_ue_id,
                      outcome.value.type().to_string());
+      return;
     }
   }
 

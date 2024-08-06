@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "../slicing/slice_ue_repository.h"
 #include "scheduler_policy.h"
 
 namespace srsran {
@@ -31,11 +32,13 @@ class scheduler_time_pf : public scheduler_policy
 public:
   scheduler_time_pf(const scheduler_ue_expert_config& expert_cfg_);
 
-  void
-  dl_sched(ue_pdsch_allocator& pdsch_alloc, const ue_resource_grid_view& res_grid, const ue_repository& ues) override;
+  void dl_sched(ue_pdsch_allocator&          pdsch_alloc,
+                const ue_resource_grid_view& res_grid,
+                dl_ran_slice_candidate&      slice_candidate) override;
 
-  void
-  ul_sched(ue_pusch_allocator& pusch_alloc, const ue_resource_grid_view& res_grid, const ue_repository& ues) override;
+  void ul_sched(ue_pusch_allocator&          pusch_alloc,
+                const ue_resource_grid_view& res_grid,
+                ul_ran_slice_candidate&      slice_candidate) override;
 
 private:
   /// Fairness parameters.
@@ -73,6 +76,10 @@ private:
     const dl_harq_process* dl_newtx_h = nullptr;
     const ul_harq_process* ul_retx_h  = nullptr;
     const ul_harq_process* ul_newtx_h = nullptr;
+    /// Number of pending newTx bytes in SRBs in DL to be scheduled.
+    unsigned dl_newtx_srb_pending_bytes = 0;
+    /// Number of pending newTx bytes in SRBs in UL to be scheduled.
+    unsigned ul_newtx_srb_pending_bytes = 0;
     /// Flag indicating whether SR indication from the UE is received or not.
     bool sr_ind_received = false;
 
@@ -88,11 +95,13 @@ private:
   };
 
   /// \brief Attempts to allocate PDSCH for a UE.
-  /// \return Returns allocation status and nof. allocated bytes.
-  alloc_result try_dl_alloc(ue_ctxt& ctxt, const ue_repository& ues, ue_pdsch_allocator& pdsch_alloc);
+  /// \return Returns allocation status, nof. allocated bytes and nof. allocated RBs.
+  alloc_result
+  try_dl_alloc(ue_ctxt& ctxt, const slice_ue_repository& ues, ue_pdsch_allocator& pdsch_alloc, unsigned max_rbs);
   /// \brief Attempts to allocate PUSCH for a UE.
-  /// \return Returns allocation status and nof. allocated bytes.
-  alloc_result try_ul_alloc(ue_ctxt& ctxt, const ue_repository& ues, ue_pusch_allocator& pusch_alloc);
+  /// \return Returns allocation status, nof. allocated bytes and nof. allocated RBs.
+  alloc_result
+  try_ul_alloc(ue_ctxt& ctxt, const slice_ue_repository& ues, ue_pusch_allocator& pusch_alloc, unsigned max_rbs);
 
   slotted_id_table<du_ue_index_t, ue_ctxt, MAX_NOF_DU_UES> ue_history_db;
 

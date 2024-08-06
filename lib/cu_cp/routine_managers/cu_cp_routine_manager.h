@@ -42,21 +42,31 @@ public:
 
   bool schedule_async_task(async_task<void> task) override;
 
+  async_task<expected<ngap_init_context_setup_response, ngap_init_context_setup_failure>>
+  start_initial_context_setup_routine(const ngap_init_context_setup_request&       request,
+                                      rrc_ue_interface&                            rrc_ue,
+                                      ngap_ue_radio_capability_management_handler& ngap_ue_radio_cap_handler,
+                                      ue_security_manager&                         security_mng,
+                                      f1ap_ue_context_manager&                     f1ap_ue_ctxt_mng,
+                                      cu_cp_ngap_handler&                          pdu_session_setup_handler);
+
   async_task<cu_cp_pdu_session_resource_setup_response>
   start_pdu_session_resource_setup_routine(const cu_cp_pdu_session_resource_setup_request& setup_msg,
                                            const srsran::security::sec_as_config&          security_cfg,
                                            e1ap_bearer_context_manager&                    e1ap_bearer_ctxt_mng,
                                            f1ap_ue_context_manager&                        f1ap_ue_ctxt_mng,
                                            du_processor_rrc_ue_control_message_notifier&   rrc_ue_ctrl_notifier,
+                                           cu_cp_rrc_ue_interface&                         cu_cp_notifier,
+                                           ue_task_scheduler&                              ue_task_sched,
                                            up_resource_manager&                            up_resource_mng);
 
   async_task<cu_cp_pdu_session_resource_release_response>
   start_pdu_session_resource_release_routine(const cu_cp_pdu_session_resource_release_command& release_cmd,
                                              e1ap_bearer_context_manager&                      e1ap_bearer_ctxt_mng,
                                              f1ap_ue_context_manager&                          f1ap_ue_ctxt_mng,
-                                             ngap_control_message_handler&                     ngap_handler,
                                              du_processor_rrc_ue_control_message_notifier&     rrc_ue_ctrl_notifier,
-                                             ue_task_scheduler&                                task_sched,
+                                             cu_cp_rrc_ue_interface&                           cu_cp_notifier,
+                                             ue_task_scheduler&                                ue_task_sched,
                                              up_resource_manager&                              up_resource_mng);
 
   async_task<cu_cp_pdu_session_resource_modify_response>
@@ -64,6 +74,8 @@ public:
                                                   e1ap_bearer_context_manager&                     e1ap_bearer_ctxt_mng,
                                                   f1ap_ue_context_manager&                         f1ap_ue_ctxt_mng,
                                                   du_processor_rrc_ue_control_message_notifier&    rrc_ue_ctrl_notifier,
+                                                  cu_cp_rrc_ue_interface&                          cu_cp_notifier,
+                                                  ue_task_scheduler&                               ue_task_sched,
                                                   up_resource_manager&                             up_resource_mng);
 
   async_task<cu_cp_ue_context_release_complete>
@@ -78,6 +90,8 @@ public:
                                                      e1ap_bearer_context_manager&                  e1ap_bearer_ctxt_mng,
                                                      f1ap_ue_context_manager&                      f1ap_ue_ctxt_mng,
                                                      du_processor_rrc_ue_control_message_notifier& rrc_ue_ctrl_notifier,
+                                                     cu_cp_rrc_ue_interface&                       cu_cp_notifier,
+                                                     ue_task_scheduler&                            ue_task_sched,
                                                      up_resource_manager& ue_up_resource_manager);
 
   async_task<cu_cp_inter_du_handover_response>

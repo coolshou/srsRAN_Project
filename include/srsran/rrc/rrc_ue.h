@@ -132,14 +132,6 @@ public:
   /// \brief Notify about a DL DCCH message.
   /// \param[in] dl_dcch_msg The DL DCCH message.
   virtual void on_new_dl_dcch(srb_id_t srb_id, const asn1::rrc_nr::dl_dcch_msg_s& dl_dcch_msg) = 0;
-
-  /// \brief Setup AS security in the UE. This includes configuring
-  /// the PDCP entity security on SRB1 with the new AS keys.
-  virtual void on_new_as_security_context() = 0;
-
-  /// \brief Setup AS security in the UE. This includes configuring
-  /// the PDCP entity security on SRB1 with the new AS keys.
-  virtual void on_security_context_sucessful() = 0;
 };
 
 /// Interface used by the RRC reestablishment procedure to
@@ -191,6 +183,12 @@ public:
                                                           const unsigned             tac) = 0;
 };
 
+struct rrc_ue_security_mode_command_context {
+  unsigned            transaction_id;
+  nr_cell_global_id_t sp_cell_id;
+  byte_buffer         rrc_ue_security_mode_command_pdu;
+};
+
 struct rrc_ue_release_context {
   cu_cp_user_location_info_nr user_location_info;
   byte_buffer                 rrc_release_pdu;
@@ -207,6 +205,19 @@ class rrc_ue_control_message_handler
 {
 public:
   virtual ~rrc_ue_control_message_handler() = default;
+
+  /// \brief Get the packed Security Mode Command.
+  /// \returns The Security Mode Command context.
+  virtual rrc_ue_security_mode_command_context get_security_mode_command_context() = 0;
+
+  /// \brief Await a RRC Security Mode Complete.
+  /// \param[in] transaction_id The transaction ID of the RRC Security Mode Complete.
+  /// \returns True if the RRC Security Mode Complete was received, false otherwise.
+  virtual async_task<bool> handle_security_mode_complete_expected(uint8_t transaction_id) = 0;
+
+  /// \brief Get the packed UE Capability RAT Container List.
+  /// \returns The packed UE Capability RAT Container List.
+  virtual byte_buffer get_packed_ue_capability_rat_container_list() const = 0;
 
   /// \brief Handle an RRC Reconfiguration Request.
   /// \param[in] msg The new RRC Reconfiguration Request.
@@ -253,17 +264,19 @@ public:
   virtual byte_buffer get_rrc_handover_command(const rrc_reconfiguration_procedure_request& request,
                                                unsigned                                     transaction_id) = 0;
 
+  /// \brief Get the packed RRC Handover Preparation Message.
   virtual byte_buffer get_packed_handover_preparation_message() = 0;
 };
 
-/// Handler to initialize the security context from NGAP.
-class rrc_ue_init_security_context_handler
+/// Handler to get the UE radio access capability info to the NGAP.
+class rrc_ue_radio_access_capability_handler
 {
 public:
-  virtual ~rrc_ue_init_security_context_handler() = default;
+  virtual ~rrc_ue_radio_access_capability_handler() = default;
 
-  /// \brief Handle the received Init Security Context.
-  virtual async_task<bool> handle_init_security_context() = 0;
+  /// \brief Get the packed UE Radio Access Cap Info.
+  /// \returns The packed UE Radio Access Cap Info.
+  virtual byte_buffer get_packed_ue_radio_access_cap_info() const = 0;
 };
 
 /// Handler to get the handover preparation context to the NGAP.
@@ -272,6 +285,7 @@ class rrc_ue_handover_preparation_handler
 public:
   virtual ~rrc_ue_handover_preparation_handler() = default;
 
+  /// \brief Get the packed Handover Preparation Message.
   virtual byte_buffer get_packed_handover_preparation_message() = 0;
 };
 
@@ -403,7 +417,7 @@ class rrc_ue_interface : public rrc_ul_ccch_pdu_handler,
                          public rrc_dl_nas_message_handler,
                          public rrc_ue_srb_handler,
                          public rrc_ue_control_message_handler,
-                         public rrc_ue_init_security_context_handler,
+                         public rrc_ue_radio_access_capability_handler,
                          public rrc_ue_setup_proc_notifier,
                          public rrc_ue_security_mode_command_proc_notifier,
                          public rrc_ue_reconfiguration_proc_notifier,
@@ -415,15 +429,15 @@ public:
   rrc_ue_interface()          = default;
   virtual ~rrc_ue_interface() = default;
 
-  virtual rrc_ue_controller&                    get_controller()                           = 0;
-  virtual rrc_ul_ccch_pdu_handler&              get_ul_ccch_pdu_handler()                  = 0;
-  virtual rrc_ul_dcch_pdu_handler&              get_ul_dcch_pdu_handler()                  = 0;
-  virtual rrc_dl_nas_message_handler&           get_rrc_dl_nas_message_handler()           = 0;
-  virtual rrc_ue_srb_handler&                   get_rrc_ue_srb_handler()                   = 0;
-  virtual rrc_ue_control_message_handler&       get_rrc_ue_control_message_handler()       = 0;
-  virtual rrc_ue_init_security_context_handler& get_rrc_ue_init_security_context_handler() = 0;
-  virtual rrc_ue_context_handler&               get_rrc_ue_context_handler()               = 0;
-  virtual rrc_ue_handover_preparation_handler&  get_rrc_ue_handover_preparation_handler()  = 0;
+  virtual rrc_ue_controller&                      get_controller()                             = 0;
+  virtual rrc_ul_ccch_pdu_handler&                get_ul_ccch_pdu_handler()                    = 0;
+  virtual rrc_ul_dcch_pdu_handler&                get_ul_dcch_pdu_handler()                    = 0;
+  virtual rrc_dl_nas_message_handler&             get_rrc_dl_nas_message_handler()             = 0;
+  virtual rrc_ue_srb_handler&                     get_rrc_ue_srb_handler()                     = 0;
+  virtual rrc_ue_control_message_handler&         get_rrc_ue_control_message_handler()         = 0;
+  virtual rrc_ue_radio_access_capability_handler& get_rrc_ue_radio_access_capability_handler() = 0;
+  virtual rrc_ue_context_handler&                 get_rrc_ue_context_handler()                 = 0;
+  virtual rrc_ue_handover_preparation_handler&    get_rrc_ue_handover_preparation_handler()    = 0;
 };
 
 } // namespace srs_cu_cp

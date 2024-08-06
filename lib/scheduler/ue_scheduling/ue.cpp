@@ -53,6 +53,19 @@ void ue::slot_indication(slot_point sl_tx)
     if (ue_du_cells[i] != nullptr) {
       // Clear old HARQs.
       ue_du_cells[i]->harqs.slot_indication(sl_tx);
+
+      // [Implementation-defined]
+      // Clear last PxSCH allocated slot if gap to current \c sl_tx is too large. This is done in order to circumvent
+      // the ambiguity caused by the slot_point wrap around while scheduling next PxSCHs. e.g. last PxSCH allocated
+      // slot=289.0 and next PxSCH to be allocated slot=(289.0 - SCHEDULER_MAX_K0/SCHEDULER_MAX_K2) after wrap around.
+      if (ue_du_cells[i]->last_pdsch_allocated_slot.valid() and
+          std::abs(sl_tx - ue_du_cells[i]->last_pdsch_allocated_slot) > SCHEDULER_MAX_K0) {
+        ue_du_cells[i]->last_pdsch_allocated_slot.clear();
+      }
+      if (ue_du_cells[i]->last_pusch_allocated_slot.valid() and
+          std::abs(sl_tx - ue_du_cells[i]->last_pusch_allocated_slot) > SCHEDULER_MAX_K2) {
+        ue_du_cells[i]->last_pusch_allocated_slot.clear();
+      }
     }
   }
 
@@ -124,6 +137,19 @@ void ue::handle_reconfiguration_request(const ue_reconf_command& cmd)
 unsigned ue::pending_dl_newtx_bytes(lcid_t lcid) const
 {
   return lcid != INVALID_LCID ? dl_lc_ch_mgr.pending_bytes(lcid) : dl_lc_ch_mgr.pending_bytes();
+}
+
+unsigned ue::pending_dl_srb_newtx_bytes() const
+{
+  return dl_lc_ch_mgr.pending_bytes(LCID_SRB1) + dl_lc_ch_mgr.pending_bytes(LCID_SRB2);
+}
+
+unsigned ue::pending_ul_srb_newtx_bytes() const
+{
+  // LCG ID 0 is used by default for SRBs as per TS 38.331, clause 9.2.1.
+  // NOTE: Ensure SRB LCG ID matches the one sent to UE.
+  const lcg_id_t srb_lcg_id = uint_to_lcg_id(0);
+  return ul_lc_ch_mgr.pending_bytes(srb_lcg_id);
 }
 
 unsigned ue::pending_ul_newtx_bytes() const

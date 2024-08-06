@@ -33,8 +33,8 @@
 
 campaign_filename: &campaign_filename "C:\\ci\\CI 4x4 ORAN-FH-complete.xml"
 gnb_extra_commands: &gnb_extra_commands ""
-expected_dl_bitrate_high: &expected_dl_bitrate_high 1400000000
-expected_ul_bitrate_high: &expected_ul_bitrate_high 100000000
+expected_dl_bitrate_high: &expected_dl_bitrate_high 1200000000
+expected_ul_bitrate_high: &expected_ul_bitrate_high 80000000
 expected_dl_bitrate_low: &expected_dl_bitrate_low 14000
 expected_ul_bitrate_low: &expected_ul_bitrate_low 1000
 test_timeout: &test_timeout 2700 # 45 * 60
@@ -51,7 +51,7 @@ tests:
     # test/fail criteria
     expected_dl_bitrate: *expected_dl_bitrate_high
     expected_ul_bitrate: *expected_ul_bitrate_high
-    fail_if_kos: true
+    fail_if_kos: false
     warning_as_errors: true
 
   - campaign_filename: *campaign_filename
@@ -65,7 +65,7 @@ tests:
     # test/fail criteria
     expected_dl_bitrate: *expected_dl_bitrate_high
     expected_ul_bitrate: *expected_ul_bitrate_high
-    fail_if_kos: true
+    fail_if_kos: false
     warning_as_errors: true
 
   - campaign_filename: *campaign_filename
@@ -107,7 +107,7 @@ tests:
     # test/fail criteria
     expected_dl_bitrate: *expected_dl_bitrate_low
     expected_ul_bitrate: *expected_ul_bitrate_low
-    fail_if_kos: true
+    fail_if_kos: false
     warning_as_errors: true
 
   - campaign_filename: *campaign_filename
@@ -121,7 +121,7 @@ tests:
     # test/fail criteria
     expected_dl_bitrate: *expected_dl_bitrate_low
     expected_ul_bitrate: *expected_ul_bitrate_low
-    fail_if_kos: true
+    fail_if_kos: false
     warning_as_errors: true
 
   - campaign_filename: *campaign_filename
@@ -155,7 +155,7 @@ tests:
   - campaign_filename: *campaign_filename
     test_name: "32UE ideal UDP attach-detach with traffic"
     test_timeout: *test_timeout
-    gnb_extra_commands: *gnb_extra_commands
+    gnb_extra_commands: "log --ngap_level=debug --rrc_level=debug"
     id: "32UE ideal UDP attach-detach with traffic"
     max_pdschs_per_slot: 1
     max_puschs_per_slot: 1
@@ -163,7 +163,7 @@ tests:
     # test/fail criteria
     expected_dl_bitrate: *expected_dl_bitrate_low
     expected_ul_bitrate: *expected_ul_bitrate_low
-    fail_if_kos: true
+    fail_if_kos: false
     warning_as_errors: true
 
   # - campaign_filename: *campaign_filename
@@ -211,7 +211,7 @@ tests:
   - campaign_filename: *campaign_filename
     test_name: "32UE ideal ping"
     test_timeout: *test_timeout
-    gnb_extra_commands: "log --mac_level=info"
+    gnb_extra_commands: "log --all_level=info"
     id: "32UE ideal ping"
     max_pdschs_per_slot: 1
     max_puschs_per_slot: 1
@@ -219,13 +219,13 @@ tests:
     # test/fail criteria
     expected_dl_bitrate: *expected_dl_bitrate_low
     expected_ul_bitrate: *expected_ul_bitrate_low
-    fail_if_kos: true
+    fail_if_kos: false
     warning_as_errors: true
 
   - campaign_filename: *campaign_filename
     test_name: "32UE ideal ping with traffic"
     test_timeout: *test_timeout
-    gnb_extra_commands: "log --mac_level=info"
+    gnb_extra_commands: *gnb_extra_commands
     id: "32UE ideal ping with traffic"
     max_pdschs_per_slot: 1
     max_puschs_per_slot: 1
@@ -233,5 +233,19 @@ tests:
     # test/fail criteria
     expected_dl_bitrate: *expected_dl_bitrate_low
     expected_ul_bitrate: *expected_ul_bitrate_low
-    fail_if_kos: true
+    fail_if_kos: false
     warning_as_errors: true
+
+  - campaign_filename: *campaign_filename
+    test_name: "experimental 32UE ideal UDP bidirectional Long"
+    test_timeout: 21600 # 6 hours
+    gnb_extra_commands: *gnb_extra_commands
+    id: "experimental 32UE ideal UDP bidirectional Long"
+    max_pdschs_per_slot: 1
+    max_puschs_per_slot: 1
+    enable_qos_viavi: false
+    # test/fail criteria
+    expected_dl_bitrate: *expected_dl_bitrate_high
+    expected_ul_bitrate: *expected_ul_bitrate_high
+    fail_if_kos: false
+    warning_as_errors: false

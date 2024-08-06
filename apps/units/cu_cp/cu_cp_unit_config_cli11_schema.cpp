@@ -106,7 +106,11 @@ static void configure_cli11_cells_args(CLI::App& app, cu_cp_unit_cell_config_ite
 
   add_auto_enum_option(app, "--band", config.band, "NR frequency band");
 
-  add_option(app, "--gnb_id_bit_length", config.gnb_id_bit_length, "gNodeB identifier bit length")
+  add_option(app,
+             "--gnb_id_bit_length",
+             config.gnb_id_bit_length,
+             "gNodeB identifier bit length. If not set, it will be automatically set to be equal to the gNodeB Id of "
+             "the CU-CP")
       ->check(CLI::Range(22, 32));
   add_option(app, "--pci", config.pci, "Physical Cell Id")->check(CLI::Range(0, 1007));
   add_option(app, "--ssb_arfcn", config.ssb_arfcn, "SSB ARFCN");
@@ -229,9 +233,9 @@ static void configure_cli11_security_args(CLI::App& app, cu_cp_unit_security_con
 static void configure_cli11_f1ap_args(CLI::App& app, cu_cp_unit_f1ap_config& f1ap_params)
 {
   add_option(app,
-             "--ue_context_setup_timeout",
-             f1ap_params.ue_context_setup_timeout,
-             "UE context setup timeout in milliseconds")
+             "--procedure_timeout",
+             f1ap_params.procedure_timeout,
+             "Time that the F1AP waits for a DU response in milliseconds")
       ->capture_default_str();
 }
 
@@ -414,7 +418,7 @@ static void configure_cli11_amf_args(CLI::App& app, cu_cp_unit_amf_config& amf_p
              "Default local IP address interfaces bind to, unless a specific bind address is specified")
       ->check(CLI::ValidIPV4);
   add_option(app, "--n2_bind_addr", amf_params.n2_bind_addr, "Local IP address to bind for N2 interface")
-      ->check(CLI::ValidIPV4);
+      ->check(CLI::ValidIPV4 | CLI::IsMember({"auto"}));
   add_option(app, "--n2_bind_interface", amf_params.n2_bind_interface, "Network device to bind for N2 interface")
       ->capture_default_str();
   add_option(app, "--sctp_rto_initial", amf_params.sctp_rto_initial, "SCTP initial RTO value");
@@ -475,10 +479,10 @@ void srsran::configure_cli11_with_cu_cp_unit_config_schema(CLI::App& app, cu_cp_
 
   // Slicing section.
   auto slicing_lambda = [&unit_cfg](const std::vector<std::string>& values) {
-    // Prepare the radio bearers
+    // Prepare the slices.
     unit_cfg.slice_cfg.resize(values.size());
 
-    // Format every QoS setting.
+    // Format every slicing setting.
     for (unsigned i = 0, e = values.size(); i != e; ++i) {
       CLI::App subapp("Slicing parameters", "Slicing config, item #" + std::to_string(i));
       subapp.config_formatter(create_yaml_config_parser());
@@ -521,5 +525,13 @@ void srsran::autoderive_cu_cp_parameters_after_parsing(CLI::App&                
     srsran_assert(unit_cfg.tacs.empty(), "TAC list is not empty");
 
     unit_cfg.tacs = tacs.empty() ? auto_generate_tacs() : std::move(tacs);
+  }
+
+  for (auto& cell : unit_cfg.mobility_config.cells) {
+    // Set gNB ID bit length of the neighbor cell to be equal to the current unit gNB ID bit length, if not explicitly
+    // set.
+    if (not cell.gnb_id_bit_length.has_value()) {
+      cell.gnb_id_bit_length = unit_cfg.gnb_id.bit_length;
+    }
   }
 }

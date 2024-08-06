@@ -133,17 +133,6 @@ alloc_result ue_cell_grid_allocator::allocate_dl_grant(const ue_pdsch_grant& gra
     return {alloc_status::invalid_params};
   }
 
-  // [Implementation-defined]
-  // If there is large gap between two PDSCHs scheduled for a UE, \c last_pdsch_allocated_slot could be having an old
-  // slot value and the condition pdsch_alloc.slot (e.g. 47.0) <= ue_cc->last_pdsch_allocated_slot (e.g. 989.0) maybe be
-  // true for long time and UE may not get scheduled.
-  // This scenario can be prevented by resetting \c last_pdsch_allocated_slot when its behind current PDCCH slot by
-  // SCHEDULER_MAX_K0 number of slots.
-  if (ue_cc->last_pdsch_allocated_slot.valid() and
-      std::abs(pdcch_alloc.slot - ue_cc->last_pdsch_allocated_slot) > SCHEDULER_MAX_K0) {
-    ue_cc->last_pdsch_allocated_slot.clear();
-  }
-
   // Create PDSCH param candidate search object.
   ue_pdsch_alloc_param_candidate_searcher candidates{
       u, grant.cell_index, h_dl, pdcch_alloc.slot, slots_with_no_pdsch_space};
@@ -227,10 +216,6 @@ alloc_result ue_cell_grid_allocator::allocate_dl_grant(const ue_pdsch_grant& gra
                 : ue_cc->required_dl_prbs(pdsch_td_cfg, grant.recommended_nof_bytes.value(), dci_type);
     // Try to limit the grant PRBs.
     if (not is_retx) {
-      // Limit nof. RBs to allocate to maximum RBs provided in grant.
-      if (grant.max_nof_rbs.has_value()) {
-        mcs_prbs.n_prbs = std::min(mcs_prbs.n_prbs, grant.max_nof_rbs.value());
-      }
       // [Implementation-defined] In case of partial slots and nof. PRBs allocated equals to 1 probability of KO is
       // high due to code not being able to cope with interference. So the solution is to increase the PRB allocation
       // to greater than 1 PRB.
@@ -246,6 +231,13 @@ alloc_result ue_cell_grid_allocator::allocate_dl_grant(const ue_pdsch_grant& gra
       if (twice_grant_crbs_length < (mcs_prbs.n_prbs * 2)) {
         mcs_prbs.n_prbs = twice_grant_crbs_length;
       }
+      // Limit nof. RBs to allocate to maximum RBs provided in grant.
+      if (grant.max_nof_rbs.has_value()) {
+        mcs_prbs.n_prbs = std::min(mcs_prbs.n_prbs, grant.max_nof_rbs.value());
+      }
+      // Re-apply nof. PDSCH RBs to allocate limits.
+      mcs_prbs.n_prbs = std::max(mcs_prbs.n_prbs, expert_cfg.pdsch_nof_rbs.start());
+      mcs_prbs.n_prbs = std::min(mcs_prbs.n_prbs, expert_cfg.pdsch_nof_rbs.stop());
     }
 
     if (mcs_prbs.n_prbs == 0) {
@@ -485,8 +477,6 @@ alloc_result ue_cell_grid_allocator::allocate_dl_grant(const ue_pdsch_grant& gra
     }
     ue_cc->last_pdsch_allocated_slot = pdsch_alloc.slot;
 
-    h_dl.save_alloc_params(pdsch_sched_ctx, msg.pdsch_cfg);
-
     if (is_new_data) {
       // Set MAC logical channels to schedule in this PDU if it is a newtx.
       u.build_dl_transport_block_info(msg.tb_list.emplace_back(), msg.pdsch_cfg.codewords[0].tb_size_bytes);
@@ -495,7 +485,21 @@ alloc_result ue_cell_grid_allocator::allocate_dl_grant(const ue_pdsch_grant& gra
       msg.context.buffer_occupancy = u.pending_dl_newtx_bytes();
     }
 
-    return {alloc_status::success, h_dl.last_alloc_params().tb[0]->tbs_bytes};
+    bool contains_srb_data = false;
+    if (is_new_data) {
+      const auto* it    = std::find_if(msg.tb_list.back().lc_chs_to_sched.begin(),
+                                    msg.tb_list.back().lc_chs_to_sched.end(),
+                                    [](const dl_msg_lc_info& lc_info) {
+                                      return lc_info.lcid.is_sdu() and lc_info.lcid.to_lcid() < LCID_MIN_DRB;
+                                    });
+      contains_srb_data = it != msg.tb_list.back().lc_chs_to_sched.end();
+    } else {
+      contains_srb_data = h_dl.last_alloc_params().tb[0]->contains_srb_data;
+    }
+
+    h_dl.save_alloc_params(pdsch_sched_ctx, msg.pdsch_cfg, contains_srb_data);
+
+    return {alloc_status::success, h_dl.last_alloc_params().tb[0]->tbs_bytes, crbs.length()};
   }
 
   // No candidates for PDSCH allocation.
@@ -571,18 +575,6 @@ alloc_result ue_cell_grid_allocator::allocate_ul_grant(const ue_pusch_grant& gra
                    u.crnti,
                    grant.h_id);
     return {alloc_status::invalid_params};
-  }
-
-  // [Implementation-defined]
-  // If there is large gap between two PUSCHs scheduled for a UE, \c last_pusch_allocated_slot could be having an old
-  // slot value and the condition pusch_alloc.slot (e.g. 47.3) <= ue_cc->last_pusch_allocated_slot (e.g. 989.3) maybe be
-  // true for long time and UE may not get scheduled even after receiving maximum nof. SR indication configured to UE
-  // and eventually UE PRACHes.
-  // This scenario can be prevented by resetting \c last_pusch_allocated_slot when its behind current PDCCH slot by
-  // SCHEDULER_MAX_K2 number of slots.
-  if (ue_cc->last_pusch_allocated_slot.valid() and
-      std::abs(pdcch_alloc.slot - ue_cc->last_pusch_allocated_slot) > SCHEDULER_MAX_K2) {
-    ue_cc->last_pusch_allocated_slot.clear();
   }
 
   // Create PUSCH param candidate search object.
@@ -713,13 +705,9 @@ alloc_result ue_cell_grid_allocator::allocate_ul_grant(const ue_pusch_grant& gra
                 : ue_cc->required_ul_prbs(pusch_td_cfg, grant.recommended_nof_bytes.value(), dci_type);
     // Try to limit the grant PRBs.
     if (not is_retx) {
-      // Limit nof. RBs to allocate to maximum RBs provided in grant.
-      if (grant.max_nof_rbs.has_value()) {
-        mcs_prbs.n_prbs = std::min(mcs_prbs.n_prbs, grant.max_nof_rbs.value());
-      }
       // [Implementation-defined] Check whether max. UL grants per slot is reached if PUSCH for current UE succeeds. If
       // so, allocate remaining RBs to the current UE only if it's a new Tx.
-      if (pusch_pdu_rem_space == 1) {
+      if (pusch_pdu_rem_space == 1 and not u.has_pending_sr()) {
         mcs_prbs.n_prbs = rb_helper::find_empty_interval_of_length(used_crbs, used_crbs.size(), 0).length();
       }
       // Due to the pre-allocated UCI bits, MCS 0 and PRB 1 would not leave any space for the payload on the TBS, as
@@ -742,6 +730,13 @@ alloc_result ue_cell_grid_allocator::allocate_ul_grant(const ue_pusch_grant& gra
       if (twice_grant_crbs_length < (mcs_prbs.n_prbs * 2)) {
         mcs_prbs.n_prbs = twice_grant_crbs_length;
       }
+      // Limit nof. RBs to allocate to maximum RBs provided in grant.
+      if (grant.max_nof_rbs.has_value()) {
+        mcs_prbs.n_prbs = std::min(mcs_prbs.n_prbs, grant.max_nof_rbs.value());
+      }
+      // Re-apply nof. PUSCH RBs to allocate limits.
+      mcs_prbs.n_prbs = std::max(mcs_prbs.n_prbs, expert_cfg.pusch_nof_rbs.start());
+      mcs_prbs.n_prbs = std::min(mcs_prbs.n_prbs, expert_cfg.pusch_nof_rbs.stop());
     }
 
     // NOTE: This should never happen, but it's safe not to proceed if we get n_prbs == 0.
@@ -1005,7 +1000,7 @@ alloc_result ue_cell_grid_allocator::allocate_ul_grant(const ue_pusch_grant& gra
     // In case there is a SR pending. Reset it.
     u.reset_sr_indication();
 
-    return {alloc_status::success, h_ul.last_tx_params().tbs_bytes};
+    return {alloc_status::success, h_ul.last_tx_params().tbs_bytes, crbs.length()};
   }
 
   // No candidates for PUSCH allocation.

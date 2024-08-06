@@ -34,6 +34,7 @@
 #include "cu_cp_impl_interface.h"
 #include "cu_up_processor/cu_up_processor_repository.h"
 #include "du_processor/du_processor_repository.h"
+#include "paging/paging_message_handler.h"
 #include "routine_managers/cu_cp_routine_manager.h"
 #include "ue_manager/ue_manager_impl.h"
 #include "srsran/cu_cp/cu_cp_configuration.h"
@@ -82,6 +83,8 @@ public:
 
   // cu_cp_ngap_handler
   bool handle_handover_request(ue_index_t ue_index, security::security_context sec_ctxt) override;
+  async_task<expected<ngap_init_context_setup_response, ngap_init_context_setup_failure>>
+  handle_new_initial_context_setup_request(const ngap_init_context_setup_request& request) override;
   async_task<cu_cp_pdu_session_resource_setup_response>
   handle_new_pdu_session_resource_setup_request(cu_cp_pdu_session_resource_setup_request& request) override;
   async_task<cu_cp_pdu_session_resource_modify_response>
@@ -121,9 +124,10 @@ public:
 
   // cu_cp public interface
   cu_cp_f1c_handler&                     get_f1c_handler() override { return controller->get_f1c_handler(); }
-  cu_cp_e1_handler&                      get_e1_handler() override { return cu_up_db; }
+  cu_cp_e1_handler&                      get_e1_handler() override { return controller->get_e1_handler(); }
   cu_cp_e1ap_event_handler&              get_cu_cp_e1ap_handler() override { return *this; }
   cu_cp_ng_handler&                      get_ng_handler() override { return *this; }
+  cu_cp_ngap_handler&                    get_cu_cp_ngap_handler() override { return *this; }
   cu_cp_command_handler&                 get_command_handler() override { return *this; }
   cu_cp_rrc_ue_interface&                get_cu_cp_rrc_ue_interface() override { return *this; }
   cu_cp_measurement_handler&             get_cu_cp_measurement_handler() override { return *this; }
@@ -200,6 +204,9 @@ private:
 
   // CU-UP connections being managed by the CU-CP.
   cu_up_processor_repository cu_up_db;
+
+  // Handler of paging messages.
+  paging_message_handler paging_handler;
 
   // Handler of the CU-CP connections to other remote nodes (e.g. AMF, CU-UPs, DUs).
   std::unique_ptr<cu_cp_controller> controller;

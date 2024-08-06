@@ -39,6 +39,7 @@
 #include "srsran/ran/pucch/pucch_configuration.h"
 #include "srsran/ran/pusch/pusch_mcs.h"
 #include "srsran/ran/rnti.h"
+#include "srsran/ran/s_nssai.h"
 #include "srsran/ran/sib/system_info_config.h"
 #include "srsran/ran/slot_pdu_capacity_constants.h"
 #include "srsran/ran/subcarrier_spacing.h"
@@ -219,12 +220,16 @@ struct du_high_unit_pucch_config {
   /// \c PUCCH-ConfigCommon parameters.
   /// \c p0-nominal, TS 38.331. Value in dBm. Only even values allowed within {-202,...,24}.
   int p0_nominal = -90;
+  /// \c pucch-ResourceCommon, TS 38.331. Values: {0,...,15}. Defines the PUCCH resource set used common configuration.
+  unsigned pucch_resource_common = 11;
 
   /// \c PUCCH-Config parameters.
-  /// Number of PUCCH Format 1 resources per UE for HARQ-ACK reporting. Values {1,...,8}.
-  unsigned nof_ue_pucch_f1_res_harq = 8;
+  /// Number of PUCCH Format 0/1 resources per UE for HARQ-ACK reporting. Values {1,...,8}.
+  unsigned nof_ue_pucch_f0_or_f1_res_harq = 8;
   /// Number of PUCCH Format 2 resources per UE for HARQ-ACK reporting. Values {1,...,8}.
   unsigned nof_ue_pucch_f2_res_harq = 6;
+  /// Force Format 0 for the PUCCH resources belonging to PUCCH resource set 0.
+  bool use_format_0 = false;
   /// \brief Number of separate PUCCH resource sets for HARQ-ACK reporting that are available in a cell.
   /// \remark UEs will be distributed possibly over different HARQ-ACK PUCCH sets; the more sets, the fewer UEs will
   /// have to share the same set, which reduces the chances that UEs won't be allocated PUCCH due to lack of
@@ -240,19 +245,19 @@ struct du_high_unit_pucch_config {
   /// these are the only ones supported. Values: {1, 2, 2.5, 4, 5, 8, 10, 16, 20, 40, 80, 160, 320}.
   float sr_period_msec = 20.0F;
 
+  /// PUCCH F0 resource parameter.
+  /// Set true for PUCCH Format 0 intra-slot frequency hopping.
+  bool f0_intraslot_freq_hopping = false;
+
   /// PUCCH F1 resource parameters.
-  /// Number of symbols for PUCCH Format 1. Values {4, 14}.
-  unsigned f1_nof_symbols = 14;
-  bool     f1_enable_occ  = true;
+  /// \brief Enable Orthogonal Cover Code for PUCCH Format 1.
+  bool f1_enable_occ = true;
   /// \brief Number of different Initial Cyclic Shifts that can be used for PUCCH Format 1.
   /// Values: {1, 2, 3, 4, 6, 12}; 0 corresponds to "no cyclic shift".
   unsigned nof_cyclic_shift = 2;
   /// Set true for PUCCH Format 1 intra-slot frequency hopping.
   bool f1_intraslot_freq_hopping = false;
 
-  /// PUCCH F2 resource parameters.
-  /// Number of symbols for PUCCH Format 2. Values {1, 2}.
-  unsigned f2_nof_symbols = 2;
   /// Max number of PRBs for PUCCH Format 2. Values {1,...,16}.
   unsigned f2_max_nof_rbs = 1;
   /// \brief Maximum payload in bits that can be carried by PUCCH Format 2. Values {-1,...,11}.
@@ -494,10 +499,28 @@ struct du_high_unit_prach_config {
   uint8_t nof_cb_preambles_per_ssb = 64;
 };
 
+/// Slice scheduling configuration for a cell.
+struct du_high_unit_cell_slice_sched_config {
+  /// Sets the minimum percentage of PRBs to be allocated to this group.
+  unsigned min_prb_policy_ratio = 0;
+  /// Sets the maximum percentage of PRBs to be allocated to this group.
+  unsigned max_prb_policy_ratio = 100;
+};
+
+/// Slice configuration for a cell.
+struct du_high_unit_cell_slice_config {
+  /// Slice identifier.
+  s_nssai_t s_nssai = s_nssai_t{1};
+  /// Slice scheduling configuration.
+  du_high_unit_cell_slice_sched_config sched_cfg;
+};
+
 /// Base cell configuration.
 struct du_high_unit_base_cell_config {
   /// Physical cell identifier.
   pci_t pci = 1;
+  /// Sector Id (4-14 bits) that gets concatenated with gNB-Id to form the NR Cell Identity (NCI).
+  std::optional<unsigned> sector_id;
   /// Downlink arfcn.
   unsigned dl_arfcn = 536020;
   /// Common subcarrier spacing for the entire resource grid. It must be supported by the band SS raster.
@@ -546,6 +569,8 @@ struct du_high_unit_base_cell_config {
   du_high_unit_csi_config csi_cfg;
   /// Scheduler expert configuration.
   du_high_unit_scheduler_expert_config sched_expert_cfg;
+  /// Network slice configuration.
+  std::vector<du_high_unit_cell_slice_config> slice_cfg;
 };
 
 struct du_high_unit_test_mode_ue_config {

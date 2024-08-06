@@ -350,7 +350,7 @@ static std::shared_ptr<uplink_processor_factory> create_ul_processor_factory(con
       create_low_papr_sequence_generator_sw_factory();
   report_fatal_error_if_not(sequence_factory, "Invalid sequence factory.");
 
-  std::shared_ptr<dft_processor_factory> dft_factory = create_dft_processor_factory_fftw_fast();
+  std::shared_ptr<dft_processor_factory> dft_factory = create_dft_processor_factory_fftw_slow();
   if (!dft_factory) {
     dft_factory = create_dft_processor_factory_generic();
     report_fatal_error_if_not(dft_factory, "Invalid DFT factory.");
@@ -385,8 +385,15 @@ static std::shared_ptr<uplink_processor_factory> create_ul_processor_factory(con
   std::shared_ptr<port_channel_estimator_factory>  ch_estimator_factory =
       create_port_channel_estimator_factory_sw(ta_estimator_factory);
 
-  std::shared_ptr<channel_equalizer_factory>  equalizer_factory    = create_channel_equalizer_generic_factory();
+  std::shared_ptr<channel_equalizer_factory> equalizer_factory = create_channel_equalizer_generic_factory();
+  report_error_if_not(equalizer_factory, "Invalid equalizer factory.");
+
+  std::shared_ptr<transform_precoder_factory> precoding_factory =
+      create_dft_transform_precoder_factory(dft_factory, config.ul_bw_rb);
+  report_fatal_error_if_not(precoding_factory, "Invalid transform precoder factory.");
+
   std::shared_ptr<channel_modulation_factory> demodulation_factory = create_channel_modulation_sw_factory();
+  report_error_if_not(demodulation_factory, "Invalid demodulation factory.");
 
   std::shared_ptr<crc_calculator_factory> crc_calc_factory =
       create_crc_calculator_factory_sw(config.crc_calculator_type);
@@ -427,9 +434,14 @@ static std::shared_ptr<uplink_processor_factory> create_ul_processor_factory(con
                         (config.log_level == srslog::basic_levels::debug);
 
   pusch_processor_factory_sw_configuration pusch_config;
-  pusch_config.estimator_factory   = create_dmrs_pusch_estimator_factory_sw(prg_factory, ch_estimator_factory);
-  pusch_config.demodulator_factory = create_pusch_demodulator_factory_sw(
-      equalizer_factory, demodulation_factory, prg_factory, enable_evm, enable_eq_sinr);
+  pusch_config.estimator_factory          = create_dmrs_pusch_estimator_factory_sw(prg_factory, ch_estimator_factory);
+  pusch_config.demodulator_factory        = create_pusch_demodulator_factory_sw(equalizer_factory,
+                                                                         precoding_factory,
+                                                                         demodulation_factory,
+                                                                         prg_factory,
+                                                                         config.ul_bw_rb,
+                                                                         enable_evm,
+                                                                         enable_eq_sinr);
   pusch_config.demux_factory              = create_ulsch_demultiplex_factory_sw();
   pusch_config.uci_dec_factory            = uci_dec_factory;
   pusch_config.dec_nof_iterations         = config.ldpc_decoder_iterations;
@@ -795,15 +807,15 @@ srsran::create_downlink_processor_factory_sw(const downlink_processor_factory_sw
     // asynchronous pool of processors and no more pools are necessary.
     if (!std::holds_alternative<pdsch_processor_concurrent_configuration>(config.pdsch_processor)) {
       pdsch_proc_factory = create_pdsch_processor_pool(std::move(pdsch_proc_factory), config.nof_concurrent_threads);
-      report_fatal_error_if_not(pdcch_proc_factory, "Invalid PDSCH processor pool factory.");
+      report_fatal_error_if_not(pdsch_proc_factory, "Invalid PDSCH processor pool factory.");
     }
 
     ssb_proc_factory = create_ssb_processor_pool_factory(std::move(ssb_proc_factory), config.nof_concurrent_threads);
-    report_fatal_error_if_not(pdcch_proc_factory, "Invalid SSB processor pool factory.");
+    report_fatal_error_if_not(ssb_proc_factory, "Invalid SSB processor pool factory.");
 
     nzp_csi_rs_factory =
         create_nzp_csi_rs_generator_pool_factory(std::move(nzp_csi_rs_factory), config.nof_concurrent_threads);
-    report_fatal_error_if_not(pdcch_proc_factory, "Invalid NZP-CSI-RS generator pool factory.");
+    report_fatal_error_if_not(nzp_csi_rs_factory, "Invalid NZP-CSI-RS generator pool factory.");
   }
 
   return std::make_shared<downlink_processor_single_executor_factory>(

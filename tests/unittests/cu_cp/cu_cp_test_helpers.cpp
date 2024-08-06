@@ -62,78 +62,48 @@ cu_cp_test::cu_cp_test()
   srslog::init();
 
   // create CU-CP config
-  cu_cp_configuration cfg = config_helpers::make_default_cu_cp_config();
-  cfg.cu_cp_executor      = &ctrl_worker;
-  cfg.n2_gw               = &n2_gw;
-  cfg.timers              = &timers;
-
-  // NGAP config
-  cfg.ngap_config.gnb_id        = {411, 22};
-  cfg.ngap_config.ran_node_name = "srsgnb01";
-  cfg.ngap_config.plmn          = plmn_identity::test_value();
-  cfg.ngap_config.tac           = 7;
-  s_nssai_t slice_cfg;
-  slice_cfg.sst = 1;
-  cfg.ngap_config.slice_configurations.push_back(slice_cfg);
-
-  // RRC config
-  cfg.rrc_config.gnb_id             = cfg.ngap_config.gnb_id;
-  cfg.rrc_config.drb_config         = config_helpers::make_default_cu_cp_qos_config_list();
-  cfg.rrc_config.int_algo_pref_list = {security::integrity_algorithm::nia2,
-                                       security::integrity_algorithm::nia1,
-                                       security::integrity_algorithm::nia3,
-                                       security::integrity_algorithm::nia0};
-  cfg.rrc_config.enc_algo_pref_list = {security::ciphering_algorithm::nea0,
-                                       security::ciphering_algorithm::nea2,
-                                       security::ciphering_algorithm::nea1,
-                                       security::ciphering_algorithm::nea3};
-
-  // UE config
-  cfg.ue_config.inactivity_timer      = std::chrono::seconds{7200};
-  cfg.ue_config.max_nof_supported_ues = cfg.max_nof_ues;
-
-  // periodic statistic logging
-  cfg.statistics_report_period = std::chrono::seconds(1);
-
+  cu_cp_configuration cfg     = config_helpers::make_default_cu_cp_config();
+  cfg.services.cu_cp_executor = &ctrl_worker;
+  cfg.services.n2_gw          = &n2_gw;
+  cfg.services.timers         = &timers;
   // mobility config
-  cfg.mobility_config.mobility_manager_config.trigger_handover_from_measurements = true;
-
+  cfg.mobility.mobility_manager_config.trigger_handover_from_measurements = true;
   // Generate NCIs.
-  gnb_id_t         gnb_id1 = cfg.rrc_config.gnb_id;
-  nr_cell_identity nci1    = nr_cell_identity::create(cfg.rrc_config.gnb_id, 0).value();
-  nr_cell_identity nci2    = nr_cell_identity::create(cfg.rrc_config.gnb_id, 1).value();
-  gnb_id_t         gnb_id2 = {cfg.rrc_config.gnb_id.id + 1, cfg.rrc_config.gnb_id.bit_length};
+  gnb_id_t         gnb_id1 = cfg.node.gnb_id;
+  nr_cell_identity nci1    = nr_cell_identity::create(gnb_id1, 0).value();
+  nr_cell_identity nci2    = nr_cell_identity::create(gnb_id1, 1).value();
+  gnb_id_t         gnb_id2 = {cfg.node.gnb_id.id + 1, cfg.node.gnb_id.bit_length};
   nr_cell_identity nci3    = nr_cell_identity::create(gnb_id2, 0).value();
 
   cell_meas_config cell_cfg_1;
-  cell_cfg_1.periodic_report_cfg_id  = uint_to_report_cfg_id(1);
-  cell_cfg_1.serving_cell_cfg.gnb_id = gnb_id1;
-  cell_cfg_1.serving_cell_cfg.nci    = nci1;
+  cell_cfg_1.periodic_report_cfg_id             = uint_to_report_cfg_id(1);
+  cell_cfg_1.serving_cell_cfg.gnb_id_bit_length = gnb_id1.bit_length;
+  cell_cfg_1.serving_cell_cfg.nci               = nci1;
   cell_cfg_1.ncells.push_back({nci2, {uint_to_report_cfg_id(2)}});
   // Add external cell (for inter CU handover tests)
   cell_cfg_1.ncells.push_back({nci3, {uint_to_report_cfg_id(2)}});
-  cfg.mobility_config.meas_manager_config.cells.emplace(nci1, cell_cfg_1);
+  cfg.mobility.meas_manager_config.cells.emplace(nci1, cell_cfg_1);
 
   cell_meas_config cell_cfg_2;
-  cell_cfg_2.periodic_report_cfg_id  = uint_to_report_cfg_id(1);
-  cell_cfg_2.serving_cell_cfg.gnb_id = gnb_id1;
-  cell_cfg_2.serving_cell_cfg.nci    = nci2;
+  cell_cfg_2.periodic_report_cfg_id             = uint_to_report_cfg_id(1);
+  cell_cfg_2.serving_cell_cfg.gnb_id_bit_length = gnb_id1.bit_length;
+  cell_cfg_2.serving_cell_cfg.nci               = nci2;
   cell_cfg_2.ncells.push_back({nci1, {uint_to_report_cfg_id(2)}});
-  cfg.mobility_config.meas_manager_config.cells.emplace(nci2, cell_cfg_2);
+  cfg.mobility.meas_manager_config.cells.emplace(nci2, cell_cfg_2);
 
   // Add an external cell
   cell_meas_config cell_cfg_3;
-  cell_cfg_3.periodic_report_cfg_id     = uint_to_report_cfg_id(1);
-  cell_cfg_3.serving_cell_cfg.gnb_id    = gnb_id2;
-  cell_cfg_3.serving_cell_cfg.nci       = nci3;
-  cell_cfg_3.serving_cell_cfg.pci       = 3;
-  cell_cfg_3.serving_cell_cfg.ssb_arfcn = 632628;
-  cell_cfg_3.serving_cell_cfg.band      = nr_band::n78;
-  cell_cfg_3.serving_cell_cfg.ssb_scs   = subcarrier_spacing::kHz15;
-  cell_cfg_3.serving_cell_cfg.ssb_mtc   = rrc_ssb_mtc{{rrc_periodicity_and_offset::periodicity_t::sf20, 0}, 5};
+  cell_cfg_3.periodic_report_cfg_id             = uint_to_report_cfg_id(1);
+  cell_cfg_3.serving_cell_cfg.gnb_id_bit_length = gnb_id2.bit_length;
+  cell_cfg_3.serving_cell_cfg.nci               = nci3;
+  cell_cfg_3.serving_cell_cfg.pci               = 3;
+  cell_cfg_3.serving_cell_cfg.ssb_arfcn         = 632628;
+  cell_cfg_3.serving_cell_cfg.band              = nr_band::n78;
+  cell_cfg_3.serving_cell_cfg.ssb_scs           = subcarrier_spacing::kHz15;
+  cell_cfg_3.serving_cell_cfg.ssb_mtc           = rrc_ssb_mtc{{rrc_periodicity_and_offset::periodicity_t::sf20, 0}, 5};
 
   cell_cfg_3.ncells.push_back({nci1, {uint_to_report_cfg_id(2)}});
-  cfg.mobility_config.meas_manager_config.cells.emplace(nci3, cell_cfg_3);
+  cfg.mobility.meas_manager_config.cells.emplace(nci3, cell_cfg_3);
 
   // Add periodic event
   rrc_report_cfg_nr periodic_report_cfg;
@@ -148,7 +118,7 @@ cu_cp_test::cu_cp_test()
   periodical_cfg.max_report_cells       = 4;
 
   periodic_report_cfg.periodical = periodical_cfg;
-  cfg.mobility_config.meas_manager_config.report_config_ids.emplace(uint_to_report_cfg_id(1), periodic_report_cfg);
+  cfg.mobility.meas_manager_config.report_config_ids.emplace(uint_to_report_cfg_id(1), periodic_report_cfg);
 
   rrc_report_cfg_nr a3_report_cfg;
   auto&             event_trigger_cfg = a3_report_cfg.event_triggered.emplace();
@@ -173,7 +143,7 @@ cu_cp_test::cu_cp_test()
   event_trigger_cfg.report_quant_rs_idxes = report_quant_rs_idxes;
 
   a3_report_cfg.event_triggered = event_trigger_cfg;
-  cfg.mobility_config.meas_manager_config.report_config_ids.emplace(uint_to_report_cfg_id(2), a3_report_cfg);
+  cfg.mobility.meas_manager_config.report_config_ids.emplace(uint_to_report_cfg_id(2), a3_report_cfg);
 
   // create CU-CP.
   cu_cp_obj = std::make_unique<cu_cp_impl>(std::move(cfg));
@@ -271,9 +241,24 @@ void cu_cp_test::setup_security(amf_ue_id_t         amf_ue_id,
   ngap_message init_ctxt_setup_req = generate_valid_initial_context_setup_request_message(amf_ue_id, ran_ue_id);
   cu_cp_obj->get_ngap_message_handler().handle_message(init_ctxt_setup_req);
 
+  // Inject UE Context Setup Response
+  f1ap_message ue_ctxt_setup_response = generate_ue_context_setup_response(cu_ue_id, du_ue_id);
+  f1c_gw.get_du(du_index).on_new_message(ue_ctxt_setup_response);
+
   // Inject Security Mode Complete
   f1ap_message ul_rrc_msg_transfer = generate_ul_rrc_message_transfer(
       cu_ue_id, du_ue_id, srb_id_t::srb1, make_byte_buffer("00032a00fd5ec7ff").value());
+  f1c_gw.get_du(du_index).on_new_message(ul_rrc_msg_transfer);
+
+  // Inject UE capability info
+  ul_rrc_msg_transfer = generate_ul_rrc_message_transfer(
+      cu_ue_id,
+      du_ue_id,
+      srb_id_t::srb1,
+      make_byte_buffer("00044c821930680ce811d1968097e360e1480005824c5c00060fc2c00637fe002e00131401a0000000880058d006007"
+                       "a071e439f0000240400e0300000000100186c0000700809df000000000000030368000800004b2ca000a07143c001c0"
+                       "03c000000100200409028098a8660c")
+          .value());
   f1c_gw.get_du(du_index).on_new_message(ul_rrc_msg_transfer);
 }
 
@@ -294,7 +279,7 @@ void cu_cp_test::test_e1ap_attach()
 
   // Pass E1SetupRequest to the CU-CP
   e1ap_message e1setup_msg = generate_valid_cu_up_e1_setup_request();
-  cu_cp_obj->get_e1_handler().get_cu_up(uint_to_cu_up_index(0)).get_message_handler().handle_message(e1setup_msg);
+  e1ap_gw.get_cu_up(0).on_new_message(e1setup_msg);
 }
 
 void cu_cp_test::test_du_attach(du_index_t du_index, gnb_du_id_t gnb_du_id, nr_cell_identity nrcell_id, pci_t pci)
@@ -311,6 +296,91 @@ void cu_cp_test::test_du_attach(du_index_t du_index, gnb_du_id_t gnb_du_id, nr_c
   // Pass F1SetupRequest to the CU-CP
   f1ap_message f1setup_msg = test_helpers::generate_f1_setup_request(gnb_du_id, nrcell_id, pci);
   f1c_gw.get_du(du_index).on_new_message(f1setup_msg);
+}
+
+void cu_cp_test::add_pdu_sessions(std::vector<pdu_session_id_t> psis,
+                                  du_index_t                    du_index,
+                                  gnb_du_ue_f1ap_id_t           du_ue_id,
+                                  gnb_cu_ue_f1ap_id_t           cu_ue_id,
+                                  amf_ue_id_t                   amf_ue_id,
+                                  ran_ue_id_t                   ran_ue_id,
+                                  gnb_cu_cp_ue_e1ap_id_t        cu_cp_ue_e1ap_id,
+                                  gnb_cu_up_ue_e1ap_id_t        cu_up_ue_e1ap_id)
+{
+  bool initial_pdu_session = true;
+
+  for (const auto psi : psis) {
+    // Inject PDU Session Resource Setup Request
+    ngap_message pdu_session_resource_setup_request =
+        generate_valid_pdu_session_resource_setup_request_message(amf_ue_id, ran_ue_id, psi);
+    cu_cp_obj->get_ngap_message_handler().handle_message(pdu_session_resource_setup_request);
+
+    if (initial_pdu_session) {
+      initial_pdu_session = false;
+
+      // check that the Bearer Context Setup was sent to the CU-UP
+      ASSERT_EQ(e1ap_gw.last_tx_pdus(0).back().pdu.type(), asn1::e1ap::e1ap_pdu_c::types_opts::options::init_msg);
+      ASSERT_EQ(e1ap_gw.last_tx_pdus(0).back().pdu.init_msg().value.type().value,
+                asn1::e1ap::e1ap_elem_procs_o::init_msg_c::types_opts::bearer_context_setup_request);
+
+      // Inject Bearer Context Setup Response
+      e1ap_message bearer_context_setup_resp =
+          generate_bearer_context_setup_response(cu_cp_ue_e1ap_id, cu_up_ue_e1ap_id);
+      e1ap_gw.get_cu_up(0).on_new_message(bearer_context_setup_resp);
+    } else {
+      // check that the Bearer Context Modification was sent to the CU-UP
+      ASSERT_EQ(e1ap_gw.last_tx_pdus(0).back().pdu.type(), asn1::e1ap::e1ap_pdu_c::types_opts::options::init_msg);
+      ASSERT_EQ(e1ap_gw.last_tx_pdus(0).back().pdu.init_msg().value.type().value,
+                asn1::e1ap::e1ap_elem_procs_o::init_msg_c::types_opts::bearer_context_mod_request);
+      // Inject Bearer Context Modification Response
+      e1ap_message bearer_context_mod_resp =
+          generate_bearer_context_modification_response(cu_cp_ue_e1ap_id, cu_up_ue_e1ap_id);
+      e1ap_gw.get_cu_up(0).on_new_message(bearer_context_mod_resp);
+    }
+
+    // check that the UE Context Modification Request was sent to the DU
+    ASSERT_EQ(f1c_gw.last_tx_pdus(0).back().pdu.type(), asn1::f1ap::f1ap_pdu_c::types_opts::options::init_msg);
+    ASSERT_EQ(f1c_gw.last_tx_pdus(0).back().pdu.init_msg().value.type().value,
+              asn1::f1ap::f1ap_elem_procs_o::init_msg_c::types_opts::ue_context_mod_request);
+
+    // Inject UE Context Modification Response
+    f1ap_message ue_context_mod_resp = generate_ue_context_modification_response(cu_ue_id, du_ue_id);
+    f1c_gw.get_du(du_index).on_new_message(ue_context_mod_resp);
+
+    // check that the Bearer Context Modification was sent to the CU-UP
+    ASSERT_EQ(e1ap_gw.last_tx_pdus(0).back().pdu.type(), asn1::e1ap::e1ap_pdu_c::types_opts::options::init_msg);
+    ASSERT_EQ(e1ap_gw.last_tx_pdus(0).back().pdu.init_msg().value.type().value,
+              asn1::e1ap::e1ap_elem_procs_o::init_msg_c::types_opts::bearer_context_mod_request);
+
+    // check that the UE Context Modification Request contains the UE capabilities
+    ASSERT_TRUE(f1c_gw.last_tx_pdus(0).back().pdu.init_msg().value.ue_context_mod_request()->cu_to_du_rrc_info_present);
+    ASSERT_NE(f1c_gw.last_tx_pdus(0)
+                  .back()
+                  .pdu.init_msg()
+                  .value.ue_context_mod_request()
+                  ->cu_to_du_rrc_info.ue_cap_rat_container_list.size(),
+              0U);
+
+    // Inject Bearer Context Modification Response
+    e1ap_message bearer_context_mod_resp =
+        generate_bearer_context_modification_response(cu_cp_ue_e1ap_id, cu_up_ue_e1ap_id);
+    e1ap_gw.get_cu_up(0).on_new_message(bearer_context_mod_resp);
+
+    // check that the RRC Reconfiguration was sent to the DU
+    ASSERT_EQ(f1c_gw.last_tx_pdus(0).back().pdu.type(), asn1::f1ap::f1ap_pdu_c::types_opts::options::init_msg);
+    ASSERT_EQ(f1c_gw.last_tx_pdus(0).back().pdu.init_msg().value.type().value,
+              asn1::f1ap::f1ap_elem_procs_o::init_msg_c::types_opts::dl_rrc_msg_transfer);
+
+    // Inject RRC Reconfiguration Complete
+    f1ap_message ul_rrc_msg_transfer = generate_ul_rrc_message_transfer(
+        cu_ue_id, du_ue_id, srb_id_t::srb1, make_byte_buffer("00070e00cc6fcda5").value());
+    f1c_gw.get_du(du_index).on_new_message(ul_rrc_msg_transfer);
+
+    // check that the PDU Session Resource Setup Response was sent to the AMF
+    ASSERT_EQ(n2_gw.last_ngap_msgs.back().pdu.type(), asn1::ngap::ngap_pdu_c::types_opts::options::successful_outcome);
+    ASSERT_EQ(n2_gw.last_ngap_msgs.back().pdu.successful_outcome().value.type().value,
+              asn1::ngap::ngap_elem_procs_o::successful_outcome_c::types_opts::pdu_session_res_setup_resp);
+  }
 }
 
 void cu_cp_test::test_preamble_all_connected(du_index_t du_index, pci_t pci)
@@ -338,21 +408,22 @@ void cu_cp_test::test_preamble_ue_creation(du_index_t          du_index,
   setup_security(amf_ue_id, ran_ue_id, du_index, du_ue_id, cu_ue_id);
 }
 
-void cu_cp_test::test_preamble_ue_full_attach(du_index_t             du_index,
-                                              gnb_du_ue_f1ap_id_t    du_ue_id,
-                                              gnb_cu_ue_f1ap_id_t    cu_ue_id,
-                                              rnti_t                 crnti,
-                                              amf_ue_id_t            amf_ue_id,
-                                              ran_ue_id_t            ran_ue_id,
-                                              gnb_cu_cp_ue_e1ap_id_t cu_cp_ue_e1ap_id,
-                                              gnb_cu_up_ue_e1ap_id_t cu_up_ue_e1ap_id)
+void cu_cp_test::test_preamble_ue_full_attach(du_index_t                    du_index,
+                                              gnb_du_ue_f1ap_id_t           du_ue_id,
+                                              gnb_cu_ue_f1ap_id_t           cu_ue_id,
+                                              rnti_t                        crnti,
+                                              amf_ue_id_t                   amf_ue_id,
+                                              ran_ue_id_t                   ran_ue_id,
+                                              std::vector<pdu_session_id_t> psis_to_setup,
+                                              gnb_cu_cp_ue_e1ap_id_t        cu_cp_ue_e1ap_id,
+                                              gnb_cu_up_ue_e1ap_id_t        cu_up_ue_e1ap_id)
 {
   // Create UE
   test_preamble_ue_creation(du_index, du_ue_id, cu_ue_id, crnti, amf_ue_id, ran_ue_id);
 
   // Inject Registration Complete
   f1ap_message ul_rrc_msg_transfer = generate_ul_rrc_message_transfer(
-      cu_ue_id, du_ue_id, srb_id_t::srb1, make_byte_buffer("00043a053f015362c51680bf00218003fe6db7").value());
+      cu_ue_id, du_ue_id, srb_id_t::srb1, make_byte_buffer("00053a053f015362c51680bf00218086b09a5b").value());
   f1c_gw.get_du(du_index).on_new_message(ul_rrc_msg_transfer);
 
   // Inject PDU Session Establishment Request
@@ -360,8 +431,8 @@ void cu_cp_test::test_preamble_ue_full_attach(du_index_t             du_index,
       cu_ue_id,
       du_ue_id,
       srb_id_t::srb1,
-      make_byte_buffer("00053a253f011ffa9203013f0033808018970080e0ffffc9d8bd8013404010880080000840830000000041830000000"
-                       "00000800001800005000006000006800008800900c092838339b939b0b837002c98dcab")
+      make_byte_buffer("00063a253f011ffa9203013f0033808018970080e0ffffc9d8bd8013404010880080000840830000000041830000000"
+                       "00000800001800005000006000006800008800900c092838339b939b0b83700e03a21bb")
           .value());
   f1c_gw.get_du(du_index).on_new_message(ul_rrc_msg_transfer);
 
@@ -372,75 +443,8 @@ void cu_cp_test::test_preamble_ue_full_attach(du_index_t             du_index,
       make_byte_buffer("7e0205545bfc027e0054430f90004f00700065006e00350047005346004732800131235200490100").value());
   cu_cp_obj->get_ngap_message_handler().handle_message(dl_nas_transport_msg);
 
-  // Inject PDU Session Resource Setup Request
-  ngap_message pdu_session_resource_setup_request =
-      generate_valid_pdu_session_resource_setup_request_message(amf_ue_id, ran_ue_id, uint_to_pdu_session_id(1));
-  cu_cp_obj->get_ngap_message_handler().handle_message(pdu_session_resource_setup_request);
-
-  // check that the UE capability enquiry was sent to the DU
-  ASSERT_EQ(f1c_gw.last_tx_pdus(0).back().pdu.type(), asn1::f1ap::f1ap_pdu_c::types_opts::options::init_msg);
-  ASSERT_EQ(f1c_gw.last_tx_pdus(0).back().pdu.init_msg().value.type().value,
-            asn1::f1ap::f1ap_elem_procs_o::init_msg_c::types_opts::dl_rrc_msg_transfer);
-
-  // Inject UE capability info
-  ul_rrc_msg_transfer = generate_ul_rrc_message_transfer(
-      cu_ue_id,
-      du_ue_id,
-      srb_id_t::srb1,
-      make_byte_buffer("00064c821930680ce811d1968097e340e1480005824c5c00060fc2c00637fe002e00131401a0000000880058d006007"
-                       "a071e439f0000240400e0300000000100186c0000700809df0000000000000103a0002000012cb2800281c50f000700"
-                       "0f00000004008010240a00126cc3c6")
-          .value());
-  f1c_gw.get_du(du_index).on_new_message(ul_rrc_msg_transfer);
-
-  // check that the Bearer Context Setup was sent to the CU-UP
-  ASSERT_EQ(e1ap_gw.last_tx_pdus(0).back().pdu.type(), asn1::e1ap::e1ap_pdu_c::types_opts::options::init_msg);
-  ASSERT_EQ(e1ap_gw.last_tx_pdus(0).back().pdu.init_msg().value.type().value,
-            asn1::e1ap::e1ap_elem_procs_o::init_msg_c::types_opts::bearer_context_setup_request);
-
-  // Inject Bearer Context Setup Response
-  e1ap_message bearer_context_setup_resp = generate_bearer_context_setup_response(cu_cp_ue_e1ap_id, cu_up_ue_e1ap_id);
-  cu_cp_obj->get_e1_handler()
-      .get_cu_up(uint_to_cu_up_index(0))
-      .get_message_handler()
-      .handle_message(bearer_context_setup_resp);
-
-  // check that the UE Context Modification Request was sent to the DU
-  ASSERT_EQ(f1c_gw.last_tx_pdus(0).back().pdu.type(), asn1::f1ap::f1ap_pdu_c::types_opts::options::init_msg);
-  ASSERT_EQ(f1c_gw.last_tx_pdus(0).back().pdu.init_msg().value.type().value,
-            asn1::f1ap::f1ap_elem_procs_o::init_msg_c::types_opts::ue_context_mod_request);
-
-  // Inject UE Context Modification Response
-  f1ap_message ue_context_mod_resp = generate_ue_context_modification_response(cu_ue_id, du_ue_id);
-  f1c_gw.get_du(du_index).on_new_message(ue_context_mod_resp);
-
-  // check that the Bearer Context Modification was sent to the CU-UP
-  ASSERT_EQ(e1ap_gw.last_tx_pdus(0).back().pdu.type(), asn1::e1ap::e1ap_pdu_c::types_opts::options::init_msg);
-  ASSERT_EQ(e1ap_gw.last_tx_pdus(0).back().pdu.init_msg().value.type().value,
-            asn1::e1ap::e1ap_elem_procs_o::init_msg_c::types_opts::bearer_context_mod_request);
-
-  // Inject Bearer Context Modification Response
-  e1ap_message bearer_context_mod_resp =
-      generate_bearer_context_modification_response(cu_cp_ue_e1ap_id, cu_up_ue_e1ap_id);
-  cu_cp_obj->get_e1_handler()
-      .get_cu_up(uint_to_cu_up_index(0))
-      .get_message_handler()
-      .handle_message(bearer_context_mod_resp);
-
-  // check that the RRC Reconfiguration was sent to the DU
-  ASSERT_EQ(f1c_gw.last_tx_pdus(0).back().pdu.type(), asn1::f1ap::f1ap_pdu_c::types_opts::options::init_msg);
-  ASSERT_EQ(f1c_gw.last_tx_pdus(0).back().pdu.init_msg().value.type().value,
-            asn1::f1ap::f1ap_elem_procs_o::init_msg_c::types_opts::dl_rrc_msg_transfer);
-
-  // Inject RRC Reconfiguration Complete
-  ul_rrc_msg_transfer = generate_ul_rrc_message_transfer(
-      cu_ue_id, du_ue_id, srb_id_t::srb1, make_byte_buffer("00070e00cc6fcda5").value());
-  f1c_gw.get_du(du_index).on_new_message(ul_rrc_msg_transfer);
-
-  // check that the PDU Session Resource Setup Response was sent to the AMF
-  ASSERT_EQ(n2_gw.last_ngap_msgs.back().pdu.type(), asn1::ngap::ngap_pdu_c::types_opts::options::successful_outcome);
-  ASSERT_EQ(n2_gw.last_ngap_msgs.back().pdu.successful_outcome().value.type().value,
-            asn1::ngap::ngap_elem_procs_o::successful_outcome_c::types_opts::pdu_session_res_setup_resp);
+  add_pdu_sessions(
+      std::move(psis_to_setup), du_index, du_ue_id, cu_ue_id, amf_ue_id, ran_ue_id, cu_cp_ue_e1ap_id, cu_up_ue_e1ap_id);
 }
 
 bool cu_cp_test::check_minimal_paging_result()

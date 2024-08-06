@@ -89,7 +89,7 @@ class resource_grid_dummy : public resource_grid
   {
   public:
     void
-    map(const re_buffer_reader& input, const re_pattern& pattern, const precoding_configuration& precoding) override
+    map(const re_buffer_reader<>& input, const re_pattern& pattern, const precoding_configuration& precoding) override
     {
     }
 
@@ -118,8 +118,18 @@ class resource_grid_dummy : public resource_grid
       return {};
     }
 
+    span<const cbf16_t> put(unsigned                            port,
+                            unsigned                            l,
+                            unsigned                            k_init,
+                            const bounded_bitset<NRE * MAX_RB>& mask,
+                            span<const cbf16_t>                 symbols) override
+    {
+      return {};
+    }
+
     void put(unsigned port, unsigned l, unsigned k_init, span<const cf_t> symbols) override {}
-    void put(unsigned port, unsigned l, unsigned k_init, unsigned stride, span<const cf_t> symbols) override {}
+    void put(unsigned port, unsigned l, unsigned k_init, unsigned stride, span<const cbf16_t> symbols) override {}
+    span<cbf16_t> get_view(unsigned port, unsigned l) override { return {}; }
   };
 
   class resource_grid_reader_dummy : public resource_grid_reader

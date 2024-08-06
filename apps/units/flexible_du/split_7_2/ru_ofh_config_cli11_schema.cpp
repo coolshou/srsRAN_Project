@@ -283,6 +283,14 @@ static void configure_cli11_ofh_threads_args(CLI::App& app, ru_ofh_unit_expert_t
 
 static void configure_cli11_expert_execution_args(CLI::App& app, ru_ofh_unit_expert_execution_config& config)
 {
+  // Affinity section.
+  CLI::App* affinities_subcmd = add_subcommand(app, "affinities", "gNB CPU affinities configuration")->configurable();
+  add_option_function<std::string>(
+      *affinities_subcmd,
+      "--ru_timing_cpu",
+      [&config](const std::string& value) { parse_affinity_mask(config.ru_timing_cpu, value, "ru_timing_cpu"); },
+      "CPU used for timing in the Radio Unit");
+
   // Threads section.
   CLI::App* threads_subcmd = add_subcommand(app, "threads", "Threads configuration")->configurable();
 
@@ -340,8 +348,10 @@ void srsran::configure_cli11_with_ru_ofh_config_schema(CLI::App& app, ru_ofh_uni
 static void manage_hal_optional(CLI::App& app, std::optional<ru_ofh_unit_hal_config>& hal_config)
 {
   // Clean the HAL optional.
-  if (app.get_subcommand("hal")->count_all() == 0) {
+  if (auto subcmd = app.get_subcommand("hal"); subcmd->count_all() == 0) {
     hal_config.reset();
+    // As HAL configuration is optional, disable the command when it is not present in the configuration.
+    subcmd->disabled();
   }
 }
 

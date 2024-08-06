@@ -225,7 +225,6 @@ std::vector<du_cell_config> srsran::generate_du_cell_config(const du_high_unit_c
   std::vector<du_cell_config> out_cfg;
   out_cfg.reserve(config.cells_cfg.size());
 
-  unsigned cell_id = 0;
   for (const auto& cell : config.cells_cfg) {
     cell_config_builder_params           param;
     const du_high_unit_base_cell_config& base_cell = cell.cell;
@@ -290,7 +289,7 @@ std::vector<du_cell_config> srsran::generate_du_cell_config(const du_high_unit_c
 
     // Set the rest of the parameters.
     out_cell.nr_cgi.plmn_id   = plmn_identity::parse(base_cell.plmn).value();
-    out_cell.nr_cgi.nci       = nr_cell_identity::create(config.gnb_id, cell_id).value();
+    out_cell.nr_cgi.nci       = nr_cell_identity::create(config.gnb_id, base_cell.sector_id.value()).value();
     out_cell.tac              = base_cell.tac;
     out_cell.searchspace0_idx = param.search_space0_index;
 
@@ -433,6 +432,8 @@ std::vector<du_cell_config> srsran::generate_du_cell_config(const du_high_unit_c
       out_cell.ul_cfg_common.init_ul_bwp.pucch_cfg_common.emplace();
     }
     out_cell.ul_cfg_common.init_ul_bwp.pucch_cfg_common.value().p0_nominal = base_cell.pucch_cfg.p0_nominal;
+    out_cell.ul_cfg_common.init_ul_bwp.pucch_cfg_common.value().pucch_resource_common =
+        base_cell.pucch_cfg.pucch_resource_common;
 
     // Common PDCCH config.
     search_space_configuration& ss1_cfg = out_cell.dl_cfg_common.init_dl_bwp.pdcch_common.search_spaces.back();
@@ -518,20 +519,24 @@ std::vector<du_cell_config> srsran::generate_du_cell_config(const du_high_unit_c
     // Parameters for PUCCH-Config builder (these parameters will be used later on to generate the PUCCH resources).
     pucch_builder_params&            du_pucch_cfg   = out_cell.pucch_cfg;
     const du_high_unit_pucch_config& user_pucch_cfg = base_cell.pucch_cfg;
-    du_pucch_cfg.nof_ue_pucch_f1_res_harq           = user_pucch_cfg.nof_ue_pucch_f1_res_harq;
+    du_pucch_cfg.nof_ue_pucch_f0_or_f1_res_harq     = user_pucch_cfg.nof_ue_pucch_f0_or_f1_res_harq;
     du_pucch_cfg.nof_ue_pucch_f2_res_harq           = user_pucch_cfg.nof_ue_pucch_f2_res_harq;
     du_pucch_cfg.nof_cell_harq_pucch_res_sets       = user_pucch_cfg.nof_cell_harq_pucch_sets;
     du_pucch_cfg.nof_sr_resources                   = user_pucch_cfg.nof_cell_sr_resources;
     du_pucch_cfg.nof_csi_resources                  = user_pucch_cfg.nof_cell_csi_resources;
-    du_pucch_cfg.f1_params.nof_symbols              = user_pucch_cfg.f1_nof_symbols;
-    du_pucch_cfg.f1_params.occ_supported            = user_pucch_cfg.f1_enable_occ;
-    du_pucch_cfg.f1_params.nof_cyc_shifts           = static_cast<nof_cyclic_shifts>(user_pucch_cfg.nof_cyclic_shift);
-    du_pucch_cfg.f1_params.intraslot_freq_hopping   = user_pucch_cfg.f1_intraslot_freq_hopping;
-    du_pucch_cfg.f2_params.nof_symbols              = user_pucch_cfg.f2_nof_symbols;
-    du_pucch_cfg.f2_params.max_code_rate            = user_pucch_cfg.max_code_rate;
-    du_pucch_cfg.f2_params.max_nof_rbs              = user_pucch_cfg.f2_max_nof_rbs;
-    du_pucch_cfg.f2_params.intraslot_freq_hopping   = user_pucch_cfg.f2_intraslot_freq_hopping;
-    du_pucch_cfg.f2_params.max_payload_bits         = user_pucch_cfg.max_payload_bits;
+    if (user_pucch_cfg.use_format_0) {
+      auto& f0_params                  = du_pucch_cfg.f0_or_f1_params.emplace<pucch_f0_params>();
+      f0_params.intraslot_freq_hopping = user_pucch_cfg.f0_intraslot_freq_hopping;
+    } else {
+      auto& f1_params                  = du_pucch_cfg.f0_or_f1_params.emplace<pucch_f1_params>();
+      f1_params.occ_supported          = user_pucch_cfg.f1_enable_occ;
+      f1_params.nof_cyc_shifts         = static_cast<nof_cyclic_shifts>(user_pucch_cfg.nof_cyclic_shift);
+      f1_params.intraslot_freq_hopping = user_pucch_cfg.f1_intraslot_freq_hopping;
+    }
+    du_pucch_cfg.f2_params.max_code_rate          = user_pucch_cfg.max_code_rate;
+    du_pucch_cfg.f2_params.max_nof_rbs            = user_pucch_cfg.f2_max_nof_rbs;
+    du_pucch_cfg.f2_params.intraslot_freq_hopping = user_pucch_cfg.f2_intraslot_freq_hopping;
+    du_pucch_cfg.f2_params.max_payload_bits       = user_pucch_cfg.max_payload_bits;
 
     // Parameters for PUSCH-Config.
     if (not out_cell.ue_ded_serv_cell_cfg.ul_config.has_value()) {
@@ -610,6 +615,10 @@ std::vector<du_cell_config> srsran::generate_du_cell_config(const du_high_unit_c
           du_pucch_cfg, out_cell.ul_cfg_common.init_ul_bwp.generic_params.crbs.length(), is_long_prach);
     }
 
+    // Slicing configuration.
+    std::vector<std::string> cell_plmns{base_cell.plmn};
+    out_cell.rrm_policy_members = generate_du_slicing_rrm_policy_config(cell_plmns, base_cell.slice_cfg, nof_crbs);
+
     logger.info(
         "SSB derived parameters for cell: {}, band: {}, dl_arfcn:{}, crbs: {} scs:{}, ssb_scs:{}:\n\t - SSB offset "
         "pointA:{} \n\t - k_SSB:{} \n\t - SSB arfcn:{} \n\t - Coreset index:{} \n\t - Searchspace index:{}",
@@ -629,7 +638,6 @@ std::vector<du_cell_config> srsran::generate_du_cell_config(const du_high_unit_c
     if (!error) {
       report_error("Invalid configuration DU cell detected.\n> {}\n", error.error());
     }
-    ++cell_id;
   }
 
   return out_cfg;
@@ -673,6 +681,24 @@ static mac_lc_config generate_mac_lc_config(const du_high_unit_mac_lc_config& in
   out_mac.lc_sr_delay_applied = false;
   out_mac.sr_id               = uint_to_sched_req_id(0);
   return out_mac;
+}
+
+std::vector<slice_rrm_policy_config>
+srsran::generate_du_slicing_rrm_policy_config(span<const std::string>                    plmns,
+                                              span<const du_high_unit_cell_slice_config> slice_cfg,
+                                              unsigned                                   nof_cell_crbs)
+{
+  std::vector<slice_rrm_policy_config> rrm_policy_cfgs;
+  for (const auto& plmn : plmns) {
+    for (const auto& cfg : slice_cfg) {
+      rrm_policy_cfgs.emplace_back();
+      rrm_policy_cfgs.back().rrc_member.s_nssai = cfg.s_nssai;
+      rrm_policy_cfgs.back().rrc_member.plmn_id = plmn;
+      rrm_policy_cfgs.back().min_prb            = (nof_cell_crbs * cfg.sched_cfg.min_prb_policy_ratio) / 100;
+      rrm_policy_cfgs.back().max_prb            = (nof_cell_crbs * cfg.sched_cfg.max_prb_policy_ratio) / 100;
+    }
+  }
+  return rrm_policy_cfgs;
 }
 
 std::map<five_qi_t, du_qos_config> srsran::generate_du_qos_config(const du_high_unit_config& config)

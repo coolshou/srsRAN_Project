@@ -106,7 +106,16 @@ e1ap_cu_cp_impl::handle_bearer_context_setup_request(const e1ap_bearer_context_s
   }
 
   // add new e1ap_ue_context
-  ue_ctxt_list.add_ue(request.ue_index, cu_cp_ue_e1ap_id);
+  if (ue_ctxt_list.add_ue(request.ue_index, cu_cp_ue_e1ap_id) == nullptr) {
+    logger.warning("Bearer Context Setup failed. Cause: bearer context already exists");
+    return launch_async([](coro_context<async_task<e1ap_bearer_context_setup_response>>& ctx) mutable {
+      CORO_BEGIN(ctx);
+      e1ap_bearer_context_setup_response res;
+      res.success = false;
+      CORO_RETURN(res);
+    });
+  }
+
   e1ap_ue_context& ue_ctxt = ue_ctxt_list[cu_cp_ue_e1ap_id];
 
   e1ap_message e1ap_msg;
@@ -174,7 +183,7 @@ e1ap_cu_cp_impl::handle_bearer_context_release_command(const e1ap_bearer_context
 
   fill_asn1_bearer_context_release_command(bearer_context_release_cmd, command);
 
-  return launch_async<bearer_context_release_procedure>(e1ap_msg, ue_ctxt.bearer_ev_mng, pdu_notifier, ue_ctxt.logger);
+  return launch_async<bearer_context_release_procedure>(e1ap_msg, command.ue_index, ue_ctxt_list, pdu_notifier);
 }
 
 void e1ap_cu_cp_impl::handle_message(const e1ap_message& msg)
@@ -295,6 +304,16 @@ void e1ap_cu_cp_impl::handle_successful_outcome(const asn1::e1ap::successful_out
 {
   using successful_types                         = asn1::e1ap::e1ap_elem_procs_o::successful_outcome_c::types_opts;
   std::optional<gnb_cu_cp_ue_e1ap_id_t> cu_ue_id = get_gnb_cu_cp_ue_e1ap_id(outcome);
+
+  if (cu_ue_id.has_value()) {
+    if (not ue_ctxt_list.contains(*cu_ue_id)) {
+      logger.warning("cu_ue={}: Discarding received \"{}\". Cause: UE was not found.",
+                     *cu_ue_id,
+                     outcome.value.type().to_string());
+      return;
+    }
+  }
+
   switch (outcome.value.type().value) {
     case successful_types::bearer_context_setup_resp: {
       ue_ctxt_list[*cu_ue_id].bearer_ev_mng.context_setup_outcome.set(outcome.value.bearer_context_setup_resp());
@@ -325,6 +344,16 @@ void e1ap_cu_cp_impl::handle_unsuccessful_outcome(const asn1::e1ap::unsuccessful
 {
   using unsuccessful_types                       = asn1::e1ap::e1ap_elem_procs_o::unsuccessful_outcome_c::types_opts;
   std::optional<gnb_cu_cp_ue_e1ap_id_t> cu_ue_id = get_gnb_cu_cp_ue_e1ap_id(outcome);
+
+  if (cu_ue_id.has_value()) {
+    if (not ue_ctxt_list.contains(*cu_ue_id)) {
+      logger.warning("cu_ue={}: Discarding received \"{}\". Cause: UE was not found.",
+                     *cu_ue_id,
+                     outcome.value.type().to_string());
+      return;
+    }
+  }
+
   switch (outcome.value.type().value) {
     case unsuccessful_types::bearer_context_setup_fail: {
       ue_ctxt_list[*cu_ue_id].bearer_ev_mng.context_setup_outcome.set(outcome.value.bearer_context_setup_fail());

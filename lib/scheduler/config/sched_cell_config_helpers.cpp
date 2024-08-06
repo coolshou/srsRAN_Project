@@ -33,11 +33,11 @@ srsran::config_helpers::build_pucch_guardbands_list(const pucch_builder_params& 
 {
   // Compute the cell PUCCH resource list, depending on which parameter that has been passed.
   std::vector<pucch_resource> res_list = srs_du::generate_cell_pucch_res_list(
-      user_params.nof_ue_pucch_f1_res_harq.to_uint() * user_params.nof_cell_harq_pucch_res_sets +
+      user_params.nof_ue_pucch_f0_or_f1_res_harq.to_uint() * user_params.nof_cell_harq_pucch_res_sets +
           user_params.nof_sr_resources,
       user_params.nof_ue_pucch_f2_res_harq.to_uint() * user_params.nof_cell_harq_pucch_res_sets +
           user_params.nof_csi_resources,
-      user_params.f1_params,
+      user_params.f0_or_f1_params,
       user_params.f2_params,
       bwp_size);
 
@@ -50,19 +50,28 @@ srsran::config_helpers::build_pucch_guardbands_list(const pucch_builder_params& 
   };
 
   for (const auto& pucch_res : res_list) {
-    srsran_assert(std::holds_alternative<pucch_format_1_cfg>(pucch_res.format_params) or
+    srsran_assert(std::holds_alternative<pucch_format_0_cfg>(pucch_res.format_params) or
+                      std::holds_alternative<pucch_format_1_cfg>(pucch_res.format_params) or
                       std::holds_alternative<pucch_format_2_3_cfg>(pucch_res.format_params),
-                  "Only PUCCH format 1 and 2 are currently supported");
-    const unsigned starting_sym = std::holds_alternative<pucch_format_1_cfg>(pucch_res.format_params)
-                                      ? std::get<pucch_format_1_cfg>(pucch_res.format_params).starting_sym_idx
-                                      : std::get<pucch_format_2_3_cfg>(pucch_res.format_params).starting_sym_idx;
-    const unsigned nof_symbols  = std::holds_alternative<pucch_format_1_cfg>(pucch_res.format_params)
-                                      ? std::get<pucch_format_1_cfg>(pucch_res.format_params).nof_symbols
-                                      : std::get<pucch_format_2_3_cfg>(pucch_res.format_params).nof_symbols;
+                  "Only PUCCH format 0, 1 and 2 are currently supported");
+
+    unsigned starting_sym = 0;
+    unsigned nof_symbols  = 0;
+    if (std::holds_alternative<pucch_format_0_cfg>(pucch_res.format_params)) {
+      starting_sym = std::get<pucch_format_0_cfg>(pucch_res.format_params).starting_sym_idx;
+      nof_symbols  = std::get<pucch_format_0_cfg>(pucch_res.format_params).nof_symbols;
+    } else if (std::holds_alternative<pucch_format_1_cfg>(pucch_res.format_params)) {
+      starting_sym = std::get<pucch_format_1_cfg>(pucch_res.format_params).starting_sym_idx;
+      nof_symbols  = std::get<pucch_format_1_cfg>(pucch_res.format_params).nof_symbols;
+    } else {
+      starting_sym = std::get<pucch_format_2_3_cfg>(pucch_res.format_params).starting_sym_idx;
+      nof_symbols  = std::get<pucch_format_2_3_cfg>(pucch_res.format_params).nof_symbols;
+    }
+
     // For PUCCH format 1, the resource has 1 PRB only.
-    const unsigned nof_prbs = std::holds_alternative<pucch_format_1_cfg>(pucch_res.format_params)
-                                  ? 1U
-                                  : std::get<pucch_format_2_3_cfg>(pucch_res.format_params).nof_prbs;
+    const unsigned nof_prbs = std::holds_alternative<pucch_format_2_3_cfg>(pucch_res.format_params)
+                                  ? std::get<pucch_format_2_3_cfg>(pucch_res.format_params).nof_prbs
+                                  : 1U;
 
     // In the following, \c res_no_freq_hop contains the PRBs/symbols of the PUCCH resource with no frequency hopping,
     // or, if frequency hopping is enabled, the PRBs/symbols of the first hop.

@@ -83,7 +83,7 @@ void ue_context_setup_procedure::operator()(coro_context<async_task<f1ap_ue_cont
   }
 
   // Subscribe to respective publisher to receive UE CONTEXT SETUP RESPONSE/FAILURE message.
-  transaction_sink.subscribe_to(ue_ctxt->ev_mng.context_setup_outcome, f1ap_cfg.ue_context_setup_timeout);
+  transaction_sink.subscribe_to(ue_ctxt->ev_mng.context_setup_outcome, f1ap_cfg.proc_timeout);
 
   // Send command to DU.
   send_ue_context_setup_request();
@@ -189,6 +189,8 @@ f1ap_ue_context_setup_response ue_context_setup_procedure::handle_procedure_resu
 
     // Create UE RRC context in CU-CP, if required.
     resp.success = create_ue_rrc_context(resp);
+
+    logger.debug("ue={} proc=\"{}\": finished successfully", request.ue_index, name());
 
     return resp;
   }

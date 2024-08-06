@@ -112,6 +112,7 @@ private:
   task_execution_manager exec_mng;
 
   os_sched_affinity_manager low_prio_affinity_mng;
+  os_sched_affinity_bitmask ru_timing_mask;
 
   /// CPU affinity bitmask manager per cell.
   std::vector<os_sched_affinity_manager> affinity_mng;
@@ -137,7 +138,8 @@ private:
                                                                  const cu_up_unit_pcap_config&     cu_up_pcaps,
                                                                  const du_high_unit_pcap_config&   du_pcaps,
                                                                  unsigned                          nof_cells,
-                                                                 unsigned                          gtpu_queue_size);
+                                                                 unsigned                          gtpu_queue_size,
+                                                                 bool                              rt_mode);
   void                                 associate_low_prio_executors();
 
   std::vector<execution_config_helper::single_worker> create_fapi_workers(unsigned nof_cells);

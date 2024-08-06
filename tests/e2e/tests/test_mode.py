@@ -96,7 +96,6 @@ def test_ue(
                 "templates": {
                     "cu": str(Path(__file__).joinpath("../test_mode/config_ue.yml").resolve()),
                     "du": tmp_file.name,
-                    "ru": tmp_file.name,
                 },
             },
         }
@@ -127,9 +126,10 @@ def test_ue(
                 fivegc_definition=fivegc_def,
                 start_info=StartInfo(
                     timeout=gnb_startup_timeout,
-                    post_commands=f"cell_cfg --nof_antennas_dl {nof_ant} --nof_antennas_ul {nof_ant}"
-                    + " "
-                    + extra_config,
+                    post_commands=(
+                        "",
+                        f"cell_cfg --nof_antennas_dl {nof_ant} --nof_antennas_ul {nof_ant}" + " " + extra_config,
+                    ),
                 ),
             )
         )
@@ -184,7 +184,7 @@ def test_ru_not_crash(
     Run gnb with sanitizers in test mode ru dummy.
     It ignores warnings and KOs, so it will fail if the gnb+sanitizer fails
     """
-    _test_ru(retina_manager, retina_data, gnb, warning_as_errors=False, fail_if_kos=False)
+    _test_ru(retina_manager, retina_data, gnb, gnb_stop_timeout=150, warning_as_errors=False, fail_if_kos=False)
 
 
 # pylint: disable=too-many-arguments
@@ -241,7 +241,7 @@ def _test_ru(
                 fivegc_definition=FiveGCDefinition(amf_ip=gnb_def.zmq_ip, amf_port=38412),
                 start_info=StartInfo(
                     timeout=gnb_startup_timeout,
-                    post_commands="amf --no_core 1",
+                    post_commands=("amf --no_core 1",),
                 ),
             )
         )

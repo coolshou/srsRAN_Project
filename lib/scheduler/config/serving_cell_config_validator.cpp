@@ -27,6 +27,7 @@
 #include "srsran/ran/pucch/pucch_info.h"
 #include "srsran/scheduler/sched_consts.h"
 #include "srsran/support/config/validator_helpers.h"
+#include <numeric>
 
 using namespace srsran;
 
@@ -34,6 +35,21 @@ using namespace srsran;
   if (std::find_if(id_list.begin(), id_list.end(), cond_lambda) == id_list.end()) {                                    \
     return make_unexpected(fmt::format(__VA_ARGS__));                                                                  \
   }
+
+static bool
+csi_offset_colliding_with_sr(unsigned sr_offset, unsigned csi_offset, unsigned sr_period, unsigned csi_period)
+{
+  unsigned lcm_csi_sr_period = std::lcm(sr_period, csi_period);
+  for (unsigned csi_off = csi_offset; csi_off < lcm_csi_sr_period; csi_off += csi_period) {
+    for (unsigned sr_off = sr_offset; sr_off < lcm_csi_sr_period; sr_off += sr_period) {
+      if (csi_off == sr_off) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+};
 
 validator_result srsran::config_validators::validate_pdcch_cfg(const serving_cell_config& ue_cell_cfg,
                                                                const dl_config_common&    dl_cfg_common)
@@ -144,13 +160,15 @@ validator_result srsran::config_validators::validate_pucch_cfg(const serving_cel
                         [res_id](const pucch_resource& res) { return res.res_id.cell_res_id == res_id; });
   };
 
+  // NOTE: No need to check this for Format 0, as this struct doesn't exist for F0.
   VERIFY(pucch_cfg.format_1_common_param.has_value(), "Missing PUCCH-format1 parameters in PUCCH-Config");
   VERIFY(pucch_cfg.format_2_common_param.has_value(), "Missing PUCCH-format2 parameters in PUCCH-Config");
 
   // Verify that the PUCCH resources IDs of each PUCCH resource set point at a corresponding item in the PUCCH reource
   // list.
   VERIFY(pucch_cfg.pucch_res_set.size() >= 2, "At least 2 PUCCH resource sets need to be configured in PUCCH-Config");
-  VERIFY(pucch_cfg.pucch_res_set[0].pucch_res_set_id == 0 and pucch_cfg.pucch_res_set[1].pucch_res_set_id == 1,
+  VERIFY(pucch_cfg.pucch_res_set[0].pucch_res_set_id == pucch_res_set_idx::set_0 and
+             pucch_cfg.pucch_res_set[1].pucch_res_set_id == pucch_res_set_idx::set_1,
          "PUCCH resouce sets 0 and 1 are expected to have PUCCH-ResourceSetId 0 and 1, respectively");
   VERIFY((not pucch_cfg.pucch_res_set[0].pucch_res_id_list.empty()) and
              (not pucch_cfg.pucch_res_set[1].pucch_res_id_list.empty()),
@@ -178,11 +196,22 @@ validator_result srsran::config_validators::validate_pucch_cfg(const serving_cel
            res.res_id.cell_res_id);
   }
 
+  // Verify that PUCCH Format 0 and Format 1 aren't both present in the UE configuration.
+  bool has_format_0 = false;
+  bool has_format_1 = false;
+  for (auto res : pucch_cfg.pucch_res_list) {
+    has_format_0 = has_format_0 or res.format == pucch_format::FORMAT_0;
+    has_format_1 = has_format_1 or res.format == pucch_format::FORMAT_1;
+  }
+  VERIFY(not(has_format_0 and has_format_1),
+         "Only PUCCH Format 0 or Format 1 can be configured in a UE configuration, not both.");
+
   // Check PUCCH Formats for each PUCCH Resource Set.
   for (auto res_idx : pucch_cfg.pucch_res_set[0].pucch_res_id_list) {
     const auto* pucch_res_it = get_pucch_resource_with_id(res_idx.cell_res_id);
-    VERIFY(pucch_cfg.pucch_res_list.end() != pucch_res_it and pucch_res_it->format == pucch_format::FORMAT_1,
-           "Only PUCCH Resource Format 1 expected in PUCCH resource set 0.");
+    VERIFY(pucch_cfg.pucch_res_list.end() != pucch_res_it and
+               (pucch_res_it->format == pucch_format::FORMAT_0 or pucch_res_it->format == pucch_format::FORMAT_1),
+           "Only PUCCH Resource Format 0 or Format 1 expected in PUCCH resource set 0.");
   }
   for (auto res_idx : pucch_cfg.pucch_res_set[1].pucch_res_id_list) {
     const auto* pucch_res_it = get_pucch_resource_with_id(res_idx.cell_res_id);
@@ -201,7 +230,8 @@ validator_result srsran::config_validators::validate_pucch_cfg(const serving_cel
   VERIFY(pucch_cfg.pucch_res_list.end() != pucch_res_sr,
          "PUCCH cell res. id={} for SR could not be found in PUCCH resource list",
          pucch_cfg.sr_res_list.front().pucch_res_id.cell_res_id);
-  VERIFY(pucch_res_sr->format == pucch_format::FORMAT_1, "PUCCH resource used for SR is expected to be Format 1");
+  VERIFY(pucch_res_sr->format == pucch_format::FORMAT_0 or pucch_res_sr->format == pucch_format::FORMAT_1,
+         "PUCCH resource used for SR is expected to be Format 0 or Format 1");
 
   // Verify that the PUCCH setting used for CSI report have been configured properly.
   if (ue_cell_cfg.csi_meas_cfg.has_value()) {
@@ -234,11 +264,21 @@ validator_result srsran::config_validators::validate_pucch_cfg(const serving_cel
     const auto     csi_report_cfg  = create_csi_report_configuration(ue_cell_cfg.csi_meas_cfg.value());
     const unsigned csi_report_size = get_csi_report_pucch_size(csi_report_cfg).value();
     unsigned       sr_offset       = pucch_cfg.sr_res_list.front().offset;
+    const bool     csi_sr_collision =
+        csi_offset_colliding_with_sr(sr_offset,
+                                     csi.report_slot_offset,
+                                     sr_periodicity_to_slot(pucch_cfg.sr_res_list.front().period),
+                                     csi_report_periodicity_to_uint(csi.report_slot_period));
+
+    // Verify that, with Format 0, the CSI and SR don't fall on the same slot(s).
+    if (pucch_res_sr->format == pucch_format::FORMAT_0) {
+      VERIFY(not csi_sr_collision,
+             "With PUCCH Format 0, we don't support SR opportunities falling on a CSI report slot");
+    }
+
     // If SR and CSI are reported within the same slot, 1 SR bit can be multiplexed with CSI within the same PUCCH
     // resource.
-    const unsigned csi_period    = csi_report_periodicity_to_uint(csi.report_slot_period);
-    const unsigned lowest_period = std::min(sr_periodicity_to_slot(pucch_cfg.sr_res_list.front().period), csi_period);
-    unsigned sr_bits_mplexed_with_csi = sr_offset % lowest_period != csi.report_slot_offset % lowest_period ? 0U : 1U;
+    unsigned sr_bits_mplexed_with_csi = csi_sr_collision ? 1U : 0U;
     // In the PUCCH resource for CSI, there are no HARQ-ACK bits being reported; therefore we only need to check where
     // the CSI + SR bits fit into the max payload.
     const unsigned uci_bits_pucch_resource = csi_report_size + sr_bits_mplexed_with_csi;
@@ -254,7 +294,7 @@ validator_result srsran::config_validators::validate_pucch_cfg(const serving_cel
     const unsigned uci_bits_harq_resource     = csi_report_size + harq_bits_mplexed_with_csi + sr_bits_mplexed_with_csi;
     const unsigned pucch_res_set_idx_for_f2   = 1;
     for (pucch_res_id_t res_idx : pucch_cfg.pucch_res_set[pucch_res_set_idx_for_f2].pucch_res_id_list) {
-      auto*          res_f2_it                = get_pucch_resource_with_id(res_idx.cell_res_id);
+      const auto*    res_f2_it                = get_pucch_resource_with_id(res_idx.cell_res_id);
       const auto&    harq_f2_pucch_res_params = std::get<pucch_format_2_3_cfg>(res_f2_it->format_params);
       const unsigned pucch_harq_f2_max_payload =
           get_pucch_format2_max_payload(harq_f2_pucch_res_params.nof_prbs,

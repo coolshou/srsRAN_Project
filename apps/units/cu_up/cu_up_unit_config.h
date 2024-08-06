@@ -46,11 +46,25 @@ struct cu_up_unit_upf_config {
   bool        no_core           = false;
 };
 
+/// F1-U configuration at CU_UP side
+struct cu_cp_unit_f1u_config {
+  int32_t t_notify; ///< Maximum backoff time for discard notifications from CU_UP to DU (ms)
+};
+
 /// QoS configuration.
 struct cu_up_unit_qos_config {
-  five_qi_t   five_qi       = uint_to_five_qi(9);
-  std::string mode          = "am";
-  unsigned    rlc_sdu_queue = 4096;
+  five_qi_t             five_qi       = uint_to_five_qi(9);
+  std::string           mode          = "am";
+  unsigned              rlc_sdu_queue = 4096;
+  cu_cp_unit_f1u_config f1u_cu_up;
+};
+
+struct cu_up_unit_test_mode_config {
+  bool     enabled           = false;
+  bool     integrity_enabled = true;
+  bool     ciphering_enabled = true;
+  uint16_t nea_algo          = 2;
+  uint16_t nia_algo          = 2;
 };
 
 /// CU-UP application unit configuration.
@@ -68,6 +82,8 @@ struct cu_up_unit_config {
   cu_up_unit_pcap_config pcap_cfg;
   /// QoS configuration.
   std::vector<cu_up_unit_qos_config> qos_cfg;
+  /// Test mode.
+  cu_up_unit_test_mode_config test_mode_cfg;
 };
 
 } // namespace srsran

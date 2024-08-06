@@ -41,23 +41,30 @@ using namespace srs_cu_cp;
 
 static void assert_cu_cp_configuration_valid(const cu_cp_configuration& cfg)
 {
-  srsran_assert(cfg.cu_cp_executor != nullptr, "Invalid CU-CP executor");
-  srsran_assert(cfg.n2_gw != nullptr, "Invalid N2 GW client handler");
-  srsran_assert(cfg.timers != nullptr, "Invalid timers");
+  srsran_assert(cfg.services.cu_cp_executor != nullptr, "Invalid CU-CP executor");
+  srsran_assert(cfg.services.n2_gw != nullptr, "Invalid N2 GW client handler");
+  srsran_assert(cfg.services.timers != nullptr, "Invalid timers");
 
-  report_error_if_not(cfg.max_nof_dus <= MAX_NOF_DUS, "Invalid max number of DUs");
-  report_error_if_not(cfg.max_nof_cu_ups <= MAX_NOF_CU_UPS, "Invalid max number of CU-UPs");
+  report_error_if_not(cfg.admission.max_nof_dus <= MAX_NOF_DUS, "Invalid max number of DUs");
+  report_error_if_not(cfg.admission.max_nof_cu_ups <= MAX_NOF_CU_UPS, "Invalid max number of CU-UPs");
+}
+
+ngap_configuration create_ngap_cfg(const cu_cp_configuration& cfg)
+{
+  ngap_configuration ngap_cfg;
+  ngap_cfg.gnb_id                    = cfg.node.gnb_id;
+  ngap_cfg.ran_node_name             = cfg.node.ran_node_name;
+  ngap_cfg.plmn                      = cfg.node.plmn;
+  ngap_cfg.tac                       = cfg.node.tac;
+  ngap_cfg.pdu_session_setup_timeout = cfg.ue.pdu_session_setup_timeout;
+  return ngap_cfg;
 }
 
 cu_cp_impl::cu_cp_impl(const cu_cp_configuration& config_) :
   cfg(config_),
-  ue_mng(config_.ue_config,
-         up_resource_manager_cfg{config_.rrc_config.drb_config},
-         security_manager_config{cfg.rrc_config.int_algo_pref_list, cfg.rrc_config.enc_algo_pref_list},
-         *cfg.timers,
-         *cfg.cu_cp_executor),
-  cell_meas_mng(config_.mobility_config.meas_manager_config, cell_meas_ev_notifier, ue_mng),
-  routine_mng(ue_mng, cfg.default_security_indication, logger),
+  ue_mng(cfg),
+  cell_meas_mng(cfg.mobility.meas_manager_config, cell_meas_ev_notifier, ue_mng),
+  routine_mng(ue_mng, cfg.security.default_security_indication, logger),
   du_db(du_repository_config{cfg,
                              *this,
                              get_cu_cp_ue_removal_handler(),
@@ -70,33 +77,38 @@ cu_cp_impl::cu_cp_impl(const cu_cp_configuration& config_) :
                              conn_notifier,
                              srslog::fetch_basic_logger("CU-CP")}),
   cu_up_db(cu_up_repository_config{cfg, e1ap_ev_notifier, srslog::fetch_basic_logger("CU-CP")}),
-  metrics_hdlr(std::make_unique<metrics_handler_impl>(*cfg.cu_cp_executor, *cfg.timers, ue_mng, du_db))
+  paging_handler(du_db),
+  metrics_hdlr(
+      std::make_unique<metrics_handler_impl>(*cfg.services.cu_cp_executor, *cfg.services.timers, ue_mng, du_db))
 {
   assert_cu_cp_configuration_valid(cfg);
 
   // connect event notifiers to layers
-  ngap_cu_cp_ev_notifier.connect_cu_cp(du_db, *this);
+  ngap_cu_cp_ev_notifier.connect_cu_cp(*this, paging_handler);
   mobility_manager_ev_notifier.connect_cu_cp(get_cu_cp_mobility_manager_handler());
   e1ap_ev_notifier.connect_cu_cp(get_cu_cp_e1ap_handler());
   rrc_du_cu_cp_notifier.connect_cu_cp(get_cu_cp_measurement_config_handler());
 
   // Create NGAP.
-  ngap_entity = create_ngap(
-      cfg.ngap_config, ngap_cu_cp_ev_notifier, ngap_cu_cp_ev_notifier, *cfg.n2_gw, *cfg.timers, *cfg.cu_cp_executor);
+  ngap_entity = create_ngap(create_ngap_cfg(cfg),
+                            ngap_cu_cp_ev_notifier,
+                            ngap_cu_cp_ev_notifier,
+                            *cfg.services.n2_gw,
+                            *cfg.services.timers,
+                            *cfg.services.cu_cp_executor);
   rrc_ue_ngap_notifier.connect_ngap(ngap_entity->get_ngap_nas_message_handler(),
                                     ngap_entity->get_ngap_control_message_handler());
 
   controller = std::make_unique<cu_cp_controller>(cfg,
                                                   routine_mng,
                                                   ue_mng,
-                                                  cfg.ngap_config,
                                                   ngap_entity->get_ngap_connection_manager(),
                                                   cu_up_db,
                                                   du_db,
-                                                  *cfg.cu_cp_executor);
+                                                  *cfg.services.cu_cp_executor);
   conn_notifier.connect_node_connection_handler(*controller);
 
-  mobility_mng = create_mobility_manager(cfg.mobility_config.mobility_manager_config,
+  mobility_mng = create_mobility_manager(cfg.mobility.mobility_manager_config,
                                          mobility_manager_ev_notifier,
                                          ngap_entity->get_ngap_control_message_handler(),
                                          du_db,
@@ -104,8 +116,8 @@ cu_cp_impl::cu_cp_impl(const cu_cp_configuration& config_) :
   cell_meas_ev_notifier.connect_mobility_manager(*mobility_mng);
 
   // Start statistics report timer
-  statistics_report_timer = cfg.timers->create_unique_timer(*cfg.cu_cp_executor);
-  statistics_report_timer.set(cfg.statistics_report_period,
+  statistics_report_timer = cfg.services.timers->create_unique_timer(*cfg.services.cu_cp_executor);
+  statistics_report_timer.set(cfg.metrics.statistics_report_period,
                               [this](timer_id_t /*tid*/) { on_statistics_report_timer_expired(); });
   statistics_report_timer.run();
 }
@@ -120,7 +132,7 @@ bool cu_cp_impl::start()
   std::promise<bool> p;
   std::future<bool>  fut = p.get_future();
 
-  if (not cfg.cu_cp_executor->execute([this, &p]() {
+  if (not cfg.services.cu_cp_executor->execute([this, &p]() {
         // start AMF connection procedure.
         controller->amf_connection_handler().connect_to_amf(&p);
       })) {
@@ -140,7 +152,7 @@ void cu_cp_impl::stop()
   logger.info("Stopping CU-CP...");
 
   // Shut down components from within CU-CP executor.
-  while (not cfg.cu_cp_executor->execute([this]() {
+  while (not cfg.services.cu_cp_executor->execute([this]() {
     // Stop statistics gathering.
     statistics_report_timer.stop();
   })) {
@@ -234,8 +246,10 @@ async_task<bool> cu_cp_impl::handle_rrc_reestablishment_context_modification_req
       ue_index,
       ue->get_security_manager().get_up_as_config(),
       cu_up_db.find_cu_up_processor(uint_to_cu_up_index(0))->get_e1ap_bearer_context_manager(),
-      du_db.get_du_processor(ue->get_du_index()).get_f1ap_interface().get_f1ap_ue_context_manager(),
+      du_db.get_du_processor(ue->get_du_index()).get_f1ap_handler(),
       ue->get_rrc_ue_notifier(),
+      get_cu_cp_rrc_ue_interface(),
+      ue->get_task_sched(),
       ue->get_up_resource_manager());
 }
 
@@ -384,6 +398,22 @@ bool cu_cp_impl::handle_handover_request(ue_index_t ue_index, security::security
   return ue->get_security_manager().init_security_context(sec_ctxt);
 }
 
+async_task<expected<ngap_init_context_setup_response, ngap_init_context_setup_failure>>
+cu_cp_impl::handle_new_initial_context_setup_request(const ngap_init_context_setup_request& request)
+{
+  cu_cp_ue* ue = ue_mng.find_du_ue(request.ue_index);
+  srsran_assert(ue != nullptr, "ue={}: Could not find UE", request.ue_index);
+  rrc_ue_interface* rrc_ue = rrc_du_adapters.at(ue->get_du_index()).find_rrc_ue(request.ue_index);
+  srsran_assert(rrc_ue != nullptr, "ue={}: Could not find RRC UE", request.ue_index);
+
+  return routine_mng.start_initial_context_setup_routine(request,
+                                                         *rrc_ue,
+                                                         ngap_entity->get_ngap_ue_radio_cap_management_handler(),
+                                                         ue->get_security_manager(),
+                                                         du_db.get_du_processor(ue->get_du_index()).get_f1ap_handler(),
+                                                         get_cu_cp_ngap_handler());
+}
+
 async_task<cu_cp_pdu_session_resource_setup_response>
 cu_cp_impl::handle_new_pdu_session_resource_setup_request(cu_cp_pdu_session_resource_setup_request& request)
 {
@@ -397,8 +427,10 @@ cu_cp_impl::handle_new_pdu_session_resource_setup_request(cu_cp_pdu_session_reso
       request,
       ue->get_security_manager().get_up_as_config(),
       cu_up_db.find_cu_up_processor(uint_to_cu_up_index(0))->get_e1ap_bearer_context_manager(),
-      du_db.get_du_processor(ue->get_du_index()).get_f1ap_interface().get_f1ap_ue_context_manager(),
+      du_db.get_du_processor(ue->get_du_index()).get_f1ap_handler(),
       ue->get_rrc_ue_notifier(),
+      get_cu_cp_rrc_ue_interface(),
+      ue->get_task_sched(),
       ue->get_up_resource_manager());
 }
 
@@ -414,8 +446,10 @@ cu_cp_impl::handle_new_pdu_session_resource_modify_request(const cu_cp_pdu_sessi
   return routine_mng.start_pdu_session_resource_modification_routine(
       request,
       cu_up_db.find_cu_up_processor(uint_to_cu_up_index(0))->get_e1ap_bearer_context_manager(),
-      du_db.get_du_processor(ue->get_du_index()).get_f1ap_interface().get_f1ap_ue_context_manager(),
+      du_db.get_du_processor(ue->get_du_index()).get_f1ap_handler(),
       ue->get_rrc_ue_notifier(),
+      get_cu_cp_rrc_ue_interface(),
+      ue->get_task_sched(),
       ue->get_up_resource_manager());
 }
 
@@ -431,9 +465,9 @@ cu_cp_impl::handle_new_pdu_session_resource_release_command(const cu_cp_pdu_sess
   return routine_mng.start_pdu_session_resource_release_routine(
       command,
       cu_up_db.find_cu_up_processor(uint_to_cu_up_index(0))->get_e1ap_bearer_context_manager(),
-      du_db.get_du_processor(ue->get_du_index()).get_f1ap_interface().get_f1ap_ue_context_manager(),
-      ngap_entity->get_ngap_control_message_handler(),
+      du_db.get_du_processor(ue->get_du_index()).get_f1ap_handler(),
       ue->get_rrc_ue_notifier(),
+      get_cu_cp_rrc_ue_interface(),
       ue->get_task_sched(),
       ue->get_up_resource_manager());
 }
@@ -449,11 +483,10 @@ cu_cp_impl::handle_ue_context_release_command(const cu_cp_ue_context_release_com
     e1ap_bearer_ctxt_mng = &cu_up_db.find_cu_up_processor(uint_to_cu_up_index(0))->get_e1ap_bearer_context_manager();
   }
 
-  return routine_mng.start_ue_context_release_routine(
-      command,
-      e1ap_bearer_ctxt_mng,
-      du_db.get_du_processor(ue->get_du_index()).get_f1ap_interface().get_f1ap_ue_context_manager(),
-      get_cu_cp_ue_removal_handler());
+  return routine_mng.start_ue_context_release_routine(command,
+                                                      e1ap_bearer_ctxt_mng,
+                                                      du_db.get_du_processor(ue->get_du_index()).get_f1ap_handler(),
+                                                      get_cu_cp_ue_removal_handler());
 }
 
 async_task<ngap_handover_resource_allocation_response>
@@ -468,7 +501,7 @@ cu_cp_impl::handle_ngap_handover_request(const ngap_handover_request& request)
   return routine_mng.start_inter_cu_handover_target_routine(
       request,
       cu_up_db.find_cu_up_processor(uint_to_cu_up_index(0))->get_e1ap_bearer_context_manager(),
-      du_db.get_du_processor(ue->get_du_index()).get_f1ap_interface().get_f1ap_ue_context_manager(),
+      du_db.get_du_processor(ue->get_du_index()).get_f1ap_handler(),
       get_cu_cp_ue_removal_handler());
 }
 
@@ -501,8 +534,7 @@ async_task<bool> cu_cp_impl::handle_new_handover_command(ue_index_t ue_index, by
 
     CORO_AWAIT_VALUE(ue_context_mod_response,
                      du_db.get_du_processor(ue_mng.find_du_ue(ue_index)->get_du_index())
-                         .get_f1ap_interface()
-                         .get_f1ap_ue_context_manager()
+                         .get_f1ap_handler()
                          .handle_ue_context_modification_request(ue_context_mod_request));
 
     CORO_RETURN(ue_context_mod_response.success);
@@ -556,8 +588,8 @@ cu_cp_impl::handle_inter_du_handover_request(const cu_cp_inter_du_handover_reque
       request,
       std::move(sib1),
       cu_up_db.find_cu_up_processor(uint_to_cu_up_index(0))->get_e1ap_bearer_context_manager(),
-      du_db.get_du_processor(source_du_index).get_f1ap_interface().get_f1ap_ue_context_manager(),
-      du_db.get_du_processor(target_du_index).get_f1ap_interface().get_f1ap_ue_context_manager(),
+      du_db.get_du_processor(source_du_index).get_f1ap_handler(),
+      du_db.get_du_processor(target_du_index).get_f1ap_handler(),
       *this,
       get_cu_cp_ue_removal_handler(),
       *this);
@@ -581,14 +613,13 @@ async_task<void> cu_cp_impl::handle_ue_removal_request(ue_index_t ue_index)
     e1ap_removal_handler = &cu_up_db.find_cu_up_processor(cu_up_index)->get_e1ap_bearer_context_removal_handler();
   }
 
-  return launch_async<ue_removal_routine>(
-      ue_index,
-      rrc_du_adapters.at(du_index),
-      e1ap_removal_handler,
-      du_db.get_du_processor(du_index).get_f1ap_interface().get_f1ap_ue_context_removal_handler(),
-      ngap_entity->get_ngap_ue_context_removal_handler(),
-      ue_mng,
-      logger);
+  return launch_async<ue_removal_routine>(ue_index,
+                                          rrc_du_adapters.at(du_index),
+                                          e1ap_removal_handler,
+                                          du_db.get_du_processor(du_index).get_f1ap_handler(),
+                                          ngap_entity->get_ngap_ue_context_removal_handler(),
+                                          ue_mng,
+                                          logger);
 }
 
 void cu_cp_impl::handle_pending_ue_task_cancellation(ue_index_t ue_index)
@@ -627,7 +658,7 @@ void cu_cp_impl::handle_rrc_ue_creation(ue_index_t ue_index, rrc_ue_interface& r
 {
   // Connect RRC UE to NGAP to RRC UE adapter
   ue_mng.get_ngap_rrc_ue_adapter(ue_index).connect_rrc_ue(rrc_ue.get_rrc_dl_nas_message_handler(),
-                                                          rrc_ue.get_rrc_ue_init_security_context_handler(),
+                                                          rrc_ue.get_rrc_ue_radio_access_capability_handler(),
                                                           rrc_ue.get_rrc_ue_handover_preparation_handler());
 
   // Connect cu-cp to rrc ue adapters
@@ -697,7 +728,7 @@ void cu_cp_impl::on_statistics_report_timer_expired()
                nof_cu_cp_ues);
 
   // Restart timer
-  statistics_report_timer.set(cfg.statistics_report_period,
+  statistics_report_timer.set(cfg.metrics.statistics_report_period,
                               [this](timer_id_t /*tid*/) { on_statistics_report_timer_expired(); });
   statistics_report_timer.run();
 }

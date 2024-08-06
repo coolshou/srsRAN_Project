@@ -88,13 +88,7 @@ void rrc_ue_impl::handle_rrc_setup_request(const asn1::rrc_nr::rrc_setup_request
   const rrc_setup_request_ies_s& request_ies = request_msg.rrc_setup_request;
   switch (request_ies.ue_id.type().value) {
     case init_ue_id_c::types_opts::ng_5_g_s_tmsi_part1: {
-      context.setup_ue_id = request_ies.ue_id.ng_5_g_s_tmsi_part1().to_number();
-
-      // As per TS 23.003 section 2.10.1 the last 32Bits of the 5G-S-TMSI are the 5G-TMSI
-      unsigned shift_bits =
-          request_ies.ue_id.ng_5_g_s_tmsi_part1().length() - 32; // calculate the number of bits to shift
-      context.five_g_tmsi = ((request_ies.ue_id.ng_5_g_s_tmsi_part1().to_number() << shift_bits) >> shift_bits);
-
+      context.setup_ue_id = request_ies.ue_id.ng_5_g_s_tmsi_part1();
       break;
     }
     case asn1::rrc_nr::init_ue_id_c::types_opts::random_value:
@@ -164,6 +158,9 @@ void rrc_ue_impl::handle_pdu(const srb_id_t srb_id, byte_buffer rrc_pdu)
     case ul_dcch_msg_type_c::c1_c_::types_opts::security_mode_complete:
       handle_rrc_transaction_complete(ul_dcch_msg, ul_dcch_msg.msg.c1().security_mode_complete().rrc_transaction_id);
       break;
+    case ul_dcch_msg_type_c::c1_c_::types_opts::security_mode_fail:
+      handle_rrc_transaction_complete(ul_dcch_msg, ul_dcch_msg.msg.c1().security_mode_fail().rrc_transaction_id);
+      break;
     case ul_dcch_msg_type_c::c1_c_::types_opts::ue_cap_info:
       handle_rrc_transaction_complete(ul_dcch_msg, ul_dcch_msg.msg.c1().ue_cap_info().rrc_transaction_id);
       break;
@@ -214,6 +211,19 @@ void rrc_ue_impl::handle_ul_dcch_pdu(const srb_id_t srb_id, byte_buffer pdcp_pdu
   }
 }
 
+void rrc_ue_impl::handle_security_mode_complete(const asn1::rrc_nr::security_mode_complete_s& msg)
+{
+  srsran_sanity_check(context.srbs.find(srb_id_t::srb1) != context.srbs.end(),
+                      "Attempted to configure security, but there is no interface to PDCP");
+
+  context.srbs.at(srb_id_t::srb1)
+      .enable_rx_security(
+          security::integrity_enabled::on, security::ciphering_enabled::on, cu_cp_ue_notifier.get_rrc_128_as_config());
+  context.srbs.at(srb_id_t::srb1)
+      .enable_tx_security(
+          security::integrity_enabled::on, security::ciphering_enabled::on, cu_cp_ue_notifier.get_rrc_128_as_config());
+}
+
 void rrc_ue_impl::handle_ul_info_transfer(const ul_info_transfer_ies_s& ul_info_transfer)
 {
   cu_cp_ul_nas_transport ul_nas_msg         = {};
@@ -262,10 +272,117 @@ void rrc_ue_impl::handle_rrc_transaction_complete(const ul_dcch_msg_s& msg, uint
   }
 }
 
+rrc_ue_security_mode_command_context rrc_ue_impl::get_security_mode_command_context()
+{
+  // activate SRB1 PDCP security
+  on_new_as_security_context();
+
+  rrc_ue_security_mode_command_context smc_ctxt;
+
+  if (context.srbs.find(srb_id_t::srb1) == context.srbs.end()) {
+    logger.log_error("Can't get security mode command. {} is not set up", srb_id_t::srb1);
+    return smc_ctxt;
+  }
+
+  // Create transaction to get transaction ID
+  rrc_transaction transaction = event_mng->transactions.create_transaction();
+  smc_ctxt.transaction_id     = transaction.id();
+
+  // Get selected security algorithms
+  security::sec_selected_algos security_algos = cu_cp_ue_notifier.get_security_algos();
+
+  // Pack SecurityModeCommand
+  dl_dcch_msg_s dl_dcch_msg;
+  dl_dcch_msg.msg.set_c1().set_security_mode_cmd().crit_exts.set_security_mode_cmd();
+  fill_asn1_rrc_smc_msg(dl_dcch_msg.msg.c1().security_mode_cmd(),
+                        security_algos.integ_algo,
+                        security_algos.cipher_algo,
+                        smc_ctxt.transaction_id);
+
+  // Pack DL DCCH msg
+  pdcp_tx_result pdcp_packing_result =
+      context.srbs.at(srb_id_t::srb1).pack_rrc_pdu(pack_into_pdu(dl_dcch_msg, "SecurityModeCommand"));
+  if (!pdcp_packing_result.is_successful()) {
+    logger.log_info("Requesting UE release. Cause: PDCP packing failed with {}",
+                    pdcp_packing_result.get_failure_cause());
+    on_ue_release_required(pdcp_packing_result.get_failure_cause());
+    return smc_ctxt;
+  }
+
+  smc_ctxt.rrc_ue_security_mode_command_pdu = pdcp_packing_result.pop_pdu();
+  smc_ctxt.sp_cell_id                       = context.cell.cgi;
+
+  // Log Tx message
+  log_rrc_message(logger, Tx, smc_ctxt.rrc_ue_security_mode_command_pdu, dl_dcch_msg, "DCCH DL");
+
+  return smc_ctxt;
+}
+
+async_task<bool> rrc_ue_impl::handle_security_mode_complete_expected(uint8_t transaction_id)
+{
+  // arbitrary timeout for RRC Reconfig procedure, UE will be removed if timer fires
+  const std::chrono::milliseconds timeout_ms{1000};
+
+  return launch_async(
+      [this, timeout_ms, transaction_id, transaction = rrc_transaction{}](coro_context<async_task<bool>>& ctx) mutable {
+        CORO_BEGIN(ctx);
+
+        logger.log_debug("Awaiting RRC Security Mode Complete (timeout={}ms)", timeout_ms.count());
+        // create new transaction for RRC Security Mode Command procedure
+        transaction = event_mng->transactions.create_transaction(transaction_id, timeout_ms);
+
+        CORO_AWAIT(transaction);
+
+        if (!transaction.has_response()) {
+          logger.log_debug("Did not receive RRC Security Mode Complete. Cause: timeout");
+          CORO_EARLY_RETURN(false);
+        }
+
+        if (transaction.response().msg.c1().type() == ul_dcch_msg_type_c::c1_c_::types_opts::security_mode_fail) {
+          logger.log_warning("Received RRC Security Mode Failure");
+          CORO_EARLY_RETURN(false);
+        }
+
+        if (transaction.response().msg.c1().type() == ul_dcch_msg_type_c::c1_c_::types_opts::security_mode_complete) {
+          logger.log_debug("Received RRC Security Mode Complete");
+          handle_security_mode_complete(transaction.response().msg.c1().security_mode_complete());
+        }
+
+        CORO_RETURN(true);
+      });
+}
+
+byte_buffer rrc_ue_impl::get_packed_ue_capability_rat_container_list() const
+{
+  byte_buffer pdu{};
+
+  if (context.capabilities_list.has_value()) {
+    asn1::bit_ref bref{pdu};
+
+    if (pack_dyn_seq_of(bref, context.capabilities_list.value(), 0, 8) != asn1::SRSASN_SUCCESS) {
+      logger.log_error("Error packing UE Capability RAT Container List");
+      return byte_buffer{};
+    }
+  } else {
+    logger.log_debug("No UE capabilites available");
+  }
+
+  return pdu.copy();
+}
+
+byte_buffer rrc_ue_impl::get_packed_ue_radio_access_cap_info() const
+{
+  asn1::rrc_nr::ue_radio_access_cap_info_s      ue_radio_access_cap_info;
+  asn1::rrc_nr::ue_radio_access_cap_info_ies_s& ue_radio_access_cap_info_ies =
+      ue_radio_access_cap_info.crit_exts.set_c1().set_ue_radio_access_cap_info();
+  ue_radio_access_cap_info_ies.ue_radio_access_cap_info = get_packed_ue_capability_rat_container_list();
+
+  return pack_into_pdu(ue_radio_access_cap_info, "UE Radio Access Cap Info");
+}
+
 async_task<bool> rrc_ue_impl::handle_rrc_reconfiguration_request(const rrc_reconfiguration_procedure_request& msg)
 {
-  return launch_async<rrc_reconfiguration_procedure>(
-      context, msg, *this, cu_cp_notifier, *event_mng, get_rrc_ue_srb_handler(), logger);
+  return launch_async<rrc_reconfiguration_procedure>(context, msg, *this, *event_mng, get_rrc_ue_srb_handler(), logger);
 }
 
 rrc_ue_handover_reconfiguration_context
@@ -273,16 +390,21 @@ rrc_ue_impl::get_rrc_ue_handover_reconfiguration_context(const rrc_reconfigurati
 {
   rrc_ue_handover_reconfiguration_context ho_reconf_ctxt;
 
+  if (context.srbs.find(srb_id_t::srb1) == context.srbs.end()) {
+    logger.log_error("Can't get handover reconfiguraion context. {} is not set up", srb_id_t::srb1);
+    return ho_reconf_ctxt;
+  }
+
   // Create transaction to get transaction ID
   rrc_transaction transaction   = event_mng->transactions.create_transaction();
   ho_reconf_ctxt.transaction_id = transaction.id();
 
-  // pack RRC Reconfig
+  // Pack RRC Reconfig
   dl_dcch_msg_s dl_dcch_msg;
   dl_dcch_msg.msg.set_c1().set_rrc_recfg().crit_exts.set_rrc_recfg();
   fill_asn1_rrc_reconfiguration_msg(dl_dcch_msg.msg.c1().rrc_recfg(), ho_reconf_ctxt.transaction_id, request);
 
-  // pack DL CCCH msg
+  // Pack DL DCCH msg
   pdcp_tx_result pdcp_packing_result =
       context.srbs.at(srb_id_t::srb1).pack_rrc_pdu(pack_into_pdu(dl_dcch_msg, "RRCReconfiguration"));
   if (!pdcp_packing_result.is_successful()) {
@@ -368,26 +490,26 @@ rrc_ue_release_context rrc_ue_impl::get_rrc_ue_release_context(bool requires_rrc
       if (context.srbs.find(srb_id_t::srb1) == context.srbs.end()) {
         logger.log_error("Can't create RRCRelease PDU. RX {} is not set up", srb_id_t::srb1);
         return release_context;
-      } else {
-        dl_dcch_msg_s dl_dcch_msg;
-        dl_dcch_msg.msg.set_c1().set_rrc_release().crit_exts.set_rrc_release();
-
-        // pack DL CCCH msg
-        pdcp_tx_result pdcp_packing_result =
-            context.srbs.at(srb_id_t::srb1).pack_rrc_pdu(pack_into_pdu(dl_dcch_msg, "RRCRelease"));
-        if (!pdcp_packing_result.is_successful()) {
-          logger.log_info("Requesting UE release. Cause: PDCP packing failed with {}",
-                          pdcp_packing_result.get_failure_cause());
-          on_ue_release_required(pdcp_packing_result.get_failure_cause());
-          return release_context;
-        }
-
-        release_context.rrc_release_pdu = pdcp_packing_result.pop_pdu();
-        release_context.srb_id          = srb_id_t::srb1;
-
-        // Log Tx message
-        log_rrc_message(logger, Tx, release_context.rrc_release_pdu, dl_dcch_msg, "DCCH DL");
       }
+
+      dl_dcch_msg_s dl_dcch_msg;
+      dl_dcch_msg.msg.set_c1().set_rrc_release().crit_exts.set_rrc_release();
+
+      // pack DL CCCH msg
+      pdcp_tx_result pdcp_packing_result =
+          context.srbs.at(srb_id_t::srb1).pack_rrc_pdu(pack_into_pdu(dl_dcch_msg, "RRCRelease"));
+      if (!pdcp_packing_result.is_successful()) {
+        logger.log_info("Requesting UE release. Cause: PDCP packing failed with {}",
+                        pdcp_packing_result.get_failure_cause());
+        on_ue_release_required(pdcp_packing_result.get_failure_cause());
+        return release_context;
+      }
+
+      release_context.rrc_release_pdu = pdcp_packing_result.pop_pdu();
+      release_context.srb_id          = srb_id_t::srb1;
+
+      // Log Tx message
+      log_rrc_message(logger, Tx, release_context.rrc_release_pdu, dl_dcch_msg, "DCCH DL");
     }
 
     // Log Tx message
@@ -415,6 +537,8 @@ rrc_ue_transfer_context rrc_ue_impl::get_transfer_context()
   transfer_context.srbs                      = get_srbs();
   transfer_context.up_ctx                    = cu_cp_notifier.on_up_context_required();
   transfer_context.handover_preparation_info = get_packed_handover_preparation_message();
+  transfer_context.ue_cap_rat_container_list = get_packed_ue_capability_rat_container_list();
+
   return transfer_context;
 }
 

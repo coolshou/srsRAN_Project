@@ -36,23 +36,25 @@ static unsigned greatest_used_rb_on_bwp_left_side(const pucch_resource& res, uns
   // in PRBs).
   auto is_on_bwp_left_side = [bwp_size](unsigned prb) { return prb < bwp_size / 2; };
 
-  srsran_assert((res.format == srsran::pucch_format::FORMAT_1 and
-                 std::holds_alternative<pucch_format_1_cfg>(res.format_params)) or
+  srsran_assert((res.format == srsran::pucch_format::FORMAT_0 and
+                 std::holds_alternative<pucch_format_0_cfg>(res.format_params)) or
+                    (res.format == srsran::pucch_format::FORMAT_1 and
+                     std::holds_alternative<pucch_format_1_cfg>(res.format_params)) or
                     (res.format == srsran::pucch_format::FORMAT_2 or
                      std::holds_alternative<pucch_format_2_3_cfg>(res.format_params)),
-                "Only PUCCH Format 1 and 2 currently supported.");
+                "Only PUCCH Format 0, 1 and 2 currently supported.");
 
   unsigned max_rb_idx_on_left_side = 0;
 
-  if (res.format == srsran::pucch_format::FORMAT_1) {
-    const unsigned nof_prbs_f1 = 1U;
+  if (res.format == srsran::pucch_format::FORMAT_0 or res.format == srsran::pucch_format::FORMAT_1) {
+    const unsigned nof_prbs_f0_f1 = 1U;
 
     // Check if first hop and second hop separately.
-    if (is_on_bwp_left_side(res.starting_prb + nof_prbs_f1)) {
-      max_rb_idx_on_left_side = std::max(res.starting_prb + nof_prbs_f1, max_rb_idx_on_left_side);
+    if (is_on_bwp_left_side(res.starting_prb + nof_prbs_f0_f1)) {
+      max_rb_idx_on_left_side = std::max(res.starting_prb + nof_prbs_f0_f1, max_rb_idx_on_left_side);
     }
-    if (res.second_hop_prb.has_value() and is_on_bwp_left_side(res.second_hop_prb.value() + nof_prbs_f1)) {
-      max_rb_idx_on_left_side = std::max(res.second_hop_prb.value() + nof_prbs_f1, max_rb_idx_on_left_side);
+    if (res.second_hop_prb.has_value() and is_on_bwp_left_side(res.second_hop_prb.value() + nof_prbs_f0_f1)) {
+      max_rb_idx_on_left_side = std::max(res.second_hop_prb.value() + nof_prbs_f0_f1, max_rb_idx_on_left_side);
     }
   }
   if (res.format == srsran::pucch_format::FORMAT_2) {
@@ -78,11 +80,11 @@ unsigned srsran::config_helpers::compute_prach_frequency_start(const pucch_build
 
   // Compute the cell PUCCH resource list, depending on which parameter that has been passed.
   const std::vector<pucch_resource>& res_list = srs_du::generate_cell_pucch_res_list(
-      user_params.nof_ue_pucch_f1_res_harq.to_uint() * user_params.nof_cell_harq_pucch_res_sets +
+      user_params.nof_ue_pucch_f0_or_f1_res_harq.to_uint() * user_params.nof_cell_harq_pucch_res_sets +
           user_params.nof_sr_resources,
       user_params.nof_ue_pucch_f2_res_harq.to_uint() * user_params.nof_cell_harq_pucch_res_sets +
           user_params.nof_csi_resources,
-      user_params.f1_params,
+      user_params.f0_or_f1_params,
       user_params.f2_params,
       bwp_size);
 

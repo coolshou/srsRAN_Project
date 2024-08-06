@@ -260,9 +260,15 @@ private:
       return nullptr;
     }
 
+    std::shared_ptr<transform_precoder_factory> precoding_factory =
+        create_dft_transform_precoder_factory(dft_factory, MAX_NOF_PRBS);
+    if (!precoding_factory) {
+      return nullptr;
+    }
+
     // Create PUSCH demodulator factory.
-    std::shared_ptr<pusch_demodulator_factory> pusch_demod_factory =
-        create_pusch_demodulator_factory_sw(eq_factory, chan_modulation_factory, prg_factory, true, true);
+    std::shared_ptr<pusch_demodulator_factory> pusch_demod_factory = create_pusch_demodulator_factory_sw(
+        eq_factory, precoding_factory, chan_modulation_factory, prg_factory, MAX_NOF_PRBS, true, true);
     if (!pusch_demod_factory) {
       return nullptr;
     }
@@ -352,8 +358,13 @@ TEST_P(PuschProcessorFixture, PuschProcessorVectortest)
   const test_case_context&      context      = test_case.context;
   const pusch_processor::pdu_t& config       = context.config;
 
+  // Calculate resource grid dimensions.
+  unsigned nof_ports        = (*std::max_element(config.rx_ports.begin(), config.rx_ports.end())) + 1;
+  unsigned nof_ofdm_symbols = MAX_NSYMB_PER_SLOT;
+  unsigned nof_prb          = config.bwp_start_rb + config.bwp_size_rb;
+
   // Prepare resource grid.
-  resource_grid_reader_spy grid;
+  resource_grid_reader_spy grid(nof_ports, nof_ofdm_symbols, nof_prb);
   grid.write(test_case.grid.read());
 
   // Read expected data.
@@ -446,8 +457,13 @@ TEST_P(PuschProcessorFixture, PuschProcessorVectortestZero)
   std::vector<resource_grid_reader_spy::expected_entry_t> grid_data = test_case.grid.read();
   std::for_each(grid_data.begin(), grid_data.end(), [](auto& e) { e.value = 0; });
 
+  // Calculate resource grid dimensions.
+  unsigned nof_ports        = (*std::max_element(config.rx_ports.begin(), config.rx_ports.end())) + 1;
+  unsigned nof_ofdm_symbols = MAX_NSYMB_PER_SLOT;
+  unsigned nof_prb          = config.bwp_start_rb + config.bwp_size_rb;
+
   // Prepare resource grid.
-  resource_grid_reader_spy grid;
+  resource_grid_reader_spy grid(nof_ports, nof_ofdm_symbols, nof_prb);
   grid.write(grid_data);
 
   // Prepare receive data.

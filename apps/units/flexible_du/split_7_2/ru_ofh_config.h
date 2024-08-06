@@ -93,7 +93,7 @@ struct ru_ofh_unit_cell_config {
   /// Ethernet network interface name or identifier.
   std::string network_interface = "enp1s0f0";
   /// Promiscuous mode flag.
-  bool enable_promiscuous_mode = true;
+  bool enable_promiscuous_mode = false;
   /// MTU size.
   units::bytes mtu_size{9000};
   /// Radio Unit MAC address.
@@ -137,6 +137,8 @@ struct ru_ofh_unit_expert_threads_config {
 
 /// Expert configuration.
 struct ru_ofh_unit_expert_execution_config {
+  /// RU timing thread.
+  os_sched_affinity_bitmask ru_timing_cpu;
   /// Expert thread configuration of the Open Fronthaul Radio Unit.
   ru_ofh_unit_expert_threads_config threads;
   /// CPU affinities per cell.

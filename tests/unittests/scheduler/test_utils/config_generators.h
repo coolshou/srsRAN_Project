@@ -26,6 +26,7 @@
 #include "lib/scheduler/config/sched_config_manager.h"
 #include "srsran/du/du_cell_config_helpers.h"
 #include "srsran/ran/duplex_mode.h"
+#include "srsran/ran/pucch/pucch_info.h"
 #include "srsran/scheduler/config/csi_helper.h"
 #include "srsran/scheduler/config/logical_channel_config_factory.h"
 #include "srsran/scheduler/config/sched_cell_config_helpers.h"
@@ -64,10 +65,10 @@ make_default_sched_cell_configuration_request(const config_helpers::cell_config_
   sched_req.searchspace0      = params.search_space0_index;
   sched_req.sib1_payload_size = 101; // Random size.
 
-  pucch_builder_params default_pucch_builder_params     = du_cell_config{}.pucch_cfg;
-  default_pucch_builder_params.nof_ue_pucch_f1_res_harq = 3;
-  default_pucch_builder_params.nof_ue_pucch_f2_res_harq = 6;
-  default_pucch_builder_params.nof_sr_resources         = 2;
+  pucch_builder_params default_pucch_builder_params           = du_cell_config{}.pucch_cfg;
+  default_pucch_builder_params.nof_ue_pucch_f0_or_f1_res_harq = 3;
+  default_pucch_builder_params.nof_ue_pucch_f2_res_harq       = 6;
+  default_pucch_builder_params.nof_sr_resources               = 2;
 
   sched_req.pucch_guardbands = config_helpers::build_pucch_guardbands_list(
       default_pucch_builder_params, sched_req.ul_cfg_common.init_ul_bwp.generic_params.crbs.length());
@@ -145,13 +146,13 @@ inline uplink_config make_test_ue_uplink_config(const config_helpers::cell_confi
   auto& pucch_cfg = ul_config.init_ul_bwp.pucch_cfg.value();
   // PUCCH Resource Set ID 0.
   auto& pucch_res_set_0            = pucch_cfg.pucch_res_set.emplace_back();
-  pucch_res_set_0.pucch_res_set_id = 0;
+  pucch_res_set_0.pucch_res_set_id = pucch_res_set_idx::set_0;
   pucch_res_set_0.pucch_res_id_list.emplace_back(pucch_res_id_t{0, 0});
   pucch_res_set_0.pucch_res_id_list.emplace_back(pucch_res_id_t{1, 1});
   pucch_res_set_0.pucch_res_id_list.emplace_back(pucch_res_id_t{2, 2});
 
   auto& pucch_res_set_1            = pucch_cfg.pucch_res_set.emplace_back();
-  pucch_res_set_1.pucch_res_set_id = 1;
+  pucch_res_set_1.pucch_res_set_id = pucch_res_set_idx::set_1;
   pucch_res_set_1.pucch_res_id_list.emplace_back(pucch_res_id_t{3, 3});
   pucch_res_set_1.pucch_res_id_list.emplace_back(pucch_res_id_t{4, 4});
   pucch_res_set_1.pucch_res_id_list.emplace_back(pucch_res_id_t{5, 5});
@@ -268,6 +269,12 @@ inline uplink_config make_test_ue_uplink_config(const config_helpers::cell_confi
     ul_config.init_ul_bwp.pusch_cfg->pusch_td_alloc_list =
         config_helpers::generate_k2_candidates(cyclic_prefix::NORMAL, params.tdd_ul_dl_cfg_common.value());
   }
+
+  // Compute the max UCI payload per format.
+  pucch_cfg.format_max_payload[pucch_format_to_uint(pucch_format::FORMAT_1)] = 2U;
+  const auto& res_f2 = std::get<pucch_format_2_3_cfg>(res_basic_f2.format_params);
+  pucch_cfg.format_max_payload[pucch_format_to_uint(pucch_format::FORMAT_2)] = get_pucch_format2_max_payload(
+      res_f2.nof_prbs, res_f2.nof_symbols, to_max_code_rate_float(pucch_cfg.format_2_common_param.value().max_c_rate));
 
   // > SRS config.
   ul_config.init_ul_bwp.srs_cfg.emplace(config_helpers::make_default_srs_config(params));
