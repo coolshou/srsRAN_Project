@@ -24,10 +24,10 @@
 
 #include "apps/services/os_sched_affinity_manager.h"
 #include "srsran/adt/optional.h"
+#include "srsran/e2/e2ap_configuration.h"
 #include "srsran/ran/band_helper.h"
 #include "srsran/ran/bs_channel_bandwidth.h"
 #include "srsran/ran/direct_current_offset.h"
-#include "srsran/ran/five_qi.h"
 #include "srsran/ran/gnb_du_id.h"
 #include "srsran/ran/gnb_id.h"
 #include "srsran/ran/lcid.h"
@@ -38,6 +38,7 @@
 #include "srsran/ran/pdsch/pdsch_mcs.h"
 #include "srsran/ran/pucch/pucch_configuration.h"
 #include "srsran/ran/pusch/pusch_mcs.h"
+#include "srsran/ran/qos/five_qi.h"
 #include "srsran/ran/rnti.h"
 #include "srsran/ran/s_nssai.h"
 #include "srsran/ran/sib/system_info_config.h"
@@ -53,11 +54,13 @@ namespace srsran {
 
 /// DU high logging functionalities.
 struct du_high_unit_logger_config {
-  srslog::basic_levels du_level   = srslog::basic_levels::warning;
-  srslog::basic_levels mac_level  = srslog::basic_levels::warning;
-  srslog::basic_levels rlc_level  = srslog::basic_levels::warning;
-  srslog::basic_levels f1ap_level = srslog::basic_levels::warning;
-  srslog::basic_levels f1u_level  = srslog::basic_levels::warning;
+  srslog::basic_levels du_level      = srslog::basic_levels::warning;
+  srslog::basic_levels mac_level     = srslog::basic_levels::warning;
+  srslog::basic_levels rlc_level     = srslog::basic_levels::warning;
+  srslog::basic_levels f1ap_level    = srslog::basic_levels::warning;
+  srslog::basic_levels f1u_level     = srslog::basic_levels::warning;
+  srslog::basic_levels gtpu_level    = srslog::basic_levels::warning;
+  srslog::basic_levels metrics_level = srslog::basic_levels::none;
 
   /// Maximum number of bytes to write when dumping hex arrays.
   int hex_max_size = 0;
@@ -67,10 +70,24 @@ struct du_high_unit_logger_config {
   bool f1ap_json_enabled = false;
 };
 
+/// Timing Advance MAC CE scheduling expert configuration.
+struct du_high_unit_ta_sched_expert_config {
+  /// Measurements periodicity in nof. slots over which the new Timing Advance Command is computed.
+  unsigned ta_measurement_slot_period = 80;
+  /// Timing Advance Command (T_A) offset threshold above which Timing Advance Command is triggered. Possible valid
+  /// values {0,...,32}. If set to less than zero, issuing of TA Command is disabled.
+  /// \remark T_A is defined in TS 38.213, clause 4.2.
+  int ta_cmd_offset_threshold = 1;
+  /// UL SINR threshold (in dB) above which reported N_TA update measurement is considered valid.
+  float ta_update_measurement_ul_sinr_threshold = 0.0F;
+};
+
 /// Scheduler expert configuration.
 struct du_high_unit_scheduler_expert_config {
   /// Policy scheduler expert parameters.
   policy_scheduler_expert_config policy_sched_expert_cfg = time_rr_scheduler_expert_config{};
+  /// Timing Advance MAC CE scheduling expert configuration.
+  du_high_unit_ta_sched_expert_config ta_sched_cfg;
 };
 
 struct du_high_unit_ssb_config {
@@ -214,6 +231,9 @@ struct du_high_unit_pusch_config {
   unsigned start_rb = 0;
   /// End RB for resource allocation of UE PUSCHs.
   unsigned end_rb = MAX_NOF_PRBS;
+
+  /// Set to true to enable transform precoding in PUSCH.
+  bool enable_transform_precoding = false;
 };
 
 struct du_high_unit_pucch_config {
@@ -224,12 +244,13 @@ struct du_high_unit_pucch_config {
   unsigned pucch_resource_common = 11;
 
   /// \c PUCCH-Config parameters.
-  /// Number of PUCCH Format 0/1 resources per UE for HARQ-ACK reporting. Values {1,...,8}.
-  unsigned nof_ue_pucch_f0_or_f1_res_harq = 8;
-  /// Number of PUCCH Format 2 resources per UE for HARQ-ACK reporting. Values {1,...,8}.
-  unsigned nof_ue_pucch_f2_res_harq = 6;
   /// Force Format 0 for the PUCCH resources belonging to PUCCH resource set 0.
   bool use_format_0 = false;
+  /// Number of PUCCH resources per UE (per PUCCH resource set) for HARQ-ACK reporting.
+  /// Values {3,...,8} if \c use_format_0 is set. Else, Values {1,...,8}.
+  /// \remark We assume the number of PUCCH F0/F1 resources for HARQ-ACK is equal to the equivalent number of Format 2
+  /// resources.
+  unsigned nof_ue_pucch_res_harq_per_set = 8;
   /// \brief Number of separate PUCCH resource sets for HARQ-ACK reporting that are available in a cell.
   /// \remark UEs will be distributed possibly over different HARQ-ACK PUCCH sets; the more sets, the fewer UEs will
   /// have to share the same set, which reduces the chances that UEs won't be allocated PUCCH due to lack of
@@ -274,6 +295,39 @@ struct du_high_unit_pucch_config {
 
   /// Maximum number of consecutive undecoded PUCCH Format 2 for CSI before an RLF is reported.
   unsigned max_consecutive_kos = 100;
+};
+
+struct du_high_unit_srs_config {
+  /// If set, enables periodic Sound Reference Signals (SRS) for the UEs within this cell. If not present, SRS are
+  /// aperiodic. The given value is the SRS period in milliseconds.
+  /// The available values are a subset of the values in \c SRS-PeriodicityAndOffset, \c SRS-Resource \c SRS-Config,
+  /// TS 38.331, converted to millisecond.
+  /// Values: {1, 2, 2.5, 4, 5, 8, 10, 16, 20, 32, 40, 64, 80, 160, 320, 640, 1280, 2560}.
+  std::optional<float> srs_period_ms = std::nullopt;
+  /// \brief Defines the maximum number of symbols dedicated to (all) the cell SRS resources in a slot.
+  /// This is the space that the GNB reserves for all the cell SRS resources in the UL slots, not to be confused with
+  /// the symbols per SRS resource configured in the UE dedicated configuration. Values: {1,...,6}.
+  unsigned max_nof_symbols_per_slot = 2;
+  /// Defines the number of symbols per SRS resource as per \c nrofSymbols, \c resourceMapping, \c SRS-Resource \c
+  /// SRS-Config, TS 38.331. Values: {1, 2, 4}.
+  unsigned nof_symbols = 1;
+  /// \c Transmission comb number, \c transmissionComb, \c SRS-Resource \c SRS-Config, TS 38.331. Values: {2, 4}.
+  unsigned tx_comb = 4;
+  /// Defines the Cyclic Shift (CS) reuse factor for the SRS resources.
+  /// \remark With 2 or 4 antenna ports, different cyclic shifts are used by the different antennas. This parameter
+  /// defines how many UEs can be multiplexed in the same symbols and RBs by exploiting different cyclic shifts.
+  /// Values: {no_cyclic_shift, two, four} for 2 UL antenna ports and tx_comb == 2.
+  /// Values: {no_cyclic_shift, two, three, four, six} for 2 UL antenna ports and tx_comb == 4.
+  /// Values: {no_cyclic_shift, two} for 4 UL antenna ports and tx_comb == 2.
+  /// Values: {no_cyclic_shift, three} for 4 UL antenna ports and tx_comb == 4.
+  /// Refer to Section 6.4.1.4.2, TS 38.211 for the definition of "Cyclic Shift".
+  unsigned cyclic_shift_reuse_factor = 1;
+  /// Defines the reuse of the SRS sequence ID for different UEs within the same cell.
+  /// \remark The goal of the SRS sequence ID would be to reduce the inter-cell interference. However, if the cell is
+  /// not in a dense multi-cell environment, we can reuse different sequence ID for different cell UEs.
+  /// Values: {1, 2, 3, 5, 6, 10, 15, 30}.
+  /// Refer to Section 6.4.1.4.2, TS 38.211 for the definition of "sequenceId".
+  unsigned sequence_id_reuse_factor = 1;
 };
 
 /// Parameters that are used to initialize or build the \c PhysicalCellGroupConfig, TS 38.331.
@@ -497,6 +551,9 @@ struct du_high_unit_prach_config {
   /// \c ssb-perRACH-OccasionAndCB-PreamblesPerSSB.
   /// \remark Values of \c cb_preambles_per_ssb depends on value of \c ssb_per_ro.
   uint8_t nof_cb_preambles_per_ssb = 64;
+  /// RA-Response (MSG2) window length in number of slots. Values: {1, 2, 4, 8, 10, 20, 40, 80}.  If not specified, it
+  /// is automatically derived to be equal to 10ms.
+  std::optional<unsigned> ra_resp_window;
 };
 
 /// Slice scheduling configuration for a cell.
@@ -505,6 +562,8 @@ struct du_high_unit_cell_slice_sched_config {
   unsigned min_prb_policy_ratio = 0;
   /// Sets the maximum percentage of PRBs to be allocated to this group.
   unsigned max_prb_policy_ratio = 100;
+  /// Policy scheduler parameters for the slice.
+  policy_scheduler_expert_config slice_policy_sched_cfg = time_rr_scheduler_expert_config{};
 };
 
 /// Slice configuration for a cell.
@@ -521,14 +580,14 @@ struct du_high_unit_base_cell_config {
   pci_t pci = 1;
   /// Sector Id (4-14 bits) that gets concatenated with gNB-Id to form the NR Cell Identity (NCI).
   std::optional<unsigned> sector_id;
-  /// Downlink arfcn.
-  unsigned dl_arfcn = 536020;
+  /// DL ARFCN of "F_REF", which is the RF reference frequency, as per TS 38.104, Section 5.4.2.1.
+  unsigned dl_f_ref_arfcn = 536020;
   /// Common subcarrier spacing for the entire resource grid. It must be supported by the band SS raster.
   subcarrier_spacing common_scs = subcarrier_spacing::kHz15;
   /// NR band.
   std::optional<nr_band> band;
   /// Channel bandwidth in MHz.
-  bs_channel_bandwidth_fr1 channel_bw_mhz = bs_channel_bandwidth_fr1::MHz20;
+  bs_channel_bandwidth channel_bw_mhz = bs_channel_bandwidth::MHz20;
   /// Number of antennas in downlink.
   unsigned nof_antennas_dl = 1;
   /// Number of antennas in uplink.
@@ -557,6 +616,8 @@ struct du_high_unit_base_cell_config {
   du_high_unit_pusch_config pusch_cfg;
   /// PUCCH configuration.
   du_high_unit_pucch_config pucch_cfg;
+  /// SRS configuration.
+  du_high_unit_srs_config srs_cfg;
   /// Physical Cell Group parameters.
   du_high_unit_phy_cell_group_config pcg_cfg;
   /// MAC Cell Gropup parameters.
@@ -613,11 +674,14 @@ struct du_high_unit_cell_config {
 /// Metrics report configuration.
 struct du_high_unit_metrics_config {
   struct rlc_metrics {
-    unsigned report_period = 0; // RLC report period in ms
+    /// RLC report period in ms.
+    unsigned report_period = 0;
     bool     json_enabled  = false;
   } rlc;
-  bool     enable_json_metrics   = false;
-  unsigned stdout_metrics_period = 1000; // Statistics report period in milliseconds
+  bool enable_json_metrics = false;
+  /// Scheduler report period in milliseconds.
+  unsigned sched_report_period      = 1000;
+  bool     autostart_stdout_metrics = false;
 };
 
 struct du_high_unit_pcap_config {
@@ -643,17 +707,7 @@ struct du_high_unit_pcap_config {
     std::string type    = "udp";
     bool        enabled = false;
   } mac;
-  /// helper method to set the filename prefix for different apps.
-  /// This is used to provide different defaults depending on the app,
-  /// e.g.: "/tmp/gnb_f1ap.pcap", "/tmp/cu_f1ap.pcap" or "/tmp/du_f1ap.pcap"
-  void set_default_filename(std::string prefix)
-  {
-    e2ap.filename = fmt::format("{}_e2ap.pcap", prefix);
-    f1ap.filename = fmt::format("{}_f1ap.pcap", prefix);
-    f1u.filename  = fmt::format("{}_f1u.pcap", prefix);
-    rlc.filename  = fmt::format("{}_rlc.pcap", prefix);
-    mac.filename  = fmt::format("{}_mac.pcap", prefix);
-  }
+
   /// When using the gNB app, there is no point in instantiating
   /// F1 pcaps twice. This function force disables them.
   /// TODO: revisit
@@ -700,7 +754,8 @@ struct du_high_unit_rlc_tx_am_config {
   int32_t  poll_pdu;        ///< Insert poll bit after this many PDUs
   int32_t  poll_byte;       ///< Insert poll bit after this much data (bytes)
   uint32_t max_window = 0;  ///< Custom parameter to limit the maximum window size for memory reasons. 0 means no limit.
-  uint32_t queue_size = 4096; ///< RLC SDU queue size
+  uint32_t queue_size = 4096;              ///< RLC SDU queue size
+  uint32_t queue_size_bytes = 4096 * 1507; ///< RLC SDU queue size in bytes
 };
 
 /// RLC UM RX configuration
@@ -734,8 +789,9 @@ struct du_high_unit_f1u_du_config {
 
 /// RLC UM TX configuration
 struct du_high_unit_rlc_tx_um_config {
-  uint16_t sn_field_length; ///< Number of bits used for sequence number
-  uint32_t queue_size;      ///< RLC SDU queue size
+  uint16_t sn_field_length;  ///< Number of bits used for sequence number
+  uint32_t queue_size;       ///< RLC SDU queue size in pdus
+  uint32_t queue_size_bytes; ///< RLC SDU queue size in bytes
 };
 
 /// RLC UM RX configuration
@@ -763,32 +819,6 @@ struct du_high_unit_qos_config {
   du_high_unit_rlc_config    rlc;
   du_high_unit_f1u_du_config f1u_du;
   du_high_unit_mac_lc_config mac;
-};
-
-/// E2 Agent configuration.
-struct du_high_unit_e2_config {
-  /// Whether to enable DU E2 agent.
-  bool enable_du_e2 = false;
-  /// RIC IP address.
-  std::string ip_addr = "127.0.0.1";
-  /// RIC port.
-  uint16_t port = 36421;
-  /// Local IP address to bind for RIC connection.
-  std::string bind_addr = "127.0.0.1";
-  /// SCTP initial RTO value for RIC connection.
-  int sctp_rto_initial = 120;
-  /// SCTP RTO min for RIC connection.
-  int sctp_rto_min = 120;
-  /// SCTP RTO max for RIC connection.
-  int sctp_rto_max = 500;
-  /// SCTP init max attempts for RIC connection.
-  int sctp_init_max_attempts = 3;
-  /// SCTP max init timeout for RIC connection.
-  int sctp_max_init_timeo = 500;
-  /// Whether to enable KPM service module.
-  bool e2sm_kpm_enabled = false;
-  /// Whether to enable RC service module.
-  bool e2sm_rc_enabled = false;
 };
 
 /// DU high configuration.
@@ -819,7 +849,10 @@ struct du_high_unit_config {
   /// SRB configuration.
   std::map<srb_id_t, du_high_unit_srb_config> srb_cfg;
   /// E2 configuration.
-  du_high_unit_e2_config e2_cfg;
+  e2_config e2_cfg;
+
+  /// Returns true if testmode is enabled, false otherwise.
+  bool is_testmode_enabled() const { return test_mode_cfg.test_ue.rnti != rnti_t::INVALID_RNTI; }
 };
 
 /// DU high configuration.

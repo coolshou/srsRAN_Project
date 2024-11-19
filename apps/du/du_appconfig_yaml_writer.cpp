@@ -28,11 +28,8 @@ using namespace srsran;
 
 static void fill_du_appconfig_metrics_section(YAML::Node node, const srs_du::metrics_appconfig& config)
 {
-  node["enable_json_metrics"]      = config.enable_json_metrics;
-  node["addr"]                     = config.addr;
-  node["port"]                     = config.port;
-  node["autostart_stdout_metrics"] = config.autostart_stdout_metrics;
-  node["stdout_metrics_period"]    = config.stdout_metrics_period;
+  node["addr"] = config.addr;
+  node["port"] = config.port;
 }
 
 static void fill_du_appconfig_e2_section(YAML::Node node, const e2_appconfig& config)
@@ -93,6 +90,7 @@ static void fill_du_appconfig_nru_section(YAML::Node node, const srs_du::nru_app
 {
   node["queue_size"] = config.pdu_queue_size;
   node["bind_addr"]  = config.bind_address;
+  node["ext_addr"]   = config.ext_addr;
 }
 
 static void fill_du_appconfig_f1ap_section(YAML::Node node, const srs_du::f1ap_appconfig& config)
