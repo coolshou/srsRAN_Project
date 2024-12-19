@@ -22,11 +22,11 @@
 
 #pragma once
 
-#include "ring_buffer.h"
-#include "srsran/adt/optional.h"
+#include "srsran/adt/ring_buffer.h"
 #include <condition_variable>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 namespace srsran {

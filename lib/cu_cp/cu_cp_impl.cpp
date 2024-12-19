@@ -24,9 +24,10 @@
 #include "du_processor/du_processor_repository.h"
 #include "metrics_handler/metrics_handler_impl.h"
 #include "mobility_manager/mobility_manager_factory.h"
+#include "routines/dl_non_ue_associated_nrppa_transport_routine.h"
 #include "routines/initial_context_setup_routine.h"
 #include "routines/mobility/inter_cu_handover_target_routine.h"
-#include "routines/mobility/inter_du_handover_routine.h"
+#include "routines/mobility/intra_cu_handover_routine.h"
 #include "routines/pdu_session_resource_modification_routine.h"
 #include "routines/pdu_session_resource_release_routine.h"
 #include "routines/pdu_session_resource_setup_routine.h"
@@ -85,19 +86,11 @@ cu_cp_impl::cu_cp_impl(const cu_cp_configuration& config_) :
   e1ap_ev_notifier.connect_cu_cp(get_cu_cp_e1ap_handler());
   rrc_du_cu_cp_notifier.connect_cu_cp(get_cu_cp_measurement_config_handler());
 
-  if (cfg.plugin.connect_amfs != nullptr) {
-    connect_amfs = reinterpret_cast<connect_amfs_func>(cfg.plugin.connect_amfs);
-  }
-
-  if (cfg.plugin.disconnect_amfs != nullptr) {
-    disconnect_amfs = reinterpret_cast<disconnect_amfs_func>(cfg.plugin.disconnect_amfs);
-  }
-
   ngap_db = std::make_unique<ngap_repository>(
       ngap_repository_config{cfg, get_cu_cp_ngap_handler(), paging_handler, srslog::fetch_basic_logger("CU-CP")});
 
   controller = std::make_unique<cu_cp_controller>(
-      cfg, common_task_sched, *ngap_db, cu_up_db, du_db, connect_amfs, disconnect_amfs, *cfg.services.cu_cp_executor);
+      cfg, common_task_sched, *ngap_db, cu_up_db, du_db, *cfg.services.cu_cp_executor);
   conn_notifier.connect_node_connection_handler(*controller);
 
   mobility_mng = create_mobility_manager(
@@ -109,15 +102,6 @@ cu_cp_impl::cu_cp_impl(const cu_cp_configuration& config_) :
   statistics_report_timer.set(cfg.metrics.statistics_report_period,
                               [this](timer_id_t /*tid*/) { on_statistics_report_timer_expired(); });
   statistics_report_timer.run();
-
-  if (cfg.e2_client) {
-    // todo: subscribe e2_metric_manager to a metric hub (currently not present)
-    e2ap_entity = create_e2_cu_entity(cfg.e2ap_config,
-                                      cfg.e2_client,
-                                      cfg.e2_cu_metric_iface,
-                                      timer_factory{*cfg.services.timers, *cfg.services.cu_cp_executor},
-                                      *cfg.services.cu_cp_executor);
-  }
 }
 
 cu_cp_impl::~cu_cp_impl()
@@ -136,10 +120,6 @@ bool cu_cp_impl::start()
       })) {
     report_fatal_error("Failed to initiate CU-CP setup");
   }
-  if (e2ap_entity) {
-    e2ap_entity->start();
-  }
-
   // Block waiting for CU-CP setup to complete.
   return fut.get();
 }
@@ -149,9 +129,6 @@ void cu_cp_impl::stop()
   bool already_stopped = stopped.exchange(true);
   if (already_stopped) {
     return;
-  }
-  if (e2ap_entity) {
-    e2ap_entity->stop();
   }
   logger.info("Stopping CU-CP...");
 
@@ -570,7 +547,7 @@ cu_cp_impl::handle_ngap_handover_request(const ngap_handover_request& request)
                 "cu_up_index={}: could not find CU-UP",
                 uint_to_cu_up_index(0));
 
-  return launch_async<inter_cu_handover_target_routine>(
+  return start_inter_cu_handover_target_routine(
       request,
       cu_up_db.find_cu_up_processor(uint_to_cu_up_index(0))->get_e1ap_bearer_context_manager(),
       du_db.get_du_processor(ue->get_du_index()).get_f1ap_handler(),
@@ -625,6 +602,11 @@ ue_index_t cu_cp_impl::handle_ue_index_allocation_request(const nr_cell_global_i
   return ue_mng.add_ue(du_index, cgi.plmn_id);
 }
 
+void cu_cp_impl::handle_dl_non_ue_associated_nrppa_transport(const ngap_non_ue_associated_nrppa_transport& msg)
+{
+  common_task_sched.schedule_async_task(start_ngap_dl_non_ue_associated_nrppa_transport(msg, logger));
+}
+
 void cu_cp_impl::handle_n2_disconnection()
 {
   // TODO
@@ -648,8 +630,8 @@ bool cu_cp_impl::handle_cell_config_update_request(nr_cell_identity nci, const s
   return cell_meas_mng.update_cell_config(nci, serv_cell_cfg);
 }
 
-async_task<cu_cp_inter_du_handover_response>
-cu_cp_impl::handle_inter_du_handover_request(const cu_cp_inter_du_handover_request& request,
+async_task<cu_cp_intra_cu_handover_response>
+cu_cp_impl::handle_intra_cu_handover_request(const cu_cp_intra_cu_handover_request& request,
                                              du_index_t&                            source_du_index,
                                              du_index_t&                            target_du_index)
 {
@@ -658,7 +640,7 @@ cu_cp_impl::handle_inter_du_handover_request(const cu_cp_inter_du_handover_reque
 
   byte_buffer sib1 = du_db.get_du_processor(target_du_index).get_mobility_handler().get_packed_sib1(request.cgi);
 
-  return launch_async<inter_du_handover_routine>(
+  return launch_async<intra_cu_handover_routine>(
       request,
       std::move(sib1),
       cu_up_db.find_cu_up_processor(uint_to_cu_up_index(0))->get_e1ap_bearer_context_manager(),

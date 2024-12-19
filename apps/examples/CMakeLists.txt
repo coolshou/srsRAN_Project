@@ -18,8 +18,6 @@
 # and at http://www.gnu.org/licenses/.
 #
 
-if (DU_SPLIT_8 OR DU_SPLIT_DYNAMIC)
-    add_subdirectory(phy)
-    add_subdirectory(radio)
-endif ()
-
+add_subdirectory(ofh)
+add_subdirectory(phy)
+add_subdirectory(radio)

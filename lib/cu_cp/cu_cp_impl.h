@@ -110,7 +110,8 @@ public:
                    handle_ngap_handover_request(const ngap_handover_request& request) override;
   async_task<bool> handle_new_handover_command(ue_index_t ue_index, byte_buffer command) override;
   ue_index_t       handle_ue_index_allocation_request(const nr_cell_global_id_t& cgi) override;
-  void             handle_n2_disconnection() override;
+  void handle_dl_non_ue_associated_nrppa_transport(const ngap_non_ue_associated_nrppa_transport& msg) override;
+  void handle_n2_disconnection() override;
 
   // cu_cp_measurement_handler
   std::optional<rrc_meas_cfg>
@@ -123,8 +124,8 @@ public:
   bool handle_cell_config_update_request(nr_cell_identity nci, const serving_cell_meas_config& serv_cell_cfg) override;
 
   // cu_cp_mobility_manager_handler
-  async_task<cu_cp_inter_du_handover_response>
-  handle_inter_du_handover_request(const cu_cp_inter_du_handover_request& request,
+  async_task<cu_cp_intra_cu_handover_response>
+  handle_intra_cu_handover_request(const cu_cp_intra_cu_handover_request& request,
                                    du_index_t&                            source_du_index,
                                    du_index_t&                            target_du_index) override;
 
@@ -217,13 +218,6 @@ private:
   unique_timer statistics_report_timer;
 
   std::atomic<bool> stopped{false};
-
-  // Plug-ins
-  connect_amfs_func    connect_amfs    = nullptr;
-  disconnect_amfs_func disconnect_amfs = nullptr;
-
-  // E2 interface
-  std::unique_ptr<e2_interface> e2ap_entity;
 };
 
 } // namespace srs_cu_cp

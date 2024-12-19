@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "sockets.h"
+#include "srsran/support/io/sockets.h"
 #include "fmt/format.h"
 #include <string>
 
@@ -96,7 +96,7 @@ template <>
 struct formatter<srsran::transport_layer_address> : public formatter<std::string> {
   template <typename FormatContext>
   auto format(const srsran::transport_layer_address& s, FormatContext& ctx)
-      -> decltype(std::declval<FormatContext>().out())
+
   {
     std::array<char, NI_MAXHOST> ip_addr;
     int                          port;

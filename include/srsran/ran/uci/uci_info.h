@@ -21,7 +21,8 @@
  */
 
 #pragma once
-#include "srsran/support/math_utils.h"
+
+#include "srsran/support/math/math_utils.h"
 
 namespace srsran {
 

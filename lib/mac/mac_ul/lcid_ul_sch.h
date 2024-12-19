@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "srsran/ran/lcid.h"
+#include "srsran/ran/logical_channel/lcid.h"
 #include "srsran/support/srsran_assert.h"
 #include "fmt/format.h"
 
@@ -148,7 +148,7 @@ namespace fmt {
 template <>
 struct formatter<srsran::lcid_ul_sch_t> : public formatter<uint32_t> {
   template <typename FormatContext>
-  auto format(srsran::lcid_ul_sch_t lcid, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  auto format(srsran::lcid_ul_sch_t lcid, FormatContext& ctx)
   {
     return format_to(ctx.out(), "{}", (uint16_t)lcid);
   }

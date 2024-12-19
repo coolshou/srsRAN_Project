@@ -22,7 +22,6 @@
 
 #pragma once
 
-#include "srsran/adt/optional.h"
 #include "srsran/mac/mac_cell_result.h"
 #include "srsran/srslog/logger.h"
 #include <vector>

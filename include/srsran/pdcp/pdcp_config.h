@@ -22,7 +22,6 @@
 
 #pragma once
 
-#include "srsran/adt/optional.h"
 #include "srsran/pdcp/pdcp_sn_size.h"
 #include "srsran/pdcp/pdcp_t_reordering.h"
 #include "srsran/support/timers.h"
@@ -30,6 +29,8 @@
 #include <cstdint>
 
 namespace srsran {
+
+class pdcp_metrics_notifier;
 
 /// PDCP NR SRB or DRB information.
 enum class pdcp_rb_type { srb, drb };
@@ -52,6 +53,30 @@ constexpr uint32_t pcdp_sn_cardinality(uint16_t sn_size)
 constexpr uint32_t pdcp_window_size(uint16_t sn_size)
 {
   return pcdp_sn_cardinality(sn_size - 1);
+}
+
+/// \brief Returns the PDCP header size
+/// \param sn_size Length of the sequence number field in bits
+/// \return size of the data PDU header
+constexpr uint32_t pdcp_data_header_size(pdcp_sn_size sn_size)
+{
+  return sn_size == pdcp_sn_size::size12bits ? 2 : 3;
+}
+
+/// \brief Returns the PDCP trailer size
+/// \param rb_type whether this is a SRB or DRB.
+/// \param integrity_enabled wether integrity is enabled or not.
+/// \return size of the
+constexpr uint32_t pdcp_data_trailer_size(pdcp_rb_type rb_type, bool integrity_enabled)
+{
+  constexpr uint32_t mac_i_size = 4;
+  if (rb_type == pdcp_rb_type::srb) {
+    return mac_i_size;
+  }
+  if (integrity_enabled) {
+    return mac_i_size;
+  }
+  return 0;
 }
 
 /// Maximum supported PDCP SDU size, see TS 38.323, section 4.3.1.
@@ -132,9 +157,8 @@ struct pdcp_custom_config_base {
 };
 
 struct pdcp_custom_config_tx : public pdcp_custom_config_base {
-  uint16_t rlc_sdu_queue = 4096;
-  bool     warn_on_drop  = false;
-  bool     test_mode     = false;
+  bool warn_on_drop = false;
+  bool test_mode    = false;
 };
 
 struct pdcp_custom_config_rx : public pdcp_custom_config_base {
@@ -149,9 +173,10 @@ struct pdcp_custom_config_rx : public pdcp_custom_config_base {
 /// these parameters to the CU-UP, so it's necessary for the
 /// CU-UP to store these configurations itself.
 struct pdcp_custom_config {
-  timer_duration        metrics_period;
-  pdcp_custom_config_tx tx = {};
-  pdcp_custom_config_rx rx = {};
+  timer_duration         metrics_period;
+  pdcp_metrics_notifier* metrics_notifier = nullptr;
+  pdcp_custom_config_tx  tx               = {};
+  pdcp_custom_config_rx  rx               = {};
 };
 
 /// \brief Configurable parameters for PDCP that are common
@@ -163,8 +188,6 @@ struct pdcp_config_common {
   pdcp_rlc_mode           rlc_mode;
   pdcp_sn_size            sn_size;
   pdcp_security_direction direction;
-  bool                    integrity_protection_required;
-  bool                    ciphering_required;
 };
 
 struct pdcp_tx_config : pdcp_config_common {
@@ -207,27 +230,25 @@ struct pdcp_config {
   pdcp_tx_config get_tx_config() const
   {
     pdcp_tx_config cfg;
-    cfg.rb_type                       = rb_type;
-    cfg.rlc_mode                      = rlc_mode;
-    cfg.integrity_protection_required = integrity_protection_required;
-    cfg.sn_size                       = tx.sn_size;
-    cfg.direction                     = tx.direction;
-    cfg.discard_timer                 = tx.discard_timer;
-    cfg.status_report_required        = tx.status_report_required;
-    cfg.custom                        = custom.tx;
+    cfg.rb_type                = rb_type;
+    cfg.rlc_mode               = rlc_mode;
+    cfg.sn_size                = tx.sn_size;
+    cfg.direction              = tx.direction;
+    cfg.discard_timer          = tx.discard_timer;
+    cfg.status_report_required = tx.status_report_required;
+    cfg.custom                 = custom.tx;
     return cfg;
   }
   pdcp_rx_config get_rx_config() const
   {
     pdcp_rx_config cfg;
-    cfg.rb_type                       = rb_type;
-    cfg.rlc_mode                      = rlc_mode;
-    cfg.integrity_protection_required = integrity_protection_required;
-    cfg.sn_size                       = rx.sn_size;
-    cfg.direction                     = rx.direction;
-    cfg.out_of_order_delivery         = rx.out_of_order_delivery;
-    cfg.t_reordering                  = rx.t_reordering;
-    cfg.custom                        = custom.rx;
+    cfg.rb_type               = rb_type;
+    cfg.rlc_mode              = rlc_mode;
+    cfg.sn_size               = rx.sn_size;
+    cfg.direction             = rx.direction;
+    cfg.out_of_order_delivery = rx.out_of_order_delivery;
+    cfg.t_reordering          = rx.t_reordering;
+    cfg.custom                = custom.rx;
     return cfg;
   }
 };
@@ -255,8 +276,7 @@ inline pdcp_config pdcp_make_default_srb_config()
   config.rx.t_reordering          = pdcp_t_reordering::infinity;
 
   // Custom config
-  config.custom                  = {};
-  config.custom.tx.rlc_sdu_queue = 512;
+  config.custom = {};
 
   return config;
 }
@@ -271,13 +291,13 @@ namespace fmt {
 template <>
 struct formatter<srsran::pdcp_rb_type> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
-  auto format(srsran::pdcp_rb_type type, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  auto format(srsran::pdcp_rb_type type, FormatContext& ctx)
   {
     static constexpr const char* options[] = {"SRB", "DRB"};
     return format_to(ctx.out(), "{}", options[static_cast<unsigned>(type)]);
@@ -288,13 +308,13 @@ struct formatter<srsran::pdcp_rb_type> {
 template <>
 struct formatter<srsran::pdcp_rlc_mode> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
-  auto format(srsran::pdcp_rlc_mode mode, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  auto format(srsran::pdcp_rlc_mode mode, FormatContext& ctx)
   {
     static constexpr const char* options[] = {"UM", "AM"};
     return format_to(ctx.out(), "{}", options[static_cast<unsigned>(mode)]);
@@ -305,14 +325,13 @@ struct formatter<srsran::pdcp_rlc_mode> {
 template <>
 struct formatter<srsran::pdcp_t_reordering> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
   auto format(srsran::pdcp_t_reordering t_reordering, FormatContext& ctx)
-      -> decltype(std::declval<FormatContext>().out())
   {
     if (t_reordering == srsran::pdcp_t_reordering::infinity) {
       return format_to(ctx.out(), "infinity");
@@ -325,14 +344,13 @@ struct formatter<srsran::pdcp_t_reordering> {
 template <>
 struct formatter<srsran::pdcp_discard_timer> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
   auto format(srsran::pdcp_discard_timer discard_timer, FormatContext& ctx)
-      -> decltype(std::declval<FormatContext>().out())
   {
     if (discard_timer == srsran::pdcp_discard_timer::infinity) {
       return format_to(ctx.out(), "infinity");
@@ -345,19 +363,18 @@ struct formatter<srsran::pdcp_discard_timer> {
 template <>
 struct formatter<srsran::pdcp_custom_config_tx> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
-  auto format(srsran::pdcp_custom_config_tx cfg, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  auto format(srsran::pdcp_custom_config_tx cfg, FormatContext& ctx)
   {
     return format_to(ctx.out(),
-                     "count_notify={} count_max={} rlc_sdu_queue={} warn_on_drop={} test_mode={}",
+                     "count_notify={} count_max={} warn_on_drop={} test_mode={}",
                      cfg.max_count.notify,
                      cfg.max_count.hard,
-                     cfg.rlc_sdu_queue,
                      cfg.warn_on_drop,
                      cfg.test_mode);
   }
@@ -367,13 +384,13 @@ struct formatter<srsran::pdcp_custom_config_tx> {
 template <>
 struct formatter<srsran::pdcp_custom_config_rx> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
-  auto format(srsran::pdcp_custom_config_rx cfg, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  auto format(srsran::pdcp_custom_config_rx cfg, FormatContext& ctx)
   {
     return format_to(ctx.out(), "count_notify={} count_max={}", cfg.max_count.notify, cfg.max_count.hard);
   }
@@ -383,13 +400,13 @@ struct formatter<srsran::pdcp_custom_config_rx> {
 template <>
 struct formatter<srsran::pdcp_tx_config> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
-  auto format(srsran::pdcp_tx_config cfg, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  auto format(srsran::pdcp_tx_config cfg, FormatContext& ctx)
   {
     return format_to(ctx.out(),
                      "rb_type={} rlc_mode={} sn_size={} discard_timer={} {}",
@@ -405,13 +422,13 @@ struct formatter<srsran::pdcp_tx_config> {
 template <>
 struct formatter<srsran::pdcp_rx_config> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
-  auto format(srsran::pdcp_rx_config cfg, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  auto format(srsran::pdcp_rx_config cfg, FormatContext& ctx)
   {
     return format_to(ctx.out(),
                      "rb_type={} rlc_mode={} sn_size={} t_reordering={} {}",
@@ -427,13 +444,13 @@ struct formatter<srsran::pdcp_rx_config> {
 template <>
 struct formatter<srsran::pdcp_config> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
-  auto format(const srsran::pdcp_config& cfg, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  auto format(const srsran::pdcp_config& cfg, FormatContext& ctx)
   {
     return format_to(ctx.out(),
                      "rb_type={} rlc_mode={} int_req={} cip_req={} TX=[sn_size={} discard_timer={}] "

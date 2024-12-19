@@ -28,7 +28,6 @@
 #include "../support/pdsch/pdsch_resource_allocation.h"
 #include "../support/prbs_calculator.h"
 #include "../support/pusch/pusch_td_resource_indices.h"
-#include "srsran/mac/mac_pdu_format.h"
 #include "srsran/ran/sch/tbs_calculator.h"
 #include "srsran/ran/transform_precoding/transform_precoding_helpers.h"
 #include "srsran/srslog/srslog.h"
@@ -157,6 +156,8 @@ void ue_fallback_scheduler::handle_conres_indication(du_ue_index_t ue_index)
     logger.error("ue_index={} not found in the scheduler", ue_index);
     return;
   }
+  auto& u = ues[ue_index];
+  u.drx_controller().on_con_res_start();
 
   auto ue_it = std::find_if(pending_dl_ues_new_tx.begin(),
                             pending_dl_ues_new_tx.end(),
@@ -735,6 +736,9 @@ ue_fallback_scheduler::schedule_dl_conres_ce(ue&                                
   // Mark resources as occupied in the Resource grid.
   pdsch_alloc.dl_res_grid.fill(grant_info{scs, pdsch_td_cfg.symbols, ue_grant_crbs});
 
+  // Update DRX controller state.
+  u.drx_controller().on_new_pdcch_alloc(pdcch_alloc.slot);
+
   auto result = fill_dl_srb_grant(u,
                                   pdsch_alloc.slot,
                                   h_dl_retx,
@@ -943,6 +947,9 @@ ue_fallback_scheduler::schedule_dl_srb0(ue&                                   u,
 
   // Mark resources as occupied in the ResourceGrid.
   pdsch_alloc.dl_res_grid.fill(grant_info{scs, pdsch_td_cfg.symbols, ue_grant_crbs});
+
+  // Update DRX controller state.
+  u.drx_controller().on_new_pdcch_alloc(pdcch_alloc.slot);
 
   std::optional<bool> is_srb0;
   if (not result.is_srb_data_pending) {
@@ -1161,6 +1168,9 @@ ue_fallback_scheduler::schedule_dl_srb1(ue&                                   u,
 
   // Mark resources as occupied in the ResourceGrid.
   pdsch_alloc.dl_res_grid.fill(grant_info{scs, pdsch_td_cfg.symbols, ue_grant_crbs});
+
+  // Update DRX controller state.
+  u.drx_controller().on_new_pdcch_alloc(pdcch_alloc.slot);
 
   auto [nof_srb1_scheduled_bytes, h_dl] = fill_dl_srb_grant(u,
                                                             pdsch_alloc.slot,
@@ -1577,6 +1587,9 @@ ue_fallback_scheduler::schedule_ul_srb(ue&                                      
   pusch_alloc.ul_res_grid.fill(
       grant_info{cell_cfg.ul_cfg_common.init_ul_bwp.generic_params.scs, pusch_td.symbols, ue_grant_crbs});
 
+  // Update DRX controller state.
+  u.drx_controller().on_new_pdcch_alloc(pdcch_alloc.slot);
+
   fill_ul_srb_grant(u,
                     pdcch_alloc.slot,
                     h_ul_retx,
@@ -1615,7 +1628,8 @@ void ue_fallback_scheduler::fill_ul_srb_grant(ue&                               
     h_ul = u.get_pcell().harqs.alloc_ul_harq(pdcch_slot + k2 + cell_cfg.ntn_cs_koffset, expert_cfg.max_nof_harq_retxs);
   }
 
-  uint8_t rv = u.get_pcell().get_pusch_rv(h_ul->nof_retxs());
+  uint8_t                  rv                  = u.get_pcell().get_pusch_rv(h_ul->nof_retxs());
+  static constexpr uint8_t default_tpc_command = 1U;
   build_dci_f0_0_c_rnti(pdcch.dci,
                         u.get_pcell().cfg().search_space(pdcch.ctx.context.ss_id),
                         cell_cfg.ul_cfg_common.init_ul_bwp,
@@ -1623,7 +1637,8 @@ void ue_fallback_scheduler::fill_ul_srb_grant(ue&                               
                         pusch_time_res,
                         mcs_idx,
                         rv,
-                        *h_ul);
+                        *h_ul,
+                        default_tpc_command);
 
   // Fill PDSCH PDU.
   msg.context.ue_index  = u.ue_index;

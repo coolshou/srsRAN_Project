@@ -27,6 +27,7 @@
 #include "test_doubles/mock_amf.h"
 #include "test_doubles/mock_cu_up.h"
 #include "test_doubles/mock_du.h"
+#include "tests/test_doubles/f1ap/f1ap_test_messages.h"
 #include "srsran/cu_cp/cu_cp.h"
 #include "srsran/cu_cp/cu_cp_configuration.h"
 #include "srsran/cu_cp/cu_cp_types.h"
@@ -44,24 +45,19 @@ struct cu_cp_test_amf_config {
 };
 
 struct cu_cp_test_env_params {
-  cu_cp_test_env_params(unsigned                                                 max_nof_cu_ups_      = 8,
-                        unsigned                                                 max_nof_dus_         = 8,
-                        unsigned                                                 max_nof_ues_         = 8192,
-                        unsigned                                                 max_nof_drbs_per_ue_ = 8,
-                        const std::vector<std::vector<supported_tracking_area>>& amf_config_ =
-                            {{supported_tracking_area{7, {{plmn_identity::test_value(), {{1}}}}}}},
-                        bool                 load_plugins_     = false,
-                        void*                start_ng_ho_func_ = nullptr,
-                        connect_amfs_func    connect_amfs_     = nullptr,
-                        disconnect_amfs_func disconnect_amfs_  = nullptr) :
+  cu_cp_test_env_params(
+      unsigned                                                 max_nof_cu_ups_      = 8,
+      unsigned                                                 max_nof_dus_         = 8,
+      unsigned                                                 max_nof_ues_         = 8192,
+      unsigned                                                 max_nof_drbs_per_ue_ = 8,
+      const std::vector<std::vector<supported_tracking_area>>& amf_config_          = {{supported_tracking_area{
+          7,
+          {plmn_item{plmn_identity::test_value(),
+                     std::vector<s_nssai_t>{s_nssai_t{slice_service_type{1}, slice_differentiator{}}}}}}}}) :
     max_nof_cu_ups(max_nof_cu_ups_),
     max_nof_dus(max_nof_dus_),
     max_nof_ues(max_nof_ues_),
-    max_nof_drbs_per_ue(max_nof_drbs_per_ue_),
-    load_plugins(load_plugins_),
-    start_ng_ho_func(start_ng_ho_func_),
-    connect_amfs(connect_amfs_),
-    disconnect_amfs(disconnect_amfs_)
+    max_nof_drbs_per_ue(max_nof_drbs_per_ue_)
   {
     uint16_t amf_idx = 0;
     for (const auto& supported_tas : amf_config_) {
@@ -73,10 +69,6 @@ struct cu_cp_test_env_params {
   unsigned                                  max_nof_dus;
   unsigned                                  max_nof_ues;
   unsigned                                  max_nof_drbs_per_ue;
-  bool                                      load_plugins;
-  void*                                     start_ng_ho_func;
-  connect_amfs_func                         connect_amfs;
-  disconnect_amfs_func                      disconnect_amfs;
   std::map<unsigned, cu_cp_test_amf_config> amf_configs;
 };
 
@@ -112,10 +104,9 @@ public:
   /// Drop TNL connection between a DU and the CU-CP.
   bool drop_du_connection(unsigned du_idx);
   /// Run F1 setup procedure to completion.
-  bool run_f1_setup(unsigned         du_idx,
-                    gnb_du_id_t      gnb_du_id = int_to_gnb_du_id(0x11),
-                    nr_cell_identity nci       = nr_cell_identity::create(gnb_id_t{411, 22}, 0U).value(),
-                    pci_t            pci       = 0);
+  bool run_f1_setup(unsigned                                         du_idx,
+                    gnb_du_id_t                                      gnb_du_id = int_to_gnb_du_id(0x11),
+                    std::vector<test_helpers::served_cell_item_info> cells = {test_helpers::served_cell_item_info{}});
 
   /// Establish a TNL connection between a CU-UP and the CU-CP.
   std::optional<unsigned> connect_new_cu_up();
@@ -234,7 +225,8 @@ public:
       const std::map<pdu_session_id_t, drb_test_params>& pdu_sessions_to_add = {},
       const std::map<pdu_session_id_t, drb_id_t>& pdu_sessions_to_modify   = {{pdu_session_id_t::min, drb_id_t::drb1}},
       const std::optional<std::vector<srb_id_t>>& expected_srbs_to_add_mod = std::nullopt,
-      const std::optional<std::vector<drb_id_t>>& expected_drbs_to_add_mod = std::nullopt);
+      const std::optional<std::vector<drb_id_t>>& expected_drbs_to_add_mod = std::nullopt,
+      const std::vector<pdu_session_id_t>&        pdu_sessions_failed_to_modify = {});
 
   [[nodiscard]] bool send_rrc_reconfiguration_complete_and_await_pdu_session_setup_response(
       unsigned                             du_idx,

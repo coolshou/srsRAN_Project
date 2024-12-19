@@ -22,14 +22,13 @@
 
 #pragma once
 
-#include "csi_report_config.h"
-#include "csi_resource_config.h"
-#include "csi_rs_id.h"
-#include "csi_rs_pattern.h"
-#include "csi_rs_types.h"
-#include "frequency_allocation_type.h"
-#include "srsran/adt/optional.h"
 #include "srsran/adt/static_vector.h"
+#include "srsran/ran/csi_rs/csi_report_config.h"
+#include "srsran/ran/csi_rs/csi_resource_config.h"
+#include "srsran/ran/csi_rs/csi_rs_id.h"
+#include "srsran/ran/csi_rs/csi_rs_pattern.h"
+#include "srsran/ran/csi_rs/csi_rs_types.h"
+#include "srsran/ran/csi_rs/frequency_allocation_type.h"
 #include "srsran/ran/tci.h"
 #include <variant>
 
@@ -293,10 +292,10 @@ struct csi_aperiodic_trigger_state {
   bool operator!=(const csi_aperiodic_trigger_state& rhs) const { return !(rhs == *this); }
 };
 
-/// Used to configure the UE with a list of aperiodic trigger states. Each codepoint of the DCI field "CSI request" is
-/// associated with one trigger state.
+/// \brief Used to configure the UE with a list of aperiodic trigger states. Each codepoint of the DCI field
+/// "CSI request" is associated with one trigger state. List size ranges from 0 to MAX_NOF_CSI_APERIODIC_TRIGGERS.
 /// \remark TS 38.331, \c CSI-AperiodicTriggerStateList.
-using csi_aperiodic_trigger_state_list = static_vector<csi_aperiodic_trigger_state, MAX_NOF_CSI_APERIODIC_TRIGGERS>;
+using csi_aperiodic_trigger_state_list = std::vector<csi_aperiodic_trigger_state>;
 
 /// See TS 38.331, \c CSI-SemiPersistentOnPUSCH-TriggerState.
 struct csi_semi_persistent_on_pusch_trigger_state {
@@ -334,7 +333,7 @@ struct csi_meas_config {
   std::vector<csi_report_config> csi_report_cfg_list;
   /// Size of CSI request field in DCI (bits). See TS 38.214, clause 5.2.1.5.1.
   std::optional<unsigned>                                        report_trigger_size;
-  std::optional<csi_aperiodic_trigger_state_list>                aperiodic_trigger_state_list;
+  csi_aperiodic_trigger_state_list                               aperiodic_trigger_state_list;
   std::optional<csi_semi_persistent_on_pusch_trigger_state_list> semi_persistent_on_pusch_trigger_state_list;
 
   bool operator==(const csi_meas_config& rhs) const

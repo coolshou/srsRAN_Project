@@ -53,9 +53,14 @@ stages:
   - rf
   - manual
   - documentation
+  # release
+  - pre private
   - private
+  - post private
   - public
+  - post public
   - release
+  - post release
 
 variables:
   SLACK_CHANNEL_OK: "#ci_gnb"
@@ -82,6 +87,8 @@ pr reminder:
 trigger builder:
   stage: ci
   rules:
+    - if: $CI_MERGE_REQUEST_LABELS =~ /ci-no-builder/
+      when: never
     - if: $ON_MR
       changes:
         paths:
@@ -95,6 +102,8 @@ trigger builder:
 trigger docker:
   stage: ci
   rules:
+    - if: $CI_MERGE_REQUEST_LABELS =~ /ci-no-docker/
+      when: never
     - if: $ON_MR
       changes:
         paths:
@@ -123,15 +132,13 @@ matlab nightly:
         CI_DESCRIPTION: Nightly
         SRSRAN_COMMIT: $CI_COMMIT_SHA
         NOTIFY_SLACK: "true"
-      when: delayed
-      start_in: 3 hours
   inherit:
     variables: false
   trigger:
     project: softwareradiosystems/srsgnb_matlab
     branch: master
 
-enterprise nightly:
+plugin nightly:
   stage: ci
   rules:
     - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
@@ -140,12 +147,10 @@ enterprise nightly:
         CI_DESCRIPTION: Nightly
         SRSRAN_COMMIT: $CI_COMMIT_SHA
         NOTIFY_SLACK: "true"
-      when: delayed
-      start_in: 3 hours
   inherit:
     variables: false
   trigger:
-    project: softwareradiosystems/srsran_5g_enterprise
+    project: ${PLUGIN_REPO}
     branch: main
 
 matlab weekly:
@@ -157,32 +162,11 @@ matlab weekly:
         CI_DESCRIPTION: Weekly
         SRSRAN_COMMIT: $CI_COMMIT_SHA
         NOTIFY_SLACK: "true"
-      when: delayed
-      start_in: 20 hours
   inherit:
     variables: false
   trigger:
     project: softwareradiosystems/srsgnb_matlab
     branch: master
-
-helm weekly:
-  stage: ci
-  rules:
-    - if: $CI_DESCRIPTION =~ /Weekly/
-      variables:
-        ON_SCHEDULE: "true"
-        CI_DESCRIPTION: Synchronization with srsGNB
-        NOTIFY_SLACK: "true"
-      when: delayed
-      start_in: 20 hours
-  inherit:
-    variables: false
-  trigger:
-    project: softwareradiosystems/ci/srsgnb_k8s
-    branch: main
-  needs:
-    - job: trigger docker
-      artifacts: false
 
 ################################################################################
 ## Static
@@ -494,6 +478,14 @@ pages:
       cd ..
     - mkdir public/doxygen
     - rsync -a build/docs/html/ public/doxygen/
+    - |
+      # Remove bigger file if size is bigger than 900MB
+      while [ $(du -s public | awk '{print $1}') -gt 921600 ]; do
+        file_to_remove=$(find public -type f ! -name "*.html" ! -name "*.js" -exec ls -l {} + | sort -k5 -n -r | awk 'NR==1' | awk '{print $NF}')
+        file_size=$(du -h "$file_to_remove" | awk '{print $1}')
+        echo "Removing file: $file_to_remove (Size: $file_size)"
+        rm -f "$file_to_remove"
+      done
   after_script:
     - |
       if [ $CI_JOB_STATUS = "failed" ]; then

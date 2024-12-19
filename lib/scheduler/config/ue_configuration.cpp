@@ -21,13 +21,12 @@
  */
 
 #include "ue_configuration.h"
-
 #include "../support/pdcch/pdcch_mapping.h"
 #include "../support/pdsch/pdsch_default_time_allocation.h"
 #include "../support/pdsch/pdsch_resource_allocation.h"
 #include "../support/pusch/pusch_default_time_allocation.h"
 #include "../support/pusch/pusch_resource_allocation.h"
-#include "srsran/support/math_utils.h"
+#include "srsran/support/math/math_utils.h"
 #include <algorithm>
 
 using namespace srsran;
@@ -578,17 +577,18 @@ static void assert_dci_size_config(search_space_id ss_id, const dci_size_config&
   srsran_assert(validate_dci_sz_cfg(), "Invalid DCI size configuration for SearchSpace={}: {}", ss_id, error_msg);
 }
 
-ue_cell_configuration::ue_cell_configuration(rnti_t                     crnti_,
-                                             const cell_configuration&  cell_cfg_common_,
-                                             const serving_cell_config& serv_cell_cfg_,
-                                             bool                       multi_cells_configured_) :
+ue_cell_configuration::ue_cell_configuration(rnti_t                                crnti_,
+                                             const cell_configuration&             cell_cfg_common_,
+                                             const serving_cell_config&            serv_cell_cfg_,
+                                             const std::optional<meas_gap_config>& meas_gap_cfg_,
+                                             bool                                  multi_cells_configured_) :
   crnti(crnti_),
   cell_cfg_common(cell_cfg_common_),
   multi_cells_configured(multi_cells_configured_),
   nof_dl_ports(compute_nof_dl_ports(serv_cell_cfg_))
 {
   // Apply UE-dedicated Config.
-  reconfigure(serv_cell_cfg_);
+  reconfigure(serv_cell_cfg_, meas_gap_cfg_);
 }
 
 ue_cell_configuration::ue_cell_configuration(const ue_cell_configuration& other) :
@@ -600,9 +600,13 @@ ue_cell_configuration::ue_cell_configuration(const ue_cell_configuration& other)
   reconfigure(other.cell_cfg_ded);
 }
 
-void ue_cell_configuration::reconfigure(const serving_cell_config& cell_cfg_ded_req)
+void ue_cell_configuration::reconfigure(const serving_cell_config&            cell_cfg_ded_req,
+                                        const std::optional<meas_gap_config>& meas_gaps_,
+                                        const std::optional<drx_config>&      drx_cfg_)
 {
   cell_cfg_ded = cell_cfg_ded_req;
+  meas_gap_cfg = meas_gaps_;
+  drx_cfg      = drx_cfg_;
 
   // Clear previous lookup tables.
   bwp_table     = {};
@@ -762,6 +766,34 @@ bool ue_cell_configuration::is_cfg_dedicated_complete() const
          (cell_cfg_ded.ul_config.has_value() and cell_cfg_ded.ul_config->init_ul_bwp.pucch_cfg.has_value());
 }
 
+bool ue_cell_configuration::is_dl_enabled(slot_point dl_slot) const
+{
+  if (not cell_cfg_common.is_dl_enabled(dl_slot)) {
+    return false;
+  }
+  if (meas_gap_cfg.has_value()) {
+    if (is_inside_meas_gap(meas_gap_cfg.value(), dl_slot)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool ue_cell_configuration::is_ul_enabled(slot_point ul_slot) const
+{
+  if (not cell_cfg_common.is_ul_enabled(ul_slot)) {
+    return false;
+  }
+  if (meas_gap_cfg.has_value()) {
+    if (is_inside_meas_gap(meas_gap_cfg.value(), ul_slot)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+//
+
 ue_configuration::ue_configuration(du_ue_index_t ue_index_, rnti_t crnti_) : ue_index(ue_index_), crnti(crnti_) {}
 
 ue_configuration::ue_configuration(du_ue_index_t                         ue_index_,
@@ -797,6 +829,9 @@ void ue_configuration::update(const cell_common_configuration_list& common_cells
     drb_qos_list = cfg_req.drb_info_list;
   }
 
+  // Update DRX config
+  ue_drx_cfg = cfg_req.drx_cfg;
+
   // Update UE dedicated cell configs.
   if (cfg_req.cells.has_value()) {
     // Check if any cell has been removed.
@@ -818,12 +853,12 @@ void ue_configuration::update(const cell_common_configuration_list& common_cells
 
       if (not du_cells.contains(cell_index)) {
         // New Cell.
-        du_cells.emplace(
-            cell_index,
-            std::make_unique<ue_cell_configuration>(crnti, *common_cells[cell_index], ded_cell.serv_cell_cfg, e > 1));
+        du_cells.emplace(cell_index,
+                         std::make_unique<ue_cell_configuration>(
+                             crnti, *common_cells[cell_index], ded_cell.serv_cell_cfg, cfg_req.meas_gap_cfg, e > 1));
       } else {
         // Reconfiguration of existing cell.
-        du_cells[cell_index]->reconfigure(ded_cell.serv_cell_cfg);
+        du_cells[cell_index]->reconfigure(ded_cell.serv_cell_cfg, cfg_req.meas_gap_cfg, cfg_req.drx_cfg);
       }
     }
 

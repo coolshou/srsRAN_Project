@@ -22,7 +22,6 @@
 
 #pragma once
 
-#include "rrc_types.h"
 #include "srsran/adt/byte_buffer.h"
 #include "srsran/adt/static_vector.h"
 #include "srsran/asn1/rrc_nr/ue_cap.h"
@@ -30,6 +29,7 @@
 #include "srsran/cu_cp/cu_cp_types.h"
 #include "srsran/cu_cp/cu_cp_ue_messages.h"
 #include "srsran/ran/rnti.h"
+#include "srsran/rrc/rrc_types.h"
 #include "srsran/rrc/rrc_ue_config.h"
 #include "srsran/security/security.h"
 #include "srsran/support/async/async_task.h"
@@ -46,6 +46,9 @@ struct dl_dcch_msg_s;
 
 namespace srsran {
 namespace srs_cu_cp {
+
+/// RRC states (3GPP 38.331 v15.5.1 Sec 4.2.1)
+enum class rrc_state { idle = 0, connected, connected_inactive };
 
 class rrc_ue_controller
 {
@@ -283,6 +286,11 @@ public:
   /// \returns The handover RRC Reconfiguration PDU. If the handover command is invalid, the PDU is empty.
   virtual byte_buffer handle_rrc_handover_command(byte_buffer cmd) = 0;
 
+  /// \brief Handle the handover preparation info RRC PDU.
+  /// \param[in] pdu The handover preparation info RRC PDU.
+  /// \returns True if the handover preparation info was successfully handled, false otherwise.
+  virtual bool handle_rrc_handover_preparation_info(byte_buffer pdu) = 0;
+
   /// \brief Get the packed RRC Handover Command.
   /// \param[in] msg The new RRC Reconfiguration Request.
   /// \returns The RRC Handover Command.
@@ -299,6 +307,9 @@ public:
 
   /// \brief Get all SRBs of the UE.
   virtual static_vector<srb_id_t, MAX_NOF_SRBS> get_srbs() = 0;
+
+  /// \brief Get the RRC connection state of the UE.
+  virtual rrc_state get_rrc_state() const = 0;
 };
 
 class rrc_ue_cu_cp_ue_notifier

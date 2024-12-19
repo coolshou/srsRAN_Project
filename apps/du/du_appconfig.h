@@ -22,11 +22,10 @@
 
 #pragma once
 
-#include "../gnb/gnb_appconfig.h" // TODO: Remove
 #include "apps/services/buffer_pool/buffer_pool_appconfig.h"
+#include "apps/services/hal/hal_appconfig.h"
 #include "apps/services/logger/logger_appconfig.h"
-#include "apps/services/os_sched_affinity_manager.h"
-#include "srsran/support/executors/unique_thread.h"
+#include "apps/services/worker_manager/worker_manager_appconfig.h"
 #include <optional>
 
 namespace srsran {
@@ -59,12 +58,12 @@ struct metrics_appconfig {
 struct du_appconfig {
   /// Default constructor to update the log filename.
   du_appconfig() { log_cfg.filename = "/tmp/du.log"; }
+  /// DU multicell flag.
+  bool du_multicell_enabled = false;
   /// Loggers configuration.
   logger_appconfig log_cfg;
   /// Metrics configuration.
   srs_du::metrics_appconfig metrics_cfg;
-  /// E2 configuration.
-  e2_appconfig e2_cfg;
   /// F1-C configuration.
   srs_du::f1ap_appconfig f1ap_cfg;
   /// F1-U configuration.

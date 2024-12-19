@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include "baseband_gateway_timestamp.h"
-#include "srsran/adt/optional.h"
+#include "srsran/gateways/baseband/baseband_gateway_timestamp.h"
+#include <optional>
 
 namespace srsran {
 

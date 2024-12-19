@@ -158,7 +158,7 @@ test_bench::test_bench(const test_bench_params& params,
   cfg_params.csi_rs_enabled                = true;
   cfg_params.scs_common                    = params.is_tdd ? subcarrier_spacing::kHz30 : subcarrier_spacing::kHz15;
   cfg_params.dl_f_ref_arfcn                = params.is_tdd ? 520000U : 365000U;
-  sched_ue_creation_request_message ue_req = test_helpers::create_default_sched_ue_creation_request(cfg_params);
+  sched_ue_creation_request_message ue_req = sched_config_helper::create_default_sched_ue_creation_request(cfg_params);
   ue_req.ue_index                          = main_ue_idx;
 
   srsran_assert(
@@ -228,7 +228,7 @@ test_bench::test_bench(const test_bench_params& params,
   }
 
   ue_ded_cfgs.push_back(std::make_unique<ue_configuration>(ue_req.ue_index, ue_req.crnti, cell_cfg_list, ue_req.cfg));
-  ues.add_ue(std::make_unique<ue>(ue_creation_command{*ue_ded_cfgs.back(), ue_req.starts_in_fallback, cell_harqs}));
+  ues.add_ue(std::make_unique<ue>(ue_creation_command{*ue_ded_cfgs.back(), ue_req.starts_in_fallback, cell_harqs, {}}));
   uci_sched.add_ue(ues[ue_req.ue_index].get_pcell().cfg());
   last_allocated_rnti   = ue_req.crnti;
   last_allocated_ue_idx = main_ue_idx;
@@ -250,7 +250,7 @@ void test_bench::add_ue()
 {
   cell_config_builder_params cfg_params{};
   cfg_params.csi_rs_enabled                = true;
-  sched_ue_creation_request_message ue_req = test_helpers::create_default_sched_ue_creation_request(cfg_params);
+  sched_ue_creation_request_message ue_req = sched_config_helper::create_default_sched_ue_creation_request(cfg_params);
   last_allocated_ue_idx =
       to_du_ue_index(static_cast<std::underlying_type<du_ue_index_t>::type>(last_allocated_ue_idx) + 1);
   ue_req.ue_index = last_allocated_ue_idx;

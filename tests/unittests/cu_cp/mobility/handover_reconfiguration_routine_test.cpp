@@ -134,8 +134,14 @@ public:
   byte_buffer get_rrc_handover_command(const rrc_reconfiguration_procedure_request& request,
                                        unsigned                                     transaction_id_) override
   {
-    logger.info("Received a new request to get a RRC Handover Command.");
+    logger.info("Received a new request to get a RRC Handover Command");
     return byte_buffer{};
+  }
+
+  bool handle_rrc_handover_preparation_info(byte_buffer pdu) override
+  {
+    logger.info("Received HandoverPreparationInfo");
+    return true;
   }
 
   void create_srb(const srb_creation_message& msg) override
@@ -146,6 +152,8 @@ public:
   }
 
   static_vector<srb_id_t, MAX_NOF_SRBS> get_srbs() override { return srb_vec; }
+
+  rrc_state get_rrc_state() const override { return rrc_state::connected; };
 
   // RRC UE Setup proc notifier
   void on_new_dl_ccch(const asn1::rrc_nr::dl_ccch_msg_s& dl_ccch_msg) override{};

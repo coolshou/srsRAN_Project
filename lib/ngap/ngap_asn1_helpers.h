@@ -32,6 +32,7 @@
 #include "srsran/ngap/ngap_handover.h"
 #include "srsran/ngap/ngap_init_context_setup.h"
 #include "srsran/ngap/ngap_nas.h"
+#include "srsran/ngap/ngap_nrppa.h"
 #include "srsran/ngap/ngap_reset.h"
 #include "srsran/ngap/ngap_setup.h"
 #include "srsran/ngap/ngap_types.h"
@@ -122,9 +123,10 @@ inline void fill_ngap_ng_setup_result(ngap_ng_setup_result& result, const asn1::
 
     for (const auto& asn1_slice_support_item : asn1_plmn_support_item.slice_support_list) {
       slice_support_item_t slice_support_item = {};
-      slice_support_item.s_nssai.sst          = asn1_slice_support_item.s_nssai.sst.to_number();
+      slice_support_item.s_nssai.sst = slice_service_type{(uint8_t)asn1_slice_support_item.s_nssai.sst.to_number()};
       if (asn1_slice_support_item.s_nssai.sd_present) {
-        slice_support_item.s_nssai.sd = asn1_slice_support_item.s_nssai.sd.to_number();
+        slice_support_item.s_nssai.sd =
+            slice_differentiator::create(asn1_slice_support_item.s_nssai.sd.to_number()).value();
       }
       plmn_support_item.slice_support_list.push_back(slice_support_item);
     }
@@ -255,9 +257,9 @@ inline bool fill_cu_cp_pdu_session_resource_setup_item_base(cu_cp_pdu_session_re
 
   // s-NSSAI
   if (asn1_session_item.s_nssai.sd_present) {
-    setup_item.s_nssai.sd = asn1_session_item.s_nssai.sd.to_number();
+    setup_item.s_nssai.sd = slice_differentiator::create(asn1_session_item.s_nssai.sd.to_number()).value();
   }
-  setup_item.s_nssai.sst = asn1_session_item.s_nssai.sst.to_number();
+  setup_item.s_nssai.sst = slice_service_type{(uint8_t)asn1_session_item.s_nssai.sst.to_number()};
 
   // pDUSessionResourceSetupRequestTransfer
   asn1::ngap::pdu_session_res_setup_request_transfer_s asn1_setup_req_transfer;
@@ -1125,6 +1127,47 @@ fill_asn1_handover_notify(asn1::ngap::ho_notify_s& asn1_msg, const nr_cell_globa
   user_loc_info_nr.nr_cgi      = nr_cgi_to_ngap_asn1(cgi);
   user_loc_info_nr.tai.plmn_id = cgi.plmn_id.to_bytes();
   user_loc_info_nr.tai.tac.from_number(tac);
+}
+
+/// \brief Convert DL UE Associated NRPPa Transport ASN1 struct to common type.
+/// \param[out] msg The ngap_ue_associated_nrppa_transport struct to fill.
+/// \param[in] asn1_msg The DL UE Associated NRPPa Transport ASN1 struct.
+inline void fill_dl_ue_associated_nrppa_transport(ngap_ue_associated_nrppa_transport&                   msg,
+                                                  const asn1::ngap::dl_ue_associated_nrppa_transport_s& asn1_msg)
+{
+  msg.routing_id = asn1_msg->routing_id.copy();
+  msg.nrppa_pdu  = asn1_msg->nrppa_pdu.copy();
+}
+
+/// \brief Convert common type UL UE Associated NRPPa Transport struct to ASN.1.
+/// \param[out] asn1_msg The DL UE Associated NRPPa Transport ASN1 struct to fill.
+/// \param[in] msg The common type ngap_ue_associated_nrppa_transport struct.
+inline void fill_ul_ue_associated_nrppa_transport(asn1::ngap::ul_ue_associated_nrppa_transport_s& asn1_msg,
+                                                  const ngap_ue_associated_nrppa_transport&       msg)
+{
+  asn1_msg->routing_id = msg.routing_id.copy();
+  asn1_msg->nrppa_pdu  = msg.nrppa_pdu.copy();
+}
+
+/// \brief Convert DL Non UE Associated NRPPa Transport ASN1 struct to common type.
+/// \param[out] msg The ngap_ue_associated_nrppa_transport struct to fill.
+/// \param[in] asn1_msg The DL Non UE Associated NRPPa Transport ASN1 struct.
+inline void
+fill_dl_non_ue_associated_nrppa_transport(ngap_non_ue_associated_nrppa_transport&                   msg,
+                                          const asn1::ngap::dl_non_ue_associated_nrppa_transport_s& asn1_msg)
+{
+  msg.routing_id = asn1_msg->routing_id.copy();
+  msg.nrppa_pdu  = asn1_msg->nrppa_pdu.copy();
+}
+
+/// \brief Convert common type UL Non UE Associated NRPPa Transport struct to ASN.1.
+/// \param[out] asn1_msg The DL Non UE Associated NRPPa Transport ASN1 struct to fill.
+/// \param[in] msg The common type ngap_ue_associated_nrppa_transport struct.
+inline void fill_ul_non_ue_associated_nrppa_transport(asn1::ngap::ul_non_ue_associated_nrppa_transport_s& asn1_msg,
+                                                      const ngap_non_ue_associated_nrppa_transport&       msg)
+{
+  asn1_msg->routing_id = msg.routing_id.copy();
+  asn1_msg->nrppa_pdu  = msg.nrppa_pdu.copy();
 }
 
 } // namespace srs_cu_cp

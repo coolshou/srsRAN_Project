@@ -23,11 +23,10 @@
 #pragma once
 
 #include "du_ue_adapters.h"
-#include "srsran/adt/optional.h"
 #include "srsran/adt/slotted_array.h"
 #include "srsran/f1u/du/f1u_config.h"
 #include "srsran/mac/mac_lc_config.h"
-#include "srsran/ran/lcid.h"
+#include "srsran/ran/logical_channel/lcid.h"
 #include "srsran/ran/qos/five_qi_qos_mapping.h"
 #include "srsran/ran/qos/qos_parameters.h"
 #include "srsran/ran/s_nssai.h"

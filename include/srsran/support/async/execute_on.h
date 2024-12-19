@@ -22,8 +22,8 @@
 
 #pragma once
 
-#include "async_task.h"
-#include "detail/function_signature.h"
+#include "srsran/support/async/async_task.h"
+#include "srsran/support/async/detail/function_signature.h"
 #include <thread>
 
 namespace srsran {
@@ -50,7 +50,7 @@ struct try_execute_on_awaiter {
     }
   }
 
-  SRSRAN_NODISCARD bool await_resume() { return success; }
+  [[nodiscard]] bool await_resume() { return success; }
 
   try_execute_on_awaiter& get_awaiter() { return *this; }
 

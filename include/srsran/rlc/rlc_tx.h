@@ -23,7 +23,6 @@
 #pragma once
 
 #include "srsran/adt/byte_buffer.h"
-#include "srsran/adt/optional.h"
 
 /*
  * This file will hold the interfaces and notifiers for the RLC entity.
@@ -44,6 +43,7 @@
  *    inherit or a notifier that the RLC will keep as a member.
  *
  */
+
 namespace srsran {
 
 /****************************************

@@ -22,16 +22,13 @@
 
 #pragma once
 
-#include "sched_consts.h"
-#include "scheduler_dci.h"
-#include "vrb_alloc.h"
 #include "srsran/adt/static_vector.h"
-#include "srsran/mac/lcid_dl_sch.h"
 #include "srsran/ran/csi_report/csi_report_configuration.h"
 #include "srsran/ran/csi_report/csi_report_data.h"
 #include "srsran/ran/csi_rs/csi_rs_types.h"
 #include "srsran/ran/du_types.h"
-#include "srsran/ran/lcid.h"
+#include "srsran/ran/logical_channel/lcid.h"
+#include "srsran/ran/logical_channel/lcid_dl_sch.h"
 #include "srsran/ran/pci.h"
 #include "srsran/ran/pdsch/pdsch_mcs.h"
 #include "srsran/ran/prach/prach_format_type.h"
@@ -49,7 +46,10 @@
 #include "srsran/scheduler/config/bwp_configuration.h"
 #include "srsran/scheduler/config/dmrs.h"
 #include "srsran/scheduler/harq_id.h"
+#include "srsran/scheduler/sched_consts.h"
+#include "srsran/scheduler/scheduler_dci.h"
 #include "srsran/scheduler/scheduler_pucch_format.h"
+#include "srsran/scheduler/vrb_alloc.h"
 #include <cstddef>
 
 namespace srsran {

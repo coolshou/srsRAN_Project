@@ -23,7 +23,7 @@
 #pragma once
 
 #include "external/CLI/CLI11.hpp"
-#include "srsran/adt/optional.h"
+#include <optional>
 
 namespace srsran {
 

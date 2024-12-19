@@ -25,6 +25,7 @@
 #include "srsran/phy/support/support_formatters.h"
 #include "srsran/phy/upper/channel_processors/pusch/formatters.h"
 #include "srsran/phy/upper/unique_rx_buffer.h"
+#include "srsran/support/format/fmt_optional.h"
 
 namespace fmt {
 
@@ -43,13 +44,13 @@ struct formatter<pusch_results_wrapper> {
   formatter() = default;
 
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return helper.parse(ctx);
   }
 
   template <typename FormatContext>
-  auto format(const pusch_results_wrapper& result, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  auto format(const pusch_results_wrapper& result, FormatContext& ctx)
   {
     // Format SCH message.
     if (result.sch.has_value()) {
@@ -137,9 +138,10 @@ private:
     }
 
     // Calculate the return latency if available.
-    std::chrono::nanoseconds time_return_ns(0);
-    if (time_return != std::chrono::time_point<std::chrono::steady_clock>()) {
-      time_return_ns = time_return - time_start;
+    std::chrono::nanoseconds                           time_return_ns(0);
+    std::chrono::time_point<std::chrono::steady_clock> time_return_local = time_return.load();
+    if (time_return_local != std::chrono::time_point<std::chrono::steady_clock>()) {
+      time_return_ns = time_return_local - time_start;
     }
 
     // Calculate the final time.
@@ -183,15 +185,18 @@ private:
     notifier_->on_sch(sch);
   }
 
-  srslog::basic_logger&                              logger;
-  std::unique_ptr<pusch_processor>                   processor;
-  span<uint8_t>                                      data;
-  pdu_t                                              pdu;
-  pusch_processor_result_notifier*                   notifier;
-  std::chrono::time_point<std::chrono::steady_clock> time_start;
-  std::chrono::time_point<std::chrono::steady_clock> time_uci;
-  std::chrono::time_point<std::chrono::steady_clock> time_return;
-  fmt::pusch_results_wrapper                         results;
+  srslog::basic_logger&                                           logger;
+  std::unique_ptr<pusch_processor>                                processor;
+  span<uint8_t>                                                   data;
+  pdu_t                                                           pdu;
+  pusch_processor_result_notifier*                                notifier;
+  std::chrono::time_point<std::chrono::steady_clock>              time_start;
+  std::chrono::time_point<std::chrono::steady_clock>              time_uci;
+  std::atomic<std::chrono::time_point<std::chrono::steady_clock>> time_return;
+  fmt::pusch_results_wrapper                                      results;
+
+  // Makes sure atomics are lock free.
+  static_assert(std::atomic<decltype(time_return)>::is_always_lock_free);
 };
 
 } // namespace srsran

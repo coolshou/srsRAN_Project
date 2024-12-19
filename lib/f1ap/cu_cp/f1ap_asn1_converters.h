@@ -23,7 +23,6 @@
 #pragma once
 
 #include "../asn1_helpers.h"
-#include "srsran/adt/optional.h"
 #include "srsran/asn1/f1ap/common.h"
 #include "srsran/asn1/f1ap/f1ap_ies.h"
 #include "srsran/cu_cp/cu_cp_types.h"

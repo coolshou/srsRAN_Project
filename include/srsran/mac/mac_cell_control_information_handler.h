@@ -23,7 +23,6 @@
 #pragma once
 
 #include "srsran/adt/bounded_bitset.h"
-#include "srsran/adt/optional.h"
 #include "srsran/adt/static_vector.h"
 #include "srsran/ran/phy_time_unit.h"
 #include "srsran/ran/rnti.h"

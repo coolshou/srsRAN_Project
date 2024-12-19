@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "gtpu_teid.h"
+#include "srsran/gtpu/gtpu_teid.h"
 #include "fmt/format.h"
 #include <chrono>
 #include <cstdint>
@@ -49,9 +49,12 @@ struct gtpu_tunnel_ngu_config {
   } tx;
 };
 
+enum class nru_node { du, cu_up, invalid };
+
 /// \brief Configurable parameters for GTP-U NR-U tunnels
 struct gtpu_tunnel_nru_config {
   struct gtpu_tunnel_nru_rx_config {
+    nru_node    node = nru_node::invalid;
     gtpu_teid_t local_teid;
   } rx;
   struct gtpu_tunnel_nru_tx_config {
@@ -72,14 +75,14 @@ namespace fmt {
 template <>
 struct formatter<srsran::gtpu_tunnel_ngu_config::gtpu_tunnel_ngu_rx_config> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
   auto format(const srsran::gtpu_tunnel_ngu_config::gtpu_tunnel_ngu_rx_config& cfg, FormatContext& ctx)
-      -> decltype(std::declval<FormatContext>().out())
+
   {
     return format_to(ctx.out(), "local_teid={} t_reordering={}", cfg.local_teid, cfg.t_reordering);
   }
@@ -89,14 +92,14 @@ struct formatter<srsran::gtpu_tunnel_ngu_config::gtpu_tunnel_ngu_rx_config> {
 template <>
 struct formatter<srsran::gtpu_tunnel_ngu_config::gtpu_tunnel_ngu_tx_config> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
   auto format(const srsran::gtpu_tunnel_ngu_config::gtpu_tunnel_ngu_tx_config& cfg, FormatContext& ctx)
-      -> decltype(std::declval<FormatContext>().out())
+
   {
     return format_to(ctx.out(), "peer_teid={} peer_addr={} peer_port={}", cfg.peer_teid, cfg.peer_addr, cfg.peer_port);
   }
@@ -106,16 +109,39 @@ struct formatter<srsran::gtpu_tunnel_ngu_config::gtpu_tunnel_ngu_tx_config> {
 template <>
 struct formatter<srsran::gtpu_tunnel_ngu_config> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
   auto format(const srsran::gtpu_tunnel_ngu_config& cfg, FormatContext& ctx)
-      -> decltype(std::declval<FormatContext>().out())
+
   {
     return format_to(ctx.out(), "{} {}", cfg.rx, cfg.tx);
+  }
+};
+
+//
+template <>
+struct formatter<srsran::nru_node> {
+  template <typename ParseContext>
+  auto parse(ParseContext& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(const srsran::nru_node& node, FormatContext& ctx)
+  {
+    switch (node) {
+      case srsran::nru_node::du:
+        return format_to(ctx.out(), "du");
+      case srsran::nru_node::cu_up:
+        return format_to(ctx.out(), "cu_up");
+      default:
+        return format_to(ctx.out(), "invalid");
+    }
   }
 };
 
@@ -123,16 +149,16 @@ struct formatter<srsran::gtpu_tunnel_ngu_config> {
 template <>
 struct formatter<srsran::gtpu_tunnel_nru_config::gtpu_tunnel_nru_rx_config> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
   auto format(const srsran::gtpu_tunnel_nru_config::gtpu_tunnel_nru_rx_config& cfg, FormatContext& ctx)
-      -> decltype(std::declval<FormatContext>().out())
+
   {
-    return format_to(ctx.out(), "local_teid={}", cfg.local_teid);
+    return format_to(ctx.out(), "node={} local_teid={}", cfg.node, cfg.local_teid);
   }
 };
 
@@ -140,14 +166,14 @@ struct formatter<srsran::gtpu_tunnel_nru_config::gtpu_tunnel_nru_rx_config> {
 template <>
 struct formatter<srsran::gtpu_tunnel_nru_config::gtpu_tunnel_nru_tx_config> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
   auto format(const srsran::gtpu_tunnel_nru_config::gtpu_tunnel_nru_tx_config& cfg, FormatContext& ctx)
-      -> decltype(std::declval<FormatContext>().out())
+
   {
     return format_to(ctx.out(), "peer_teid={} peer_addr={} peer_port={}", cfg.peer_teid, cfg.peer_addr, cfg.peer_port);
   }
@@ -157,14 +183,14 @@ struct formatter<srsran::gtpu_tunnel_nru_config::gtpu_tunnel_nru_tx_config> {
 template <>
 struct formatter<srsran::gtpu_tunnel_nru_config> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
   auto format(const srsran::gtpu_tunnel_nru_config& cfg, FormatContext& ctx)
-      -> decltype(std::declval<FormatContext>().out())
+
   {
     return format_to(ctx.out(), "{} {}", cfg.rx, cfg.tx);
   }

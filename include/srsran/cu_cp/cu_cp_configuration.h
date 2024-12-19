@@ -34,16 +34,12 @@
 #include "srsran/support/executors/task_executor.h"
 
 namespace srsran {
-namespace srs_cu_cp {
 
+class pdcp_metrics_notifier;
+
+namespace srs_cu_cp {
 class n2_connection_client;
 class ngap_repository;
-
-using connect_amfs_func = async_task<bool> (*)(ngap_repository&                                    ngap_db,
-                                               std::unordered_map<amf_index_t, std::atomic<bool>>& amfs_connected);
-
-using disconnect_amfs_func = async_task<void> (*)(ngap_repository&                                    ngap_db,
-                                                  std::unordered_map<amf_index_t, std::atomic<bool>>& amfs_connected);
 
 struct plmn_item {
   plmn_identity plmn_id;
@@ -119,15 +115,6 @@ struct cu_cp_configuration {
     std::chrono::seconds statistics_report_period{1};
   };
 
-  struct plugin_params {
-    /// Try to load CU-CP plugins.
-    bool load_plugins;
-    /// Loaded function pointer to connect to AMFs
-    connect_amfs_func connect_amfs = nullptr;
-    /// Loaded function pointer to disconnect from AMFs
-    disconnect_amfs_func disconnect_amfs = nullptr;
-  };
-
   /// NG-RAN node parameters.
   ran_node_configuration node;
   /// Parameters to determine the admission of new CU-UP, DU and UE connections.
@@ -148,16 +135,10 @@ struct cu_cp_configuration {
   mobility_configuration mobility;
   /// Parameters related with CU-CP metrics.
   metrics_params metrics;
-  /// Plugins parameters
-  plugin_params plugin;
   /// Timers, executors, and other services used by the CU-CP.
   service_params services;
-  /// E2AP configuration.
-  e2ap_configuration e2ap_config;
-  /// E2 connection client.
-  e2_connection_client* e2_client = nullptr;
-  /// E2 CU metrics interface.
-  e2_cu_metrics_interface* e2_cu_metric_iface = nullptr;
+  /// PDCP metrics notifier.
+  pdcp_metrics_notifier* pdcp_metric_notifier = nullptr;
 };
 
 } // namespace srs_cu_cp

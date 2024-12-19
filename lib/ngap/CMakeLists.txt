@@ -37,6 +37,7 @@ set(SOURCES
         procedures/ngap_handover_preparation_procedure.cpp
         procedures/ngap_handover_resource_allocation_procedure.cpp
         procedures/ngap_ue_context_release_procedure.cpp
+        procedures/ngap_dl_ue_associated_nrppa_transport_procedure.cpp
     )
 
 
@@ -48,5 +49,3 @@ target_link_libraries(srsran_ngap
 	srsran_support)
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
-
-add_to_exported_libs(srsran_ngap)

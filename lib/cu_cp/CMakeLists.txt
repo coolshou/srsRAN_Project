@@ -41,6 +41,7 @@ set(SOURCES
       ngap_repository.cpp
       routines/amf_connection_setup_routine.cpp
       routines/amf_connection_removal_routine.cpp
+      routines/dl_non_ue_associated_nrppa_transport_routine.cpp
       routines/initial_context_setup_routine.cpp
       routines/pdu_session_routine_helpers.cpp
       routines/pdu_session_resource_setup_routine.cpp
@@ -52,7 +53,7 @@ set(SOURCES
       routines/ue_transaction_info_release_routine.cpp
       routines/ue_amf_context_release_request_routine.cpp
       routines/mobility/mobility_helpers.cpp
-      routines/mobility/inter_du_handover_routine.cpp
+      routines/mobility/intra_cu_handover_routine.cpp
       routines/mobility/inter_cu_handover_target_routine.cpp
       routines/mobility/handover_reconfiguration_routine.cpp
       task_schedulers/cu_up_task_scheduler.cpp
@@ -81,4 +82,5 @@ target_link_libraries(srsran_cu_cp
         ${CMAKE_DL_LIBS}
 )
 
-add_to_exported_libs(srsran_cu_cp)
+add_library(srsran_o_cu_cp o_cu_cp_factory.cpp o_cu_cp_impl.cpp)
+target_link_libraries(srsran_o_cu_cp PRIVATE srsran_cu_cp)

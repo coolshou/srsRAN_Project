@@ -61,24 +61,8 @@ inline std::vector<unsigned> parse_port_id(const std::string& port_id_str)
   return port_ids;
 }
 
-/// Parses the string containing Ethernet MAC address.
-inline bool parse_mac_address(const std::string& mac_str, ether::mac_address& mac)
-{
-  std::array<unsigned, 6> data       = {};
-  int                     bytes_read = std::sscanf(
-      mac_str.c_str(), "%02x:%02x:%02x:%02x:%02x:%02x", &data[0], &data[1], &data[2], &data[3], &data[4], &data[5]);
-  if (bytes_read != ether::ETH_ADDR_LEN) {
-    fmt::print("Invalid MAC address provided: {}\n", mac_str);
-    return false;
-  }
-
-  std::copy(data.begin(), data.end(), mac.begin());
-
-  return true;
-}
-
 /// Validates the bandwidth argument provided as a user input.
-inline bool is_valid_bw(unsigned bandwidth)
+inline bool is_valid_bandwidth(unsigned bandwidth)
 {
   // Bandwidth cannot be less than 5MHz.
   if (bandwidth < 5U) {

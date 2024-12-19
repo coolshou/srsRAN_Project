@@ -23,7 +23,8 @@
 #include "pdu_rx_handler.h"
 #include "srsran/instrumentation/traces/up_traces.h"
 #include "srsran/srslog/srslog.h"
-#include "srsran/support/format_utils.h"
+#include "srsran/support/format/fmt_basic_parser.h"
+#include "srsran/support/format/fmt_to_c_str.h"
 
 using namespace srsran;
 
@@ -50,7 +51,7 @@ pdu_log_prefix create_prefix(const decoded_mac_rx_pdu& pdu, const mac_ul_sch_sub
 } // namespace
 
 template <>
-struct fmt::formatter<pdu_log_prefix> : public basic_fmt_parser {
+struct fmt::formatter<pdu_log_prefix> : public basic_parser {
   template <typename FormatContext>
   auto format(const pdu_log_prefix& p, FormatContext& ctx)
   {
@@ -274,6 +275,7 @@ bool pdu_rx_handler::handle_mac_ce(const decoded_mac_rx_pdu& ctx, const mac_ul_s
       phr_ind.cell_index = ctx.cell_index_rx;
       phr_ind.ue_index   = ctx.ue_index;
       phr_ind.rnti       = ctx.pdu_rx.rnti;
+      phr_ind.slot_rx    = ctx.slot_rx;
       phr_ind.phr        = decode_se_phr(subpdu.payload());
       sched.handle_ul_phr_indication(phr_ind);
     } break;
@@ -351,6 +353,9 @@ bool pdu_rx_handler::handle_crnti_ce(const decoded_mac_rx_pdu& ctx, const mac_ul
   // > Fetch an existing UE with the same old C-RNTI.
   new_ctx.ue_index = rnti_table[new_ctx.pdu_rx.rnti];
   if (new_ctx.ue_index == INVALID_DU_UE_INDEX) {
+    // This situation can occur when the UE returns by naming its previous RNTI via "C-RNTI CE", but so much time has
+    // passed in the meantime that the previous context has already been deleted.
+    // Example: the UE did not finish its de-registration procedure and only came back to finish that procedure.
     logger.warning("{}: Discarding PDU. Cause: C-RNTI in C-RNTI CE is not associated with any existing UE. "
                    "It is likely that the old UE context has already been discarded",
                    create_prefix(new_ctx, subpdu));

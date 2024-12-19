@@ -132,21 +132,6 @@ protected:
   void TearDown() override { finish(); }
 };
 
-/// Fixture class for PDU session manager tests with configurable F1-U ext addr
-class pdu_session_manager_test_set_f1u_ext_addr : public pdu_session_manager_test_base,
-                                                  public ::testing::TestWithParam<const char*>
-{
-protected:
-  network_interface_config get_net_config() override
-  {
-    network_interface_config cfg = net_config_default;
-    cfg.f1u_ext_addr             = GetParam();
-    return cfg;
-  }
-  void SetUp() override { init(); }
-  void TearDown() override { finish(); }
-};
-
 inline e1ap_pdu_session_res_to_setup_item
 generate_pdu_session_res_to_setup_item(pdu_session_id_t psi, drb_id_t drb_id, qos_flow_id_t qfi, five_qi_t five_qi)
 {
@@ -154,8 +139,8 @@ generate_pdu_session_res_to_setup_item(pdu_session_id_t psi, drb_id_t drb_id, qo
   e1ap_pdu_session_res_to_setup_item pdu_session_setup_item;
   pdu_session_setup_item.pdu_session_id                        = psi;
   pdu_session_setup_item.pdu_session_type                      = "ipv4";
-  pdu_session_setup_item.snssai.sst                            = 1;
-  pdu_session_setup_item.snssai.sd                             = 10203;
+  pdu_session_setup_item.snssai.sst                            = slice_service_type{1};
+  pdu_session_setup_item.snssai.sd                             = slice_differentiator::create(10203).value();
   pdu_session_setup_item.security_ind.integrity_protection_ind = integrity_protection_indication_t::not_needed;
   pdu_session_setup_item.security_ind.confidentiality_protection_ind =
       confidentiality_protection_indication_t::not_needed;

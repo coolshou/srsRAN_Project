@@ -32,6 +32,7 @@ static sched_ue_creation_request_message make_scheduler_ue_creation_request(cons
   ret.ue_index           = request.ue_index;
   ret.crnti              = request.crnti;
   ret.starts_in_fallback = request.initial_fallback;
+  ret.ul_ccch_slot_rx    = request.ul_ccch_slot_rx;
   ret.cfg                = request.sched_cfg;
   ret.tag_config         = request.mac_cell_group_cfg.tag_config;
   return ret;
@@ -200,6 +201,7 @@ void srsran_scheduler_adapter::handle_ul_phr_indication(const mac_phr_ce_info& p
   ind.cell_index = phr.cell_index;
   ind.ue_index   = phr.ue_index;
   ind.rnti       = phr.rnti;
+  ind.slot_rx    = phr.slot_rx;
   ind.phr        = phr.phr;
   sched_impl->handle_ul_phr_indication(ind);
 }

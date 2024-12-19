@@ -19,9 +19,10 @@
  * and at http://www.gnu.org/licenses/.
  *
  */
+
 #include "srsran/ran/precoding/precoding_codebooks.h"
 #include "srsran/adt/interval.h"
-#include "srsran/support/math_utils.h"
+#include "srsran/support/math/math_utils.h"
 
 using namespace srsran;
 

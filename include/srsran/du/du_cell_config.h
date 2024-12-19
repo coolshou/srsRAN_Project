@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "srsran/mac/bsr_format.h"
+#include "srsran/mac/bsr_config.h"
 #include "srsran/mac/phr_config.h"
 #include "srsran/ran/carrier_configuration.h"
 #include "srsran/ran/nr_cgi.h"
@@ -146,6 +146,13 @@ struct phy_cell_group_params {
   std::optional<bounded_integer<int, -30, 33>> p_nr_fr1;
 };
 
+/// Parameters that are used to generate UE DRX-Config.
+struct drx_params {
+  std::chrono::milliseconds on_duration;
+  std::chrono::milliseconds long_cycle;
+  std::chrono::milliseconds inactivity_timer;
+};
+
 /// Parameters that are used to initialize or build the \c MAC-CellGroupConfig, TS 38.331.
 struct mac_cell_group_params {
   periodic_bsr_timer                            periodic_timer = periodic_bsr_timer::sf10;
@@ -154,6 +161,7 @@ struct mac_cell_group_params {
   std::optional<sr_prohib_timer>                sr_prohibit_timer;
   sr_max_tx                                     max_tx           = sr_max_tx::n64;
   phr_prohibit_timer                            phr_prohib_timer = phr_prohibit_timer::sf10;
+  std::optional<drx_params>                     drx;
 };
 
 /// Cell Configuration, including common and UE-dedicated configs, that the DU will use to generate other configs for
@@ -217,6 +225,9 @@ struct du_cell_config {
 
   /// Defines the maximum allowable channel delay in slots when runnning in NTN mode. see TS38.300 section 16.14.2.
   unsigned ntn_cs_koffset = 0;
+
+  /// PUSCH Maximum of transmission layers. Limits the PUSCH maximum rank the UE is configrued with.
+  unsigned pusch_max_nof_layers = 1;
 
   /// List of RAN slices to support in the scheduler.
   std::vector<slice_rrm_policy_config> rrm_policy_members;

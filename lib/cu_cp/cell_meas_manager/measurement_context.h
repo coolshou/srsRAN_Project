@@ -22,7 +22,6 @@
 
 #pragma once
 
-#include "srsran/adt/optional.h"
 #include "srsran/ran/gnb_id.h"
 #include "srsran/ran/nr_cgi.h"
 #include "srsran/ran/pci.h"

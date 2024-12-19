@@ -21,7 +21,7 @@
  */
 
 #include "lib/du/du_high/du_manager/ran_resource_management/pucch_resource_generator.h"
-#include "tests/unittests/scheduler/test_utils/config_generators.h"
+#include "tests/test_doubles/scheduler/scheduler_config_helper.h"
 #include "srsran/du/du_cell_config_helpers.h"
 #include "srsran/support/test_utils.h"
 #include <gtest/gtest.h>
@@ -599,7 +599,7 @@ protected:
                               .max_nof_rbs            = 2,
                               .max_code_rate          = max_pucch_code_rate::dot_25,
                               .intraslot_freq_hopping = false}),
-    serv_cell_cfg(test_helpers::create_default_sched_ue_creation_request().cfg.cells->front().serv_cell_cfg)
+    serv_cell_cfg(sched_config_helper::create_default_sched_ue_creation_request().cfg.cells->front().serv_cell_cfg)
   {
     if (GetParam().nof_res_f0_harq != 0) {
       auto& pucch_res_list = serv_cell_cfg.ul_config.value().init_ul_bwp.pucch_cfg->pucch_res_list;
@@ -962,7 +962,7 @@ INSTANTIATE_TEST_SUITE_P(ue_pucch_config_builder,
                                            pucch_cfg_builder_params{ 0,     1,     1,     1,    1,   1 },
                                            pucch_cfg_builder_params{ 0,     7,     7,     1,    3,   1 },
                                            pucch_cfg_builder_params{ 0,     8,     8,     4,    4,   4 },
-                                           pucch_cfg_builder_params{ 0,     5,     2,    10,    2,   7 },
+                                           pucch_cfg_builder_params{ 0,     5,     2,     8,    2,   7 },
                                            pucch_cfg_builder_params{ 0,     2,     7,     3,    7,   3 },
                                            pucch_cfg_builder_params{ 0,     6,     4,     5,    6,   2 },
                                            pucch_cfg_builder_params{ 6,     0,     6,     1,    8,   8 },
