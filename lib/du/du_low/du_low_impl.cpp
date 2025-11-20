@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,6 +21,8 @@
  */
 
 #include "du_low_impl.h"
+#include "srsran/adt/span.h"
+#include "srsran/support/srsran_assert.h"
 
 using namespace srsran;
 using namespace srs_du;
@@ -28,9 +30,8 @@ using namespace srs_du;
 du_low_impl::du_low_impl(std::vector<std::unique_ptr<upper_phy>> upper_) : upper(std::move(upper_))
 {
   srsran_assert(!upper.empty(), "Invalid upper PHY");
-  for (auto& up : upper) {
-    upper_ptrs.push_back(up.get());
-  }
+  // All the upper PHYs share the same metrics collector. Use the first one to configure the DU low metrics collector.
+  metrics_collector = du_low_metrics_collector_impl(upper.front()->get_metrics_collector());
 }
 
 upper_phy& du_low_impl::get_upper_phy(unsigned cell_id)
@@ -40,13 +41,19 @@ upper_phy& du_low_impl::get_upper_phy(unsigned cell_id)
   return *upper[cell_id];
 }
 
+srs_du::du_low_metrics_collector* du_low_impl::get_metrics_collector()
+{
+  return metrics_collector.enabled() ? &metrics_collector : nullptr;
+}
+
+void du_low_impl::start()
+{
+  // Nothing to do as the Upper PHY is stateless.
+}
+
 void du_low_impl::stop()
 {
   for (auto& cell : upper) {
     cell->stop();
   }
-}
-span<upper_phy*> du_low_impl::get_all_upper_phys()
-{
-  return upper_ptrs;
 }

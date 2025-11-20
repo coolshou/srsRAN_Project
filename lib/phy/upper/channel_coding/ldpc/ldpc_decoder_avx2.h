@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -32,6 +32,10 @@ namespace srsran {
 /// LDPC decoder implementation based on AVX2 intrinsics.
 class ldpc_decoder_avx2 : public ldpc_decoder_impl
 {
+public:
+  /// Constructor: configures the force_decoding flag.
+  explicit ldpc_decoder_avx2(bool cfg_force_decoding);
+
 private:
   // See ldpc_decoder_impl for the documentation.
   void specific_init() override;
@@ -39,8 +43,6 @@ private:
   void compute_soft_bits(span<log_likelihood_ratio>       this_soft_bits,
                          span<const log_likelihood_ratio> this_var_to_check,
                          span<const log_likelihood_ratio> this_check_to_var) override;
-
-  bool get_hard_bits(bit_buffer& out) override;
 
   void compute_var_to_check_msgs(span<log_likelihood_ratio>       this_var_to_check,
                                  span<const log_likelihood_ratio> this_soft_bits,
@@ -64,6 +66,9 @@ private:
                                  span<const uint8_t>              sign_prod_var_to_check,
                                  unsigned                         shift,
                                  unsigned                         var_node) override;
+
+  /// Auxiliary buffer to store the rotated check-to-variable messages.
+  std::vector<log_likelihood_ratio> help_check_to_var;
 
   /// Number of AVX2 vectors needed to cover a lifted node.
   unsigned node_size_avx2 = 0;

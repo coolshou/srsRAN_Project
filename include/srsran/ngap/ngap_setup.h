@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -38,7 +38,7 @@ struct ngap_broadcast_plmn_item {
 };
 
 struct ngap_supported_ta_item {
-  uint32_t                              tac;
+  tac_t                                 tac;
   std::vector<ngap_broadcast_plmn_item> broadcast_plmn_list;
 };
 

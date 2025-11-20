@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,10 +24,15 @@
 
 #include "../ran_resource_management/du_ue_resource_config.h"
 #include "srsran/asn1/rrc_nr/cell_group_config.h"
-#include "srsran/asn1/rrc_nr/ho_prep_info.h"
+#include "srsran/asn1/rrc_nr/rrc_nr.h"
 
 namespace srsran {
 namespace srs_du {
+
+inline asn1::rrc_nr::subcarrier_spacing_e get_asn1_scs(subcarrier_spacing scs)
+{
+  return asn1::rrc_nr::subcarrier_spacing_e{static_cast<asn1::rrc_nr::subcarrier_spacing_opts::options>(scs)};
+}
 
 asn1::rrc_nr::coreset_s make_asn1_rrc_coreset(const coreset_configuration& cfg);
 

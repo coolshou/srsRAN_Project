@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,6 +23,7 @@
 #pragma once
 
 #include "adapters/gtpu_adapters.h"
+#include "ngu_session_manager.h"
 #include "ue_manager.h"
 #include "srsran/cu_up/cu_up_config.h"
 #include "srsran/cu_up/cu_up_manager.h"
@@ -34,23 +35,27 @@ namespace srsran::srs_cu_up {
 
 /// CU-UP manager implementation configuration.
 struct cu_up_manager_impl_config {
+  gnb_cu_up_id_t                        cu_up_id;
+  std::string                           cu_up_name;
+  std::string                           plmn;
   std::map<five_qi_t, cu_up_qos_config> qos;
-  network_interface_config              net_cfg;
   n3_interface_config                   n3_cfg;
   cu_up_test_mode_config                test_mode_cfg;
 };
 
 /// CU-UP manager implementation dependencies.
 struct cu_up_manager_impl_dependencies {
-  e1ap_interface&               e1ap;
-  gtpu_network_gateway_adapter& gtpu_gw_adapter;
-  gtpu_demux&                   ngu_demux;
-  gtpu_teid_pool&               n3_teid_allocator;
-  gtpu_teid_pool&               f1u_teid_allocator;
-  cu_up_executor_mapper&        exec_mapper;
-  f1u_cu_up_gateway&            f1u_gateway;
-  timer_manager&                timers;
-  dlt_pcap&                     gtpu_pcap;
+  std::atomic<bool>&         stop_command;
+  e1ap_interface&            e1ap;
+  gtpu_demux&                ngu_demux;
+  ngu_session_manager&       ngu_session_mngr;
+  gtpu_teid_pool&            n3_teid_allocator;
+  gtpu_teid_pool&            f1u_teid_allocator;
+  cu_up_executor_mapper&     exec_mapper;
+  f1u_cu_up_gateway&         f1u_gateway;
+  timer_manager&             timers;
+  dlt_pcap&                  gtpu_pcap;
+  fifo_async_task_scheduler& cu_up_task_scheduler;
 };
 
 class cu_up_manager_impl final : public cu_up_manager
@@ -58,6 +63,7 @@ class cu_up_manager_impl final : public cu_up_manager
 public:
   cu_up_manager_impl(const cu_up_manager_impl_config& config, const cu_up_manager_impl_dependencies& dependencies);
 
+  async_task<void> stop() override;
   e1ap_bearer_context_setup_response
   handle_bearer_context_setup_request(const e1ap_bearer_context_setup_request& msg) override;
 
@@ -65,6 +71,12 @@ public:
   handle_bearer_context_modification_request(const e1ap_bearer_context_modification_request& msg) override;
 
   async_task<void> handle_bearer_context_release_command(const e1ap_bearer_context_release_command& msg) override;
+
+  void handle_e1ap_connection_drop() override;
+
+  async_task<void> handle_e1_reset(const e1ap_reset& msg) override;
+
+  void schedule_cu_up_async_task(async_task<void> task) override;
 
   void schedule_ue_async_task(srs_cu_up::ue_index_t ue_index, async_task<void> task) override;
 
@@ -75,23 +87,32 @@ public:
 
   size_t get_nof_ues() override { return ue_mng->get_nof_ues(); }
 
+  void trigger_enable_test_mode();
+  void trigger_disable_test_mode();
+  void trigger_reestablish_test_mode();
+
 private:
   void on_statistics_report_timer_expired();
 
-  e1ap_bearer_context_modification_response
-  handle_bearer_context_modification_request_impl(ue_context&                                     ue_ctxt,
-                                                  const e1ap_bearer_context_modification_request& msg);
+  async_task<void> enable_test_mode() override;
+  async_task<void> disable_test_mode();
+  async_task<void> reestablish_test_mode();
 
-  async_task<e1ap_bearer_context_modification_response> enable_test_mode() override;
+  gnb_cu_up_id_t cu_up_id;
+  std::string    cu_up_name;
+  std::string    plmn;
 
+  std::atomic<bool>&                    stop_command;
+  e1ap_connection_manager&              e1ap;
   std::map<five_qi_t, cu_up_qos_config> qos;
   const network_interface_config        net_cfg;
   const n3_interface_config             n3_cfg;
   const cu_up_test_mode_config          test_mode_cfg;
+  gtpu_demux&                           ngu_demux;
   cu_up_executor_mapper&                exec_mapper;
   timer_manager&                        timers;
 
-  // logger
+  // Logger
   srslog::basic_logger& logger = srslog::fetch_basic_logger("CU-UP", false);
 
   // Components
@@ -99,6 +120,11 @@ private:
   std::unique_ptr<ue_manager> ue_mng;
 
   unique_timer statistics_report_timer;
+
+  // Test mode
+  unique_timer test_mode_ue_timer;
+
+  fifo_async_task_scheduler& cu_up_task_scheduler;
 };
 
 } // namespace srsran::srs_cu_up

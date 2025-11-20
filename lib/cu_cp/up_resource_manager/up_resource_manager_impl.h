@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -31,7 +31,7 @@ namespace srs_cu_cp {
 
 /// \brief Update for a PDU session.
 struct up_pdu_session_context_update {
-  up_pdu_session_context_update(pdu_session_id_t id_) : id(id_){};
+  up_pdu_session_context_update(pdu_session_id_t id_) : id(id_) {}
   pdu_session_id_t                   id;
   std::map<drb_id_t, up_drb_context> drb_to_add;
   std::map<drb_id_t, up_drb_context> drb_to_modify;
@@ -84,7 +84,8 @@ public:
   up_config_update calculate_update(const cu_cp_pdu_session_resource_modify_request& pdu);
   up_config_update calculate_update(const cu_cp_pdu_session_resource_release_command& pdu);
 
-  bool                          apply_config_update(const up_config_update_result& config);
+  bool                          apply_config_update(const up_config_update_result& result);
+  void                          refresh_drb_id_after_key_change();
   const up_pdu_session_context& get_pdu_session_context(pdu_session_id_t psi) const;
   const up_drb_context&         get_drb_context(drb_id_t drb_id) const;
   bool                          has_pdu_session(pdu_session_id_t pdu_session_id) const;

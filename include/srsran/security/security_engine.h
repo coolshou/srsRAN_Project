@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -81,7 +81,7 @@ struct formatter<srsran::security::security_error> {
   }
 
   template <typename FormatContext>
-  auto format(srsran::security::security_error sec_err, FormatContext& ctx)
+  auto format(srsran::security::security_error sec_err, FormatContext& ctx) const
   {
     return format_to(ctx.out(), "{}", to_string(sec_err));
   }

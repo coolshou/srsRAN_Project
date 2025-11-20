@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -20,10 +20,9 @@
  *
  */
 
-#include "../../../tests/unittests/phy/support/resource_grid_mapper_test_doubles.h"
 #include "srsran/phy/support/support_factories.h"
-#include "srsran/phy/upper/signal_processors/dmrs_pdsch_processor.h"
-#include "srsran/phy/upper/signal_processors/signal_processor_factories.h"
+#include "srsran/phy/upper/signal_processors/pdsch/dmrs_pdsch_processor.h"
+#include "srsran/phy/upper/signal_processors/pdsch/factories.h"
 #include "srsran/support/benchmark_utils.h"
 #include "srsran/support/srsran_test.h"
 #include <getopt.h>
@@ -34,10 +33,9 @@ using namespace srsran;
 // Random generator.
 static std::mt19937 rgen(0);
 
-static unsigned nof_repetitions  = 1000;
-static unsigned nof_rb           = 106;
-static bool     silent           = false;
-static bool     use_dummy_mapper = false;
+static unsigned nof_repetitions = 1000;
+static unsigned nof_rb          = 106;
+static bool     silent          = false;
 
 struct channel_topology {
   unsigned nof_ports;
@@ -50,7 +48,6 @@ static void usage(const char* prog)
 {
   fmt::print("Usage: {} [-P precoder type] [-n number of RB] [-R repetitions] [-s silent]\n", prog);
   fmt::print("\t-n Number of resource blocks [Default {}]\n", nof_rb);
-  fmt::print("\t-D Use dummy resource grid mapper\n");
   fmt::print("\t-R Repetitions [Default {}]\n", nof_repetitions);
   fmt::print("\t-s Toggle silent operation [Default {}]\n", silent);
   fmt::print("\t-h Show this message\n");
@@ -64,9 +61,6 @@ static void parse_args(int argc, char** argv)
       case 'n':
         nof_rb = std::strtol(optarg, nullptr, 10);
         break;
-      case 'D':
-        use_dummy_mapper = true;
-        break;
       case 'R':
         nof_repetitions = std::strtol(optarg, nullptr, 10);
         break;
@@ -76,7 +70,7 @@ static void parse_args(int argc, char** argv)
       case 'h':
       default:
         usage(argv[0]);
-        exit(0);
+        std::exit(0);
     }
   }
 }
@@ -117,8 +111,6 @@ int main(int argc, char** argv)
   // Precoding weight distribution.
   std::uniform_real_distribution<float> weight_dist(-1.0F, 1.0F);
 
-  resource_grid_mapper_dummy dummy_mapper;
-
   benchmarker perf_meas("DM-RS PDSCH processor", nof_repetitions);
 
   for (auto topology : channel_topology_list) {
@@ -143,7 +135,7 @@ int main(int argc, char** argv)
     dmrs_config.amplitude            = 1.0f;
     dmrs_config.symbols_mask         = symbol_slot_mask(
         {false, false, true, false, false, false, false, false, false, false, false, true, false, false});
-    dmrs_config.rb_mask   = ~bounded_bitset<MAX_RB>(nof_rb);
+    dmrs_config.rb_mask   = ~crb_bitmap(nof_rb);
     dmrs_config.precoding = precoding_configuration::make_wideband(weights);
 
     // Test DM-RS Type 1 generation.

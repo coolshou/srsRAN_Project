@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,17 +24,16 @@
 
 namespace srsran {
 
-class du_power_controller;
+class du_operation_controller;
 
-namespace fapi {
-class slot_data_message_notifier;
-class slot_error_message_notifier;
-class slot_time_message_notifier;
-} // namespace fapi
+namespace fapi_adaptor {
+class mac_fapi_adaptor;
+} // namespace fapi_adaptor
 
 namespace srs_du {
 
 class du_high;
+class o_du_high_metrics_notifier;
 
 /// O-RAN Distributed Unit high interface. O-DU high groups the DU high with the MAC-FAPI adaptor.
 class o_du_high
@@ -42,20 +41,17 @@ class o_du_high
 public:
   virtual ~o_du_high() = default;
 
-  /// Returns the power controller of this O-RAN DU high.
-  virtual du_power_controller& get_power_controller() = 0;
+  /// Returns the operation controller of this O-RAN DU high.
+  virtual du_operation_controller& get_operation_controller() = 0;
 
   /// Returns the DU high from this O-RAN DU high.
   virtual du_high& get_du_high() = 0;
 
-  /// Returns the FAPI slot data message notifier for the given cell of this O-RAN DU high.
-  virtual fapi::slot_data_message_notifier& get_slot_data_message_notifier(unsigned cell_id) = 0;
+  /// Returns the MAC-FAPI adaptor of this O-RAN DU high.
+  virtual fapi_adaptor::mac_fapi_adaptor& get_mac_fapi_adaptor() = 0;
 
-  /// Returns the FAPI slot error message notifier for the given cell of this O-RAN DU high.
-  virtual fapi::slot_error_message_notifier& get_slot_error_message_notifier(unsigned cell_id) = 0;
-
-  /// Returns the FAPI slot time message notifier for the given cell of this O-RAN DU high.
-  virtual fapi::slot_time_message_notifier& get_slot_time_message_notifier(unsigned cell_id) = 0;
+  /// Sets the O-DU high metrics notifier to the given one.
+  virtual void set_o_du_high_metrics_notifier(o_du_high_metrics_notifier& notifier) = 0;
 };
 
 } // namespace srs_du

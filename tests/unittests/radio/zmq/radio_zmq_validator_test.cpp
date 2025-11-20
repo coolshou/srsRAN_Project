@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -38,8 +38,7 @@ struct formatter<srsran::radio_configuration::clock_sources::source> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::radio_configuration::clock_sources::source& source, FormatContext& ctx)
-
+  auto format(const srsran::radio_configuration::clock_sources::source& source, FormatContext& ctx) const
   {
     switch (source) {
       case srsran::radio_configuration::clock_sources::source::DEFAULT:
@@ -64,8 +63,7 @@ struct formatter<srsran::radio_configuration::radio> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::radio_configuration::radio& config, FormatContext& ctx)
-
+  auto format(const srsran::radio_configuration::radio& config, FormatContext& ctx) const
   {
     return fmt::format_to(ctx.out(), "clock_src={} sync_src={}", config.clock.clock, config.clock.sync);
   }
@@ -147,13 +145,13 @@ const std::vector<test_case_t> radio_zmq_validator_test_data = {
      "Streams must contain at least one channel.\n"},
     {[] {
        radio_configuration::radio config                                   = radio_base_config;
-       config.tx_streams.front().channels.front().freq.center_frequency_hz = 0.0;
+       config.tx_streams.front().channels.front().freq.center_frequency_Hz = 0.0;
        return config;
      },
      "The center frequency must be non-zero, NAN nor infinite.\n"},
     {[] {
        radio_configuration::radio config                               = radio_base_config;
-       config.tx_streams.front().channels.front().freq.lo_frequency_hz = 1.0;
+       config.tx_streams.front().channels.front().freq.lo_frequency_Hz = 1.0;
        return config;
      },
      "The custom LO frequency is not currently supported.\n"},
@@ -189,13 +187,13 @@ const std::vector<test_case_t> radio_zmq_validator_test_data = {
      "Streams must contain at least one channel.\n"},
     {[] {
        radio_configuration::radio config                                   = radio_base_config;
-       config.rx_streams.front().channels.front().freq.center_frequency_hz = 0.0;
+       config.rx_streams.front().channels.front().freq.center_frequency_Hz = 0.0;
        return config;
      },
      "The center frequency must be non-zero, NAN nor infinite.\n"},
     {[] {
        radio_configuration::radio config                               = radio_base_config;
-       config.rx_streams.front().channels.front().freq.lo_frequency_hz = 1.0;
+       config.rx_streams.front().channels.front().freq.lo_frequency_Hz = 1.0;
        return config;
      },
      "The custom LO frequency is not currently supported.\n"},
@@ -225,13 +223,13 @@ const std::vector<test_case_t> radio_zmq_validator_test_data = {
      "Stream arguments are not currently supported.\n"},
     {[] {
        radio_configuration::radio config = radio_base_config;
-       config.sampling_rate_hz           = 0.0;
+       config.sampling_rate_Hz           = 0.0;
        return config;
      },
      "The sampling rate must be non-zero, NAN nor infinite.\n"},
     {[] {
        radio_configuration::radio config = radio_base_config;
-       config.sampling_rate_hz           = -1.0;
+       config.sampling_rate_Hz           = -1.0;
        return config;
      },
      "The sampling rate must be greater than zero.\n"},

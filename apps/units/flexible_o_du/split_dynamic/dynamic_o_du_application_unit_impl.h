@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -42,13 +42,16 @@ public:
   void on_configuration_parameters_autoderivation(CLI::App& app) override;
 
   // See interface for documentation.
-  bool on_configuration_validation(const os_sched_affinity_bitmask& available_cpus) const override;
+  bool on_configuration_validation() const override;
 
   // See interface for documentation.
   void on_loggers_registration() override;
 
   // See interface for documentation.
-  o_du_unit create_flexible_o_du_unit(const o_du_unit_dependencies& dependencies, bool use_multicell = false) override;
+  bool are_metrics_enabled() const override;
+
+  // See interface for documentation.
+  o_du_unit create_flexible_o_du_unit(const o_du_unit_dependencies& dependencies) override;
 
   // See interface for documentation.
   o_du_high_unit_config&       get_o_du_high_unit_config() override { return unit_cfg.odu_high_cfg; }

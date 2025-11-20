@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,7 +22,7 @@
 
 #include "ru_dummy_impl.h"
 #include "srsran/ran/subcarrier_spacing.h"
-#include "srsran/ru/ru_dummy_configuration.h"
+#include "srsran/ru/dummy/ru_dummy_configuration.h"
 #include "srsran/support/error_handling.h"
 #include "srsran/support/math/math_utils.h"
 #include "srsran/support/srsran_assert.h"
@@ -32,92 +32,93 @@
 
 using namespace srsran;
 
-static inline uint64_t get_current_system_slot(std::chrono::microseconds slot_duration,
-                                               uint64_t                  nof_slots_per_system_frame)
+static uint64_t get_current_system_slot(std::chrono::microseconds slot_duration,
+                                        uint64_t                  nof_slots_per_hyper_system_frame)
 {
   // Get the time since the epoch.
   auto time_since_epoch = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::high_resolution_clock::now().time_since_epoch());
 
-  return (time_since_epoch / slot_duration) % nof_slots_per_system_frame;
+  return (time_since_epoch / slot_duration) % nof_slots_per_hyper_system_frame;
 }
 
 ru_dummy_impl::ru_dummy_impl(const ru_dummy_configuration& config, ru_dummy_dependencies dependencies) noexcept :
-  logger(*dependencies.logger),
+  are_metrics_enabled(config.are_metrics_enabled),
+  logger(dependencies.logger),
   executor(*dependencies.executor),
-  timing_notifier(*dependencies.timing_notifier),
+  timing_notifier(dependencies.timing_notifier),
   slot_duration(static_cast<unsigned>(config.time_scaling * 1000.0 / pow2(to_numerology_value(config.scs)))),
   max_processing_delay_slots(config.max_processing_delay_slots),
-  current_slot(config.scs, config.max_processing_delay_slots)
+  current_slot(config.scs, config.max_processing_delay_slots),
+  metrics_collector({})
 {
   srsran_assert(config.max_processing_delay_slots > 0, "The maximum processing delay must be greater than 0.");
-  srsran_assert(dependencies.logger != nullptr, "Invalid logger.");
-  srsran_assert(dependencies.executor != nullptr, "Invalid executor.");
-  srsran_assert(dependencies.symbol_notifier != nullptr, "Invalid symbol notifier.");
-  srsran_assert(dependencies.timing_notifier != nullptr, "Invalid timing notifier.");
 
   sectors.reserve(config.nof_sectors);
+
+  std::vector<ru_dummy_sector*> sector_ptrs;
+  sector_ptrs.reserve(config.nof_sectors);
+
   for (unsigned i_sector = 0; i_sector != config.nof_sectors; ++i_sector) {
-    sectors.emplace_back(i_sector,
-                         config.rx_rg_nof_prb,
-                         config.rx_rg_nof_ports,
-                         config.rx_prach_nof_ports,
-                         config.dl_processing_delay,
-                         logger,
-                         *dependencies.symbol_notifier);
+    auto& sector = sectors.emplace_back(std::make_unique<ru_dummy_sector>(
+        config.dl_processing_delay, logger, dependencies.symbol_notifier, dependencies.error_notifier));
+    sector_ptrs.emplace_back(sector.get());
   }
+
+  metrics_collector = ru_dummy_metrics_collector(std::move(sector_ptrs));
 }
 
 void ru_dummy_impl::start()
 {
   // Get initial system slot.
-  uint64_t initial_system_slot = get_current_system_slot(slot_duration, current_slot.nof_slots_per_system_frame());
-  current_slot                 = slot_point(current_slot.numerology(), initial_system_slot);
+  uint64_t initial_system_slot =
+      get_current_system_slot(slot_duration, current_slot.nof_slots_per_hyper_system_frame());
+  current_slot = slot_point(current_slot.numerology(), initial_system_slot);
 
-  state previous_state = current_state.exchange(state::running);
-  srsran_assert(previous_state == state::idle, "Invalid state.");
-  report_fatal_error_if_not(executor.execute([this]() { loop(); }), "Failed to execute loop method.");
+  stop_control.reset();
+
+  // Start each of the sectors.
+  for (auto& sector : sectors) {
+    sector->start();
+  }
+
+  // Start the loop execution.
+  defer_loop();
 }
 
 void ru_dummy_impl::stop()
 {
-  // Signal stop to asynchronous thread.
-  state previous_state = current_state.exchange(state::wait_stop);
-  srsran_assert(previous_state == state::running, "Invalid state.");
-
-  // Wait for the state to transition to stop.
-  while (current_state != state::stopped) {
-    std::this_thread::sleep_for(std::chrono::microseconds(10));
+  // Stop each of the sectors.
+  for (auto& sector : sectors) {
+    sector->stop();
   }
+
+  // Signal stop to asynchronous thread.
+  // The timing loop must be stopped last as it will clean up all pending requests.
+  stop_control.stop();
 }
 
-void ru_dummy_impl::print_metrics()
+void ru_dummy_impl::defer_loop()
 {
-  fmt::print("| {:^11} | {:^11} | {:^11} | {:^11} | {:^11} | {:^11} |\n",
-             "DL Count",
-             "DL Late",
-             "UL Count",
-             "UL Late",
-             "PRACH Count",
-             "PRACH Late");
-  for (auto& sector : sectors) {
-    sector.print_metrics();
+  auto token = stop_control.get_token();
+  if (SRSRAN_UNLIKELY(token.is_stop_requested())) {
+    return;
   }
+
+  report_fatal_error_if_not(
+      executor.defer(unique_function<void(), default_unique_task_buffer_size, true>(
+          [this, defer_token = std::move(token)]() noexcept SRSRAN_RTSAN_NONBLOCKING { loop(); })),
+      "Failed to execute loop method.");
 }
 
 void ru_dummy_impl::loop()
 {
-  // Check stop condition.
-  if (current_state == state::wait_stop) {
-    current_state = state::stopped;
-    return;
-  }
-
   // Get the current system slot from the system time.
-  uint64_t slot_count = get_current_system_slot(slot_duration, current_slot.nof_slots_per_system_frame());
+  uint64_t slot_count = get_current_system_slot(slot_duration, current_slot.nof_slots_per_hyper_system_frame());
 
   // Make sure a minimum time between loop executions without crossing boundaries.
   if (slot_count == current_slot.system_slot()) {
+    SRSRAN_RTSAN_SCOPED_DISABLER(scoped_disabler);
     std::this_thread::sleep_for(minimum_loop_time);
   }
 
@@ -127,7 +128,10 @@ void ru_dummy_impl::loop()
     ++current_slot;
 
     // Notify new slot boundary.
-    timing_notifier.on_tti_boundary(current_slot + max_processing_delay_slots);
+    tti_boundary_context context;
+    context.slot       = current_slot + max_processing_delay_slots;
+    context.time_point = std::chrono::system_clock::now() + (slot_duration * max_processing_delay_slots);
+    timing_notifier.on_tti_boundary(context);
 
     // Notify UL half slot.
     timing_notifier.on_ul_half_slot_boundary(current_slot);
@@ -137,10 +141,10 @@ void ru_dummy_impl::loop()
 
     // Notify the slot boundary in all the sectors.
     for (auto& sector : sectors) {
-      sector.new_slot_boundary(current_slot);
+      sector->new_slot_boundary(current_slot);
     }
   }
 
   // Feed back the execution of this task.
-  report_fatal_error_if_not(executor.defer([this]() { loop(); }), "Failed to execute loop method.");
+  defer_loop();
 }

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,7 +27,7 @@
 
 namespace srsran {
 
-/// \brief The NR Cell Global Identity (NR-CGI)
+/// \brief The NR Cell Global Identity (NR-CGI).
 struct nr_cell_global_id_t {
   nr_cell_global_id_t() = default;
   nr_cell_global_id_t(plmn_identity plmn_id_, nr_cell_identity nci_) : plmn_id(plmn_id_), nci(nci_) {}
@@ -39,6 +39,10 @@ struct nr_cell_global_id_t {
 
   bool operator==(const nr_cell_global_id_t& rhs) const { return plmn_id == rhs.plmn_id and nci == rhs.nci; }
   bool operator!=(const nr_cell_global_id_t& rhs) const { return !(rhs == *this); }
+  bool operator<(const nr_cell_global_id_t& rhs) const
+  {
+    return (plmn_id < rhs.plmn_id) || (plmn_id == rhs.plmn_id && nci < rhs.nci);
+  }
 };
 
 } // namespace srsran

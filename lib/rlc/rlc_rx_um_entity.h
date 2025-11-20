@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,7 +25,6 @@
 #include "rlc_rx_entity.h"
 #include "rlc_um_pdu.h"
 #include "srsran/adt/expected.h"
-#include "srsran/rlc/rlc_metrics.h"
 #include "srsran/support/executors/task_executor.h"
 #include "srsran/support/sdu_window.h"
 #include "srsran/support/timers.h"
@@ -109,7 +108,7 @@ public:
                    rb_id_t                           rb_id,
                    const rlc_rx_um_config&           config,
                    rlc_rx_upper_layer_data_notifier& upper_dn_,
-                   rlc_metrics_aggregator&           metrics_agg_,
+                   rlc_bearer_metrics_collector&     metrics_coll_,
                    rlc_pcap&                         pcap_,
                    task_executor&                    ue_executor,
                    timer_manager&                    timers);
@@ -117,6 +116,7 @@ public:
   void stop() final
   {
     // Stop all timers. Any queued handlers of timers that just expired before this call are canceled automatically
+    high_metrics_timer.stop();
     reassembly_timer.stop();
   }
 
@@ -180,7 +180,7 @@ struct formatter<srsran::rlc_rx_um_sdu_info> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::rlc_rx_um_sdu_info& info, FormatContext& ctx)
+  auto format(const srsran::rlc_rx_um_sdu_info& info, FormatContext& ctx) const
   {
     return format_to(ctx.out(),
                      "has_gap={} fully_received={} nof_segments={}",
@@ -199,7 +199,7 @@ struct formatter<srsran::rlc_rx_um_state> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::rlc_rx_um_state& st, FormatContext& ctx)
+  auto format(const srsran::rlc_rx_um_state& st, FormatContext& ctx) const
   {
     return format_to(ctx.out(),
                      "rx_next_reassembly={} rx_timer_trigger={} rx_next_highest={}",

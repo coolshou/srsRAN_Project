@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -97,7 +97,7 @@ public:
 
   /// Returns a non-owning list of segments that compose the byte_buffer.
   /// The segments are not const, so that the callee can modify the bytes, but not layout of the buffer.
-  byte_buffer_segment_span_range modifiable_segments() { return {it, length()}; };
+  byte_buffer_segment_span_range modifiable_segments() { return {it, length()}; }
 
   /// \brief Equality comparison between byte buffer view and another range.
   template <typename T>
@@ -149,7 +149,7 @@ struct formatter<srsran::byte_buffer_view> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::byte_buffer_view& buf, FormatContext& ctx)
+  auto format(const srsran::byte_buffer_view& buf, FormatContext& ctx) const
   {
     if (mode == hexadecimal) {
       return format_to(ctx.out(), "{:0>2x}", fmt::join(buf.begin(), buf.end(), " "));

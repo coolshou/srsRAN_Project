@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -37,11 +37,11 @@ namespace srsran {
 class rlc_pdu_recycler
 {
 public:
-  rlc_pdu_recycler(size_t rlc_window_size, rlc_bearer_logger& logger_) : logger(logger_)
+  rlc_pdu_recycler(size_t recycler_size, rlc_bearer_logger& logger_) : logger(logger_)
   {
     recycle_bin = std::make_unique<concurrent_queue<byte_buffer,
                                                     concurrent_queue_policy::lockfree_spsc,
-                                                    concurrent_queue_wait_policy::non_blocking>>(rlc_window_size);
+                                                    concurrent_queue_wait_policy::non_blocking>>(recycler_size);
   }
 
   /// \brief Adds a discarded PDU to the recycler which shall be deleted later by another executor
@@ -53,8 +53,7 @@ public:
   void clear_by_executor(task_executor& executor)
   {
     // Redirect recycling of unused byte_buffers to ue_executor
-    auto handle_func = [this]() mutable { clear(); };
-    if (not executor.execute(std::move(handle_func))) {
+    if (not executor.execute([this]() mutable { clear(); })) {
       logger.log_error("Failed to delegate deletion of PDUs to given executor.");
     }
   }
@@ -71,10 +70,9 @@ private:
   /// \brief Deletes the stored PDUs. This function shall be called from the executor in \c clear_by_executor.
   void clear()
   {
-    trace_point clear_tp   = up_tracer.now();
-    uint32_t    queue_size = recycle_bin->size();
-    for (uint32_t i = 0; i < queue_size; ++i) {
-      recycle_bin->try_pop();
+    trace_point clear_tp = up_tracer.now();
+    byte_buffer discard;
+    while (recycle_bin->try_pop(discard)) {
     }
 
     up_tracer << trace_event{"rlc_clear_pdus", clear_tp};

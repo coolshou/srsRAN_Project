@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,7 +23,6 @@
 #pragma once
 
 #include "apps/units/flexible_o_du/split_helpers/flexible_o_du_factory.h"
-#include "apps/units/flexible_o_du/split_helpers/multicell_flexible_o_du_factory.h"
 #include "split_8_o_du_unit_config.h"
 
 namespace srsran {
@@ -34,26 +33,7 @@ class split8_du_factory : public flexible_o_du_factory
   const split_8_o_du_unit_config& unit_config;
 
 public:
-  explicit split8_du_factory(const split_8_o_du_unit_config& config_) :
-    flexible_o_du_factory({config_.odu_high_cfg, config_.du_low_cfg}), unit_config(config_)
-  {
-  }
-
-private:
-  std::unique_ptr<radio_unit> create_radio_unit(const flexible_o_du_ru_config&       ru_config,
-                                                const flexible_o_du_ru_dependencies& ru_dependencies) override;
-};
-
-/// Multicell split 8 O-RAN DU factory.
-class multicell_split8_du_factory : public multicell_flexible_o_du_factory
-{
-  const split_8_o_du_unit_config& unit_config;
-
-public:
-  explicit multicell_split8_du_factory(const split_8_o_du_unit_config& config_) :
-    multicell_flexible_o_du_factory({config_.odu_high_cfg, config_.du_low_cfg}), unit_config(config_)
-  {
-  }
+  explicit split8_du_factory(const split_8_o_du_unit_config& config_);
 
 private:
   std::unique_ptr<radio_unit> create_radio_unit(const flexible_o_du_ru_config&       ru_config,

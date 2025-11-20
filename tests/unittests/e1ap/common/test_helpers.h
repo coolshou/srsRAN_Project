@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -53,13 +53,16 @@ public:
     last_cu_up_e1_setup_request = msg;
   }
 
+  bool schedule_async_task(async_task<void> task) override { return task_sched.schedule(std::move(task)); }
+
   void set_ue_index(uint16_t ue_index_) { ue_index = ue_index_; }
 
   cu_up_e1_setup_request last_cu_up_e1_setup_request;
 
 private:
-  srslog::basic_logger& logger;
-  uint16_t              ue_index = srs_cu_cp::ue_index_to_uint(srs_cu_cp::ue_index_t::min);
+  srslog::basic_logger&     logger;
+  uint16_t                  ue_index = srs_cu_cp::ue_index_to_uint(srs_cu_cp::ue_index_t::min);
+  fifo_async_task_scheduler task_sched{16};
 };
 
 class dummy_e1ap_cu_up_notifier : public srs_cu_up::e1ap_cu_up_manager_notifier
@@ -172,7 +175,23 @@ public:
     });
   }
 
+  async_task<void> on_e1_reset_received(const srs_cu_up::e1ap_reset& msg) override
+  {
+    logger.info("Received E1Reset");
+    return launch_async([](coro_context<async_task<void>>& ctx) {
+      CORO_BEGIN(ctx);
+      CORO_RETURN();
+    });
+  }
+
   void on_schedule_ue_async_task(srs_cu_up::ue_index_t ue_index_, async_task<void> task) override
+  {
+    task_loop.schedule(std::move(task)); // schedule ue task in dummy task loop
+  }
+
+  void on_connection_loss() override {}
+
+  void on_schedule_cu_up_async_task(async_task<void> task) override
   {
     task_loop.schedule(std::move(task)); // schedule ue task in dummy task loop
   }
@@ -210,9 +229,9 @@ public:
 class dummy_e1ap_pdu_notifier : public e1ap_message_notifier
 {
 public:
-  dummy_e1ap_pdu_notifier() : logger(srslog::fetch_basic_logger("TEST")){};
+  dummy_e1ap_pdu_notifier() : logger(srslog::fetch_basic_logger("TEST")) {}
 
-  void attach_handler(e1ap_message_handler* handler_) { handler = handler_; };
+  void attach_handler(e1ap_message_handler* handler_) { handler = handler_; }
   void on_new_message(const e1ap_message& msg) override
   {
     logger.info("Received a PDU of type {}", msg.pdu.type().to_string());
@@ -237,13 +256,16 @@ class dummy_cu_cp_e1ap_pdu_notifier : public e1ap_message_notifier
 {
 public:
   dummy_cu_cp_e1ap_pdu_notifier(srs_cu_cp::cu_cp* cu_cp_, e1ap_message_handler* handler_) :
-    logger(srslog::fetch_basic_logger("TEST")), cu_cp(cu_cp_), handler(handler_){};
+    logger(srslog::fetch_basic_logger("TEST")), cu_cp(cu_cp_), handler(handler_)
+  {
+  }
 
   void attach_handler(srs_cu_cp::cu_cp* cu_cp_, e1ap_message_handler* handler_)
   {
     cu_cp   = cu_cp_;
     handler = handler_;
-  };
+  }
+
   void on_new_message(const e1ap_message& msg) override
   {
     logger.info("Received a PDU of type {}", msg.pdu.type().to_string());
@@ -266,7 +288,7 @@ private:
 class dummy_e1ap_message_handler : public e1ap_message_handler
 {
 public:
-  dummy_e1ap_message_handler() : logger(srslog::fetch_basic_logger("TEST")){};
+  dummy_e1ap_message_handler() : logger(srslog::fetch_basic_logger("TEST")) {}
   void handle_message(const e1ap_message& msg) override
   {
     last_msg = msg;
@@ -283,7 +305,7 @@ private:
 class dummy_e1ap_message_notifier : public e1ap_message_notifier
 {
 public:
-  dummy_e1ap_message_notifier() : logger(srslog::fetch_basic_logger("TEST")){};
+  dummy_e1ap_message_notifier() : logger(srslog::fetch_basic_logger("TEST")) {}
   void on_new_message(const e1ap_message& msg) override
   {
     last_msg = msg;

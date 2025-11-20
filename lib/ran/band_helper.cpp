@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,26 +21,30 @@
  */
 
 #include "srsran/ran/band_helper.h"
-#include "ssb_freq_position_generator.h"
+#include "ssb/ssb_freq_position_generator.h"
 #include "srsran/adt/interval.h"
 #include "srsran/adt/span.h"
 #include "srsran/ran/bs_channel_bandwidth.h"
 #include "srsran/ran/duplex_mode.h"
 #include "srsran/ran/pdcch/pdcch_type0_css_coreset_config.h"
 #include "srsran/ran/pdcch/pdcch_type0_css_occasions.h"
-#include "srsran/ran/ssb_gscn.h"
+#include "srsran/ran/ssb/ssb_gscn.h"
 #include "srsran/ran/subcarrier_spacing.h"
 #include "srsran/scheduler/sched_consts.h"
-#include "srsran/support/format/fmt_optional.h"
+#include "srsran/support/math/math_utils.h"
 #include "srsran/support/srsran_assert.h"
+#include "fmt/std.h"
 
 using namespace srsran;
 
 using namespace band_helper;
 
-// Possible values of delta f_raster in Table 5.4.2.3-1 and Table 5.4.2.3-2
+namespace {
+
+/// Possible values of delta f_raster in Table 5.4.2.3-1 and Table 5.4.2.3-2
 enum class delta_freq_raster {
-  DEFAULT = 0, // for bands with 2 possible values for delta_f_raster (e.g. 15 and 30 kHz), the lower is chosen
+  /// For bands with 2 possible values for delta_f_raster (e.g. 15 and 30 kHz), the lowest is chosen.
+  DEFAULT = 0,
   kHz15,
   kHz30,
   kHz60,
@@ -48,7 +52,7 @@ enum class delta_freq_raster {
   kHz120
 };
 
-// NR operating band and DL ARFCN lower-bound and upper-bound. See Table 5.4.2.3-1 in TS 38.104.
+/// NR operating band and DL ARFCN lower-bound and upper-bound. See Table 5.4.2.3-1 in TS 38.104.
 struct nr_band_raster {
   nr_band           band;
   delta_freq_raster delta_f_rast;
@@ -60,17 +64,19 @@ struct nr_band_raster {
   uint32_t          dl_nref_last;
 };
 
-// From Tables 5.4.2.3-1 and 5.4.2.3-2 in TS 38.104, table with NR operating FR1 and FR2 band and related ARFCN
-// lower-bound and upper-bound. (FDD, TDD or SDL).
-// NTN bands from Table 5.4.2.3-1 in TS38.108
-//
-// NOTE: It only includes FDD, TDD, and SDL bands.
-// NOTE: Band 2 is a subset of band 25.
-// NOTE: Band 41 has two different Freq raster, we only consider raster 15kHz.
-// NOTE: FR2 bands have two different Freq raster, we only consider raster 120kHz.
-const uint32_t                                               nof_nr_DL_bands = 84;
+} // namespace
+
+/// From Tables 5.4.2.3-1 and 5.4.2.3-2 in TS 38.104, table with NR operating FR1 and FR2 band and related ARFCN
+/// lower-bound and upper-bound. (FDD, TDD or SDL).
+/// NTN bands from Table 5.4.2.3-1 in TS 38.108
+///
+/// NOTE: It only includes FDD, TDD, and SDL bands.
+/// NOTE: Band 2 is a subset of band 25.
+/// NOTE: Band 41 has two different Freq raster, we only consider raster 15kHz.
+/// NOTE: FR2 bands have two different Freq raster, we only consider raster 120kHz.
+static constexpr unsigned                                    nof_nr_DL_bands = 84;
 static constexpr std::array<nr_band_raster, nof_nr_DL_bands> nr_band_table   = {{
-      // clang-format off
+    // clang-format off
     {nr_band::n1,    delta_freq_raster::kHz100, 384000, 20,  396000,  422000, 20,  434000},
     {nr_band::n2,    delta_freq_raster::kHz100, 370000, 20,  382000,  386000, 20,  398000},
     {nr_band::n3,    delta_freq_raster::kHz100, 342000, 20,  357000,  361000, 20,  376000},
@@ -167,14 +173,19 @@ static constexpr std::array<nr_band_raster, nof_nr_DL_bands> nr_band_table   = {
     // clang-format on
 }};
 
-// NR operating band with related Duplex Mode. See TS 38.101-1 Table 5.2-1 for FR1 and Table 5.2-2 for FR2.
+namespace {
+
+/// NR operating band with related Duplex Mode. See TS 38.101-1 Table 5.2-1 for FR1 and Table 5.2-2 for FR2.
 struct nr_operating_band {
   nr_band     band;
   duplex_mode duplex;
 };
-static const uint32_t                                                 nof_nr_operating_band = 68;
+
+} // namespace
+
+static constexpr unsigned                                             nof_nr_operating_band = 68;
 static constexpr std::array<nr_operating_band, nof_nr_operating_band> nr_operating_bands    = {{
-       // clang-format off
+    // clang-format off
     {nr_band::n1,  duplex_mode::FDD},
     {nr_band::n2,  duplex_mode::FDD},
     {nr_band::n3,  duplex_mode::FDD},
@@ -246,16 +257,21 @@ static constexpr std::array<nr_operating_band, nof_nr_operating_band> nr_operati
     // clang-format on
 }};
 
-// NR operating band in FR1 with SSB Subcarrier Spacing and SSB pattern case, as per Table 5.4.3.3-1,
-// TS 38.104, Rel. 17, version 17.8.0.
+namespace {
+
+/// NR operating band in FR1 with SSB Subcarrier Spacing and SSB pattern case, as per Table 5.4.3.3-1,
+/// TS 38.104, Rel. 17, version 17.8.0.
 struct nr_band_ssb_scs_case {
   nr_band            band;
   subcarrier_spacing scs;
   ssb_pattern_case   pattern;
 };
-// NR operating bands with corresponding SSB Subcarrier Spacing and SSB pattern case, as per Table 5.4.3.3-1 for FR1 and
-// Table 5.4.3.3-1 for FR2, TS 38.104, Rel. 17, version 17.8.0.
-static const uint32_t                                               nof_nr_ssb_bands           = 72;
+
+} // namespace
+
+/// NR operating bands with corresponding SSB Subcarrier Spacing and SSB pattern case, as per Table 5.4.3.3-1 for FR1
+/// and Table 5.4.3.3-1 for FR2, TS 38.104, Rel. 17, version 17.8.0.
+static constexpr unsigned                                           nof_nr_ssb_bands           = 72;
 static constexpr std::array<nr_band_ssb_scs_case, nof_nr_ssb_bands> nr_ssb_band_scs_case_table = {{
     // clang-format off
     {nr_band::n1,  subcarrier_spacing::kHz15, ssb_pattern_case::A},
@@ -333,6 +349,8 @@ static constexpr std::array<nr_band_ssb_scs_case, nof_nr_ssb_bands> nr_ssb_band_
     // clang-format on
 }};
 
+namespace {
+
 struct nr_raster_params {
   double   freq_range_start;
   double   freq_range_end;
@@ -350,8 +368,10 @@ struct nr_raster_params {
   }
 };
 
-// NR-ARFCN parameters for the global frequency raster, as per Table 5.4.2.1-1, TS 38.104, Rel. 17, version 17.8.0.
-static const uint32_t                            max_nr_arfcn = 3279165;
+} // namespace
+
+/// NR-ARFCN parameters for the global frequency raster, as per Table 5.4.2.1-1, TS 38.104, Rel. 17, version 17.8.0.
+static constexpr unsigned                        max_nr_arfcn = 3279165;
 static constexpr std::array<nr_raster_params, 3> nr_fr_params = {{
     // clang-format off
     // Frequency range 0 - 3000 MHz
@@ -363,6 +383,8 @@ static constexpr std::array<nr_raster_params, 3> nr_fr_params = {{
     // clang-format on
 }};
 
+namespace {
+
 struct n_rb_per_scs_fr1 {
   bs_channel_bandwidth bw;
   unsigned             n_rb_15kHz;
@@ -370,8 +392,10 @@ struct n_rb_per_scs_fr1 {
   unsigned             n_rb_60kHz;
 };
 
-// This implements Table 5.3.2-1 in TS 38.104. Value N_RB = 0 represent N/A.
-static const std::array<n_rb_per_scs_fr1, 15> tx_bw_config_fr1 = {{
+} // namespace
+
+/// This implements Table 5.3.2-1 in TS 38.104. Value N_RB = 0 represent N/A.
+static constexpr std::array<n_rb_per_scs_fr1, 15> tx_bw_config_fr1 = {{
     // clang-format off
     // BW = 5MHz.
     {bs_channel_bandwidth::MHz5, 25, 11, 0},
@@ -406,14 +430,18 @@ static const std::array<n_rb_per_scs_fr1, 15> tx_bw_config_fr1 = {{
     // clang-format on
 }};
 
+namespace {
+
 struct n_rb_per_scs_fr2 {
   bs_channel_bandwidth bw;
   unsigned             n_rb_60kHz;
   unsigned             n_rb_120kHz;
 };
 
-// This implements Table 5.3.2-2 in TS 38.104. Value N_RB = 0 represent N/A.
-static const std::array<n_rb_per_scs_fr2, 15> tx_bw_config_fr2 = {{
+} // namespace
+
+/// This implements Table 5.3.2-2 in TS 38.104. Value N_RB = 0 represent N/A.
+static constexpr std::array<n_rb_per_scs_fr2, 15> tx_bw_config_fr2 = {{
     // clang-format off
     // BW = 50MHz.
     {bs_channel_bandwidth::MHz50, 66, 32},
@@ -509,30 +537,30 @@ static error_type<std::string> validate_band_n28(uint32_t arfcn, bs_channel_band
 // version 17.8.0.
 static error_type<std::string> validate_band_n46(uint32_t arfcn, bs_channel_bandwidth bw)
 {
-  constexpr std::array<unsigned, 2>  n46_b_10_dlarfnc = {782000, 788668};
-  constexpr std::array<unsigned, 32> n46_b_20_dlarfnc = {
+  static constexpr std::array<unsigned, 2>  n46_b_10_dlarfnc = {782000, 788668};
+  static constexpr std::array<unsigned, 32> n46_b_20_dlarfnc = {
       // clang-format off
       744000, 745332, 746668, 748000, 749332, 750668, 752000, 753332, 754668, 756000, 765332, 766668, 768000, 769332,
       770668, 772000, 773332, 774668, 776000, 777332, 778668, 780000, 781332, 783000, 784332, 785668, 787000, 788332,
       789668, 791000, 792332, 793668
       // clang-format on
   };
-  constexpr std::array<unsigned, 18> n46_b_40_dlarfnc = {
+  static constexpr std::array<unsigned, 18> n46_b_40_dlarfnc = {
       // clang-format off
       744668, 746000, 748668, 751332, 754000, 755332, 766000, 767332, 770000, 772668, 775332, 778000, 780668, 783668,
       786332, 787668, 790332, 793000
       // clang-format on
   };
-  constexpr std::array<unsigned, 17> n46_b_60_dlarfnc = {
+  static constexpr std::array<unsigned, 17> n46_b_60_dlarfnc = {
       // clang-format off
       745332, 746668, 748000,  752000, 753332, 754668, 766668, 768000, 769332, 773332, 774668, 778668, 780000, 784332,
       785668, 791000, 792332
       // clang-format on
   };
-  constexpr std::array<unsigned, 10> n46_b_80_dlarfnc = {
+  static constexpr std::array<unsigned, 10> n46_b_80_dlarfnc = {
       746000, 747332, 752668, 754000, 767332, 768668, 774000, 779332, 785000, 791668};
-  constexpr std::array<unsigned, 4> n46_b_100_dlarfnc = {746668, 753332, 768000, 791000};
-  const char*                       error_msg = {"Only a restricted set of DL-ARFCN values are allowed in band n46"};
+  static constexpr std::array<unsigned, 4> n46_b_100_dlarfnc = {746668, 753332, 768000, 791000};
+  static const char* error_msg = "Only a restricted set of DL-ARFCN values are allowed in band n46";
 
   auto dl_arfcn_exist = [](span<const unsigned> band_list, unsigned dl_arfcn) {
     return std::find(band_list.begin(), band_list.end(), dl_arfcn) != band_list.end();
@@ -568,11 +596,11 @@ static error_type<std::string> validate_band_n46(uint32_t arfcn, bs_channel_band
   }
 }
 
-// Validates band n66, whose valid ARFCN values depend on the channel BW, as per Table 5.4.2.3-1, TS 38.104,
-// version 17.8.0.
+/// Validates band n66, whose valid ARFCN values depend on the channel BW, as per Table 5.4.2.3-1, TS 38.104,
+/// version 17.8.0.
 static error_type<std::string> validate_band_n96(uint32_t arfcn, bs_channel_bandwidth bw)
 {
-  constexpr std::array<unsigned, 59> b_20_dlarfnc = {
+  static constexpr std::array<unsigned, 59> b_20_dlarfnc = {
       // clang-format off
       797000, 798332, 799668, 801000, 802332, 803668, 805000, 806332, 807668, 809000, 810332, 811668, 813000, 814332,
       815668, 817000, 818332, 819668, 821000, 822332, 823668, 825000, 826332, 827668, 829000, 830332, 831668, 833000,
@@ -581,26 +609,26 @@ static error_type<std::string> validate_band_n96(uint32_t arfcn, bs_channel_band
       871668, 873000, 874332
       // clang-format on
   };
-  constexpr std::array<unsigned, 29> b_40_dlarfnc = {
+  static constexpr std::array<unsigned, 29> b_40_dlarfnc = {
       // clang-format off
       797668, 800332, 803000, 805668, 808332, 811000, 813668, 816332, 819000, 821668, 824332, 827000, 829668, 832332,
       835000, 837668, 840332, 843000, 845668, 848332, 851000, 853668, 856332, 859000, 861668, 864332, 867000, 869668,
       872332
       // clang-format on
   };
-  constexpr std::array<unsigned, 29> b_60_dlarfnc = {
+  static constexpr std::array<unsigned, 29> b_60_dlarfnc = {
       // clang-format off
       798332, 799668, 803668, 805000, 809000, 810332, 814332, 815668, 819668, 821000, 825000, 826332, 830332, 831668,
       835668, 837000, 841000, 842332, 846332, 847668, 851668, 853000, 857000, 858332, 862332, 863668, 867668, 869000,
       873000
       // clang-format on
   };
-  constexpr std::array<unsigned, 14> b_80_dlarfnc = {
+  static constexpr std::array<unsigned, 14> b_80_dlarfnc = {
       // clang-format off
       799000, 804332, 809668, 815000, 820332, 825668, 831000, 836332, 841668, 847000, 852332, 857668, 863000, 868332
       // clang-format on
   };
-  constexpr std::array<unsigned, 17> b_100_dlarfnc = {
+  static constexpr std::array<unsigned, 17> b_100_dlarfnc = {
       // clang-format off
       799668, 803668, 810332, 814332, 821000, 825000, 831668, 835668, 842332, 846332, 853000, 857000, 863668, 867668,
       869000, 870332, 871668
@@ -611,7 +639,7 @@ static error_type<std::string> validate_band_n96(uint32_t arfcn, bs_channel_band
     return std::find(band_list.begin(), band_list.end(), dl_arfcn) != band_list.end();
   };
 
-  const char* error_msg = {"Only a restricted set of DL-ARFCN values are allowed in band n96"};
+  static const char* error_msg = "Only a restricted set of DL-ARFCN values are allowed in band n96";
   switch (bw) {
     case bs_channel_bandwidth::MHz20: {
       return dl_arfcn_exist(span<const unsigned>(b_20_dlarfnc), arfcn) ? error_type<std::string>{}
@@ -638,28 +666,28 @@ static error_type<std::string> validate_band_n96(uint32_t arfcn, bs_channel_band
   }
 }
 
-// Validates band n102, whose valid ARFCN values depend on the channel BW, as per Table 5.4.2.3-1, TS 38.104,
-// version 17.8.0.
+/// Validates band n102, whose valid ARFCN values depend on the channel BW, as per Table 5.4.2.3-1, TS 38.104,
+/// version 17.8.0.
 static error_type<std::string> validate_band_n102(uint32_t arfcn, bs_channel_bandwidth bw)
 {
-  constexpr std::array<unsigned, 24> b_20_dlarfnc = {
+  static constexpr std::array<unsigned, 24> b_20_dlarfnc = {
       // clang-format off
       797000, 798332, 799668, 801000, 802332, 803668, 805000, 806332, 807668, 809000, 810332, 811668, 813000, 814332,
       815668, 817000, 818332, 819668, 821000, 822332, 823668, 825000, 826332, 827668
       // clang-format on
   };
-  constexpr std::array<unsigned, 12> b_40_dlarfnc = {
+  static constexpr std::array<unsigned, 12> b_40_dlarfnc = {
       // clang-format off
       797668, 800332, 803000, 805668, 808332, 811000, 813668, 816332, 819000, 821668, 824332, 827000
       // clang-format on
   };
-  constexpr std::array<unsigned, 12> b_60_dlarfnc = {
+  static constexpr std::array<unsigned, 12> b_60_dlarfnc = {
       // clang-format off
       798332, 799668, 803668, 805000, 809000, 810332, 814332, 815668, 819668, 821000, 825000, 826332
       // clang-format on
   };
-  constexpr std::array<unsigned, 6> b_80_dlarfnc  = {799000, 804332, 809668, 815000, 820332, 825668};
-  constexpr std::array<unsigned, 6> b_100_dlarfnc = {799668, 803668, 810332, 814332, 821000, 825000};
+  static constexpr std::array<unsigned, 6> b_80_dlarfnc  = {799000, 804332, 809668, 815000, 820332, 825668};
+  static constexpr std::array<unsigned, 6> b_100_dlarfnc = {799668, 803668, 810332, 814332, 821000, 825000};
 
   const nr_band_raster band_raster = fetch_band_raster(nr_band::n102, {});
   if (band_raster.band == srsran::nr_band::invalid or arfcn < band_raster.dl_nref_first or
@@ -671,7 +699,7 @@ static error_type<std::string> validate_band_n102(uint32_t arfcn, bs_channel_ban
     return std::find(band_list.begin(), band_list.end(), dl_arfcn) != band_list.end();
   };
 
-  const char* error_msg = {"Only a restricted set of DL-ARFCN values are allowed in band n102"};
+  static const char* error_msg = "Only a restricted set of DL-ARFCN values are allowed in band n102";
   switch (bw) {
     case bs_channel_bandwidth::MHz20: {
       return dl_arfcn_exist(span<const unsigned>(b_20_dlarfnc), arfcn) ? error_type<std::string>{}
@@ -804,7 +832,7 @@ error_type<std::string> srsran::band_helper::is_dl_arfcn_valid_given_band(nr_ban
                       raster_band.dl_nref_step));
     }
   }
-  return make_unexpected(fmt::format("Band {} is not valid", band));
+  return make_unexpected(fmt::format("Band {} is not valid", fmt::underlying(band)));
 }
 
 error_type<std::string>
@@ -831,7 +859,7 @@ srsran::band_helper::is_ul_arfcn_valid_given_band(nr_band band, uint32_t arfcn_f
         return make_unexpected(
             fmt::format("Asymmetrical UL and DL channel BWs are not supported. The UL ARFCN resulting from the DL "
                         "ARFCN for band n{} must not exceed the band upper-bound={}",
-                        band,
+                        fmt::underlying(band),
                         raster_band.ul_nref_last));
       }
       if (arfcn_f_ref >= raster_band.ul_nref_first and arfcn_f_ref <= raster_band.ul_nref_last and
@@ -845,7 +873,7 @@ srsran::band_helper::is_ul_arfcn_valid_given_band(nr_band band, uint32_t arfcn_f
                       raster_band.ul_nref_step));
     }
   }
-  return make_unexpected(fmt::format("Band {} is not valid", band));
+  return make_unexpected(fmt::format("Band {} is not valid", fmt::underlying(band)));
 }
 
 uint32_t srsran::band_helper::get_ul_arfcn_from_dl_arfcn(uint32_t dl_arfcn, std::optional<nr_band> band)
@@ -910,6 +938,11 @@ bool srsran::band_helper::is_band_40mhz_min_ch_bw_equivalent(nr_band band)
 {
   // As per TS 38.101, Table 5.2-1, only bands where Note 17 applies.
   return band == nr_band::n79 or band == nr_band::n104;
+}
+
+bool srsran::band_helper::is_ntn_band(nr_band band)
+{
+  return band == nr_band::n254 or band == nr_band::n255 or band == nr_band::n256;
 }
 
 ssb_pattern_case srsran::band_helper::get_ssb_pattern(nr_band band, subcarrier_spacing scs)
@@ -1092,12 +1125,12 @@ unsigned srsran::band_helper::get_n_rbs_from_bw(bs_channel_bandwidth bw, subcarr
       return 0;
     }
 
-    for (unsigned bw_idx = 0; bw_idx != tx_bw_config_fr2.size(); ++bw_idx) {
-      if (tx_bw_config_fr2[bw_idx].bw == bw) {
+    for (const auto& bw_idx : tx_bw_config_fr2) {
+      if (bw_idx.bw == bw) {
         if (scs == subcarrier_spacing::kHz60) {
-          return tx_bw_config_fr2[bw_idx].n_rb_60kHz;
+          return bw_idx.n_rb_60kHz;
         }
-        return tx_bw_config_fr2[bw_idx].n_rb_120kHz;
+        return bw_idx.n_rb_120kHz;
       }
     }
   }
@@ -1108,15 +1141,15 @@ unsigned srsran::band_helper::get_n_rbs_from_bw(bs_channel_bandwidth bw, subcarr
   }
 
   // Search on the table \ref tx_bw_config_fr1 for the BS channel bandwidth and return the N_RB corresponding to SCS.
-  for (unsigned bw_idx = 0; bw_idx != tx_bw_config_fr1.size(); ++bw_idx) {
-    if (tx_bw_config_fr1[bw_idx].bw == bw) {
+  for (const auto& bw_idx : tx_bw_config_fr1) {
+    if (bw_idx.bw == bw) {
       if (scs == subcarrier_spacing::kHz15) {
-        return tx_bw_config_fr1[bw_idx].n_rb_15kHz;
-      } else if (scs == subcarrier_spacing::kHz30) {
-        return tx_bw_config_fr1[bw_idx].n_rb_30kHz;
-      } else {
-        return tx_bw_config_fr1[bw_idx].n_rb_60kHz;
+        return bw_idx.n_rb_15kHz;
       }
+      if (scs == subcarrier_spacing::kHz30) {
+        return bw_idx.n_rb_30kHz;
+      }
+      return bw_idx.n_rb_60kHz;
     }
   }
 
@@ -1155,11 +1188,11 @@ min_channel_bandwidth srsran::band_helper::get_min_channel_bw(nr_band nr_band, s
     case nr_band::n99: {
       if (scs == subcarrier_spacing::kHz15) {
         return min_channel_bandwidth::MHz5;
-      } else if (scs == subcarrier_spacing::kHz30 or scs == subcarrier_spacing::kHz60) {
-        return min_channel_bandwidth::MHz10;
-      } else {
-        return min_channel_bandwidth::invalid;
       }
+      if (scs == subcarrier_spacing::kHz30 or scs == subcarrier_spacing::kHz60) {
+        return min_channel_bandwidth::MHz10;
+      }
+      return min_channel_bandwidth::invalid;
     }
     case nr_band::n5:
     case nr_band::n8:
@@ -1184,11 +1217,11 @@ min_channel_bandwidth srsran::band_helper::get_min_channel_bw(nr_band nr_band, s
     case nr_band::n101: {
       if (scs == subcarrier_spacing::kHz15) {
         return min_channel_bandwidth::MHz5;
-      } else if (scs == subcarrier_spacing::kHz30) {
-        return min_channel_bandwidth::MHz10;
-      } else {
-        return min_channel_bandwidth::invalid;
       }
+      if (scs == subcarrier_spacing::kHz30) {
+        return min_channel_bandwidth::MHz10;
+      }
+      return min_channel_bandwidth::invalid;
     }
     case nr_band::n46:
     case nr_band::n77:
@@ -1196,9 +1229,8 @@ min_channel_bandwidth srsran::band_helper::get_min_channel_bw(nr_band nr_band, s
     case nr_band::n79: {
       if (scs <= subcarrier_spacing::kHz60) {
         return min_channel_bandwidth::MHz10;
-      } else {
-        return min_channel_bandwidth::invalid;
       }
+      return min_channel_bandwidth::invalid;
     }
     case nr_band::n51:
     case nr_band::n76:
@@ -1207,28 +1239,26 @@ min_channel_bandwidth srsran::band_helper::get_min_channel_bw(nr_band nr_band, s
     case nr_band::n100: {
       if (scs == subcarrier_spacing::kHz15) {
         return min_channel_bandwidth::MHz5;
-      } else {
-        return min_channel_bandwidth::invalid;
       }
+      return min_channel_bandwidth::invalid;
     }
     case nr_band::n96:
     case nr_band::n102:
     case nr_band::n104: {
       if (scs <= subcarrier_spacing::kHz60) {
         return min_channel_bandwidth::MHz20;
-      } else {
-        return min_channel_bandwidth::invalid;
       }
+      return min_channel_bandwidth::invalid;
     }
     case nr_band::n255:
     case nr_band::n256: {
       if (scs == subcarrier_spacing::kHz15) {
         return min_channel_bandwidth::MHz5;
-      } else if (scs == subcarrier_spacing::kHz30) {
-        return min_channel_bandwidth::MHz10;
-      } else {
-        return min_channel_bandwidth::invalid;
       }
+      if (scs == subcarrier_spacing::kHz30) {
+        return min_channel_bandwidth::MHz10;
+      }
+      return min_channel_bandwidth::invalid;
     }
     case nr_band::n257:
     case nr_band::n258:
@@ -1237,18 +1267,40 @@ min_channel_bandwidth srsran::band_helper::get_min_channel_bw(nr_band nr_band, s
     case nr_band::n261:
       if ((scs == subcarrier_spacing::kHz60) || (scs == subcarrier_spacing::kHz120)) {
         return min_channel_bandwidth::MHz50;
-      } else {
-        return min_channel_bandwidth::invalid;
       }
+      return min_channel_bandwidth::invalid;
     default:
       return min_channel_bandwidth::invalid;
   }
   return min_channel_bandwidth::invalid;
 }
 
-// Compute the maximum value of row index of Table 13-11, TS 38.213 that can be addressed for a specific configuration.
+/// Compute the maximum value of row index of Tables 13-[1-10], TS 38.213 that can be addressed for a specific
+/// configuration.
 static unsigned get_max_coreset0_index(nr_band band, subcarrier_spacing scs_common, subcarrier_spacing scs_ssb)
 {
+  // Row indexes for frequency range 2.
+  if (get_freq_range(band) == frequency_range::FR2) {
+    // TS 38.213 Table 13-7.
+    if (scs_ssb == subcarrier_spacing::kHz120 and scs_common == subcarrier_spacing::kHz60) {
+      return 11;
+    }
+    // TS 38.213 Table 13-8.
+    if (scs_ssb == subcarrier_spacing::kHz120 and scs_common == subcarrier_spacing::kHz120) {
+      return 7;
+    }
+    // TS 38.213 Table 13-9.
+    if (scs_ssb == subcarrier_spacing::kHz240 and scs_common == subcarrier_spacing::kHz60) {
+      return 3;
+    }
+    // TS 38.213 Table 13-10.
+    if (scs_ssb == subcarrier_spacing::kHz240 and scs_common == subcarrier_spacing::kHz120) {
+      return 7;
+    }
+    // Other combinations are not supported.
+    return 0;
+  }
+
   const min_channel_bandwidth min_channel_bw         = band_helper::get_min_channel_bw(band, scs_common);
   const bool                  is_for_shared_spectrum = band_helper::is_band_for_shared_spectrum(band);
 
@@ -1271,7 +1323,8 @@ static unsigned get_max_coreset0_index(nr_band band, subcarrier_spacing scs_comm
   if (min_channel_bw == min_channel_bandwidth::MHz40 or is_40mhz_min_ch_bw_equivalent) {
     if (scs_ssb == subcarrier_spacing::kHz30 and scs_common == subcarrier_spacing::kHz15) {
       return 8;
-    } else if (scs_ssb == subcarrier_spacing::kHz30 and scs_common == subcarrier_spacing::kHz30) {
+    }
+    if (scs_ssb == subcarrier_spacing::kHz30 and scs_common == subcarrier_spacing::kHz30) {
       return 9;
     }
   }
@@ -1279,24 +1332,28 @@ static unsigned get_max_coreset0_index(nr_band band, subcarrier_spacing scs_comm
   else if (min_channel_bw == min_channel_bandwidth::MHz5 || min_channel_bw == min_channel_bandwidth::MHz10) {
     if (scs_ssb == subcarrier_spacing::kHz15 and scs_common == subcarrier_spacing::kHz15) {
       return 14;
-    } else if (scs_ssb == subcarrier_spacing::kHz15 and scs_common == subcarrier_spacing::kHz30) {
+    }
+    if (scs_ssb == subcarrier_spacing::kHz15 and scs_common == subcarrier_spacing::kHz30) {
       return 13;
-    } else if (scs_ssb == subcarrier_spacing::kHz30 and scs_common == subcarrier_spacing::kHz15) {
+    }
+    if (scs_ssb == subcarrier_spacing::kHz30 and scs_common == subcarrier_spacing::kHz15) {
       return 8;
-    } else if (scs_ssb == subcarrier_spacing::kHz30 and scs_common == subcarrier_spacing::kHz30) {
+    }
+    if (scs_ssb == subcarrier_spacing::kHz30 and scs_common == subcarrier_spacing::kHz30) {
       return 15;
     }
   }
   return 0;
 }
 
-// \brief Computes the CRB index where the first SSB's subcarrier is located.
+/// \brief Computes the CRB index where the first SSB's subcarrier is located.
 static unsigned get_ssb_crb_0(subcarrier_spacing scs_common, ssb_offset_to_pointA offset_to_point_A)
 {
-  return scs_common == subcarrier_spacing::kHz15 ? offset_to_point_A.to_uint() : offset_to_point_A.to_uint() / 2;
+  unsigned denominator = pow2(to_numerology_value(scs_common) - to_numerology_value(get_ssb_ref_scs(scs_common)));
+  return offset_to_point_A.to_uint() / denominator;
 }
 
-// \brief Computes the CRBs (based on SCS_common) that intersect with the SSB's PRBs.
+/// \brief Computes the CRBs (based on SCS_common) that intersect with the SSB's PRBs.
 static interval<unsigned> get_ssb_crbs(subcarrier_spacing    scs_common,
                                        subcarrier_spacing    scs_ssb,
                                        ssb_offset_to_pointA  offset_to_point_A,
@@ -1321,9 +1378,6 @@ srsran::band_helper::get_ssb_coreset0_freq_location(unsigned           dl_arfcn,
                                                     uint8_t            ss0_idx,
                                                     uint8_t            max_coreset0_duration)
 {
-  srsran_assert(scs_ssb < subcarrier_spacing::kHz60,
-                "Only 15kHz and 30kHz currently supported for SSB subcarrier spacing");
-
   std::optional<ssb_coreset0_freq_location> result;
 
   // Get f_ref, point_A from dl_f_ref_arfcn, band and bandwidth.
@@ -1465,9 +1519,15 @@ std::optional<unsigned> srsran::band_helper::get_coreset0_index(nr_band         
                                                                 uint8_t                 ss0_idx,
                                                                 std::optional<unsigned> nof_coreset0_symb)
 {
+  // Determine the frequency range.
+  bool is_fr2 = (get_freq_range(band) == frequency_range::FR2);
+
+  // Get the reference subcarrier spacing used for SS/PBCH block frequency positon.
+  subcarrier_spacing scs_ref = get_ssb_ref_scs(scs_ssb);
+
   // CRB index where the first SSB's subcarrier is located.
   const unsigned crbs_ssb =
-      scs_common == subcarrier_spacing::kHz15 ? offset_to_point_A.to_uint() : offset_to_point_A.to_uint() / 2;
+      offset_to_point_A.to_uint() / pow2(to_numerology_value(scs_common) - to_numerology_value(scs_ref));
 
   // Get the maximum Coreset0 index that can be used for the Tables 13-[1-6], TS 38.213.
   const unsigned max_cset0_idx = get_max_coreset0_index(band, scs_common, scs_ssb);
@@ -1484,7 +1544,7 @@ std::optional<unsigned> srsran::band_helper::get_coreset0_index(nr_band         
 
     const pdcch_type0_css_occasion_pattern1_description ss0_config =
         pdcch_type0_css_occasions_get_pattern1(pdcch_type0_css_occasion_pattern1_configuration{
-            .is_fr2 = false, .ss_zero_index = ss0_idx, .nof_symb_coreset = coreset0_cfg.nof_symb_coreset});
+            .is_fr2 = is_fr2, .ss_zero_index = ss0_idx, .nof_symb_coreset = coreset0_cfg.nof_symb_coreset});
 
     // Check if the number of symbols of the CORESET#0 is the one we are searching for.
     const bool coreset0_nof_symb_valid =
@@ -1535,12 +1595,16 @@ unsigned srsran::band_helper::get_nof_coreset0_rbs_not_intersecting_ssb(unsigned
 
 n_ta_offset srsran::band_helper::get_ta_offset(nr_band band)
 {
-  if (get_freq_range(band) == frequency_range::FR1) {
+  return get_ta_offset(get_freq_range(band));
+}
+
+n_ta_offset srsran::band_helper::get_ta_offset(frequency_range freq_range)
+{
+  if (freq_range == frequency_range::FR1) {
     // Assume no LTE-NR coexistence.
     return n_ta_offset::n25600;
-  } else {
-    return n_ta_offset::n13792;
   }
+  return n_ta_offset::n13792;
 }
 
 std::optional<unsigned> srsran::band_helper::get_ssb_arfcn(unsigned              dl_arfcn,
@@ -1551,9 +1615,6 @@ std::optional<unsigned> srsran::band_helper::get_ssb_arfcn(unsigned             
                                                            ssb_offset_to_pointA  offset_to_point_A,
                                                            ssb_subcarrier_offset k_ssb)
 {
-  srsran_assert(scs_ssb < subcarrier_spacing::kHz60,
-                "Only 15kHz and 30kHz currently supported for SSB subcarrier spacing");
-
   // Get f_ref, point_A from dl_f_ref_arfcn, band and bandwidth.
   ssb_freq_position_generator du_cfg{dl_arfcn, band, n_rbs, scs_common, scs_ssb};
   ssb_freq_location           ssb = du_cfg.get_next_ssb_location();
@@ -1574,7 +1635,8 @@ error_type<std::string> srsran::band_helper::is_ssb_arfcn_valid_given_band(uint3
   // Convert the ARFCN to GSCN.
   std::optional<unsigned> gscn = band_helper::get_gscn_from_ss_ref(nr_arfcn_to_freq(ssb_arfcn));
   if (not gscn.has_value()) {
-    return make_unexpected(fmt::format("GSCN {} is not valid for band {} with SSB SCS {}", gscn, band, ssb_scs));
+    return make_unexpected(fmt::format(
+        "GSCN {} is not valid for band {} with SSB SCS {}", gscn, fmt::underlying(band), fmt::underlying(ssb_scs)));
   }
   // If the GCSN exists, check if it is a valid one.
   return band_helper::is_gscn_valid_given_band(gscn.value(), band, ssb_scs, bw);

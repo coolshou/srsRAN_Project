@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -65,24 +65,24 @@ public:
 
   ue_cell* find_cell(du_cell_index_t cell_index)
   {
-    srsran_assert(cell_index < MAX_NOF_DU_CELLS, "Invalid cell_index={}", cell_index);
+    srsran_assert(cell_index < MAX_NOF_DU_CELLS, "Invalid cell_index={}", fmt::underlying(cell_index));
     return ue_du_cells[cell_index].get();
   }
   const ue_cell* find_cell(du_cell_index_t cell_index) const
   {
-    srsran_assert(cell_index < MAX_NOF_DU_CELLS, "Invalid cell_index={}", cell_index);
+    srsran_assert(cell_index < MAX_NOF_DU_CELLS, "Invalid cell_index={}", fmt::underlying(cell_index));
     return ue_du_cells[cell_index].get();
   }
 
   /// \brief Fetch UE cell based on UE-specific cell identifier. E.g. PCell corresponds to ue_cell_index==0.
   ue_cell& get_cell(ue_cell_index_t ue_cell_index)
   {
-    srsran_assert(ue_cell_index < ue_cells.size(), "Invalid cell_index={}", ue_cell_index);
+    srsran_assert(ue_cell_index < ue_cells.size(), "Invalid cell_index={}", fmt::underlying(ue_cell_index));
     return *ue_cells[ue_cell_index];
   }
   const ue_cell& get_cell(ue_cell_index_t ue_cell_index) const
   {
-    srsran_assert(ue_cell_index < ue_cells.size(), "Invalid cell_index={}", ue_cell_index);
+    srsran_assert(ue_cell_index < ue_cells.size(), "Invalid cell_index={}", fmt::underlying(ue_cell_index));
     return *ue_cells[ue_cell_index];
   }
 
@@ -103,9 +103,6 @@ public:
   /// \brief Handle received SR indication.
   void handle_sr_indication() { ul_lc_ch_mgr.handle_sr_indication(); }
 
-  /// \brief Once an UL grant is given, the SR status of the UE must be reset.
-  void reset_sr_indication() { ul_lc_ch_mgr.reset_sr_indication(); }
-
   /// \brief Handles received BSR indication by updating UE UL logical channel states.
   void handle_bsr_indication(const ul_bsr_indication_message& msg) { ul_lc_ch_mgr.handle_bsr_indication(msg); }
 
@@ -113,97 +110,45 @@ public:
   void handle_ul_n_ta_update_indication(du_cell_index_t cell_index, float ul_sinr, phy_time_unit n_ta_diff)
   {
     const ue_cell* ue_cc = find_cell(cell_index);
-    ta_mgr.handle_ul_n_ta_update_indication(ue_cc->cfg().cfg_dedicated().tag_id, n_ta_diff.to_Tc(), ul_sinr);
+    ta_mgr.handle_ul_n_ta_update_indication(ue_cc->cfg().tag_id(), n_ta_diff.to_Tc(), ul_sinr);
   }
 
   /// \brief Handles MAC CE indication.
   void handle_dl_mac_ce_indication(const dl_mac_ce_indication& msg)
   {
-    dl_lc_ch_mgr.handle_mac_ce_indication({.ce_lcid = msg.ce_lcid, .ce_payload = dummy_ce_payload{}});
+    if (not dl_lc_ch_mgr.handle_mac_ce_indication({.ce_lcid = msg.ce_lcid, .ce_payload = dummy_ce_payload{}})) {
+      logger.warning("Dropped MAC CE, queue is full.");
+    }
   }
+
+  /// Called when a new UE configuration is passed to the scheduler, as part of the RRC Reconfiguration procedure.
+  void handle_reconfiguration_request(const ue_reconf_command& params, bool reestablished_);
+
+  /// Called when the UE confirms that it applied the new configuration.
+  void handle_config_applied();
 
   /// \brief Handles DL Buffer State indication.
-  void handle_dl_buffer_state_indication(const dl_buffer_state_indication_message& msg)
-  {
-    dl_lc_ch_mgr.handle_dl_buffer_status_indication(msg.lcid, msg.bs);
-  }
-
-  void handle_reconfiguration_request(const ue_reconf_command& params);
-
-  /// \brief Checks if there are DL pending bytes that are yet to be allocated in a DL HARQ.
-  /// This method is faster than computing \c pending_dl_newtx_bytes() > 0.
-  /// \remark Excludes SRB0 and UE Contention Resolution Identity CE.
-  bool has_pending_dl_newtx_bytes() const { return dl_lc_ch_mgr.has_pending_bytes(); }
-
-  /// \brief Checks if there are DL pending bytes in SRBs that are yet to be allocated in a DL HARQ.
-  /// This method is faster than computing \c pending_dl_newtx_bytes() > 0.
-  /// \remark Excludes SRB0 pending bytes.
-  bool has_pending_dl_srb_newtx_bytes() const
-  {
-    return dl_lc_ch_mgr.has_pending_bytes(LCID_SRB1) or dl_lc_ch_mgr.has_pending_bytes(LCID_SRB2);
-  }
-
-  /// \brief Checks if there are DL pending bytes for a specific LCID that are yet to be allocated in a DL HARQ.
-  bool has_pending_dl_newtx_bytes(lcid_t lcid) const { return dl_lc_ch_mgr.has_pending_bytes(lcid); }
-
-  /// \brief Whether MAC ConRes CE is pending.
-  bool is_conres_ce_pending() const { return dl_lc_ch_mgr.is_con_res_id_pending(); }
-
-  /// \brief Returns the UE pending ConRes CE bytes to be scheduled, if any.
-  unsigned pending_conres_ce_bytes() const { return dl_lc_ch_mgr.pending_ue_con_res_id_ce_bytes(); }
-
-  /// \brief Returns the UE pending CEs' bytes to be scheduled, if any.
-  unsigned pending_ce_bytes() const { return dl_lc_ch_mgr.pending_ce_bytes(); }
-
-  /// \brief Returns whether the UE has pending CEs' bytes to be scheduled, if any.
-  bool has_pending_ce_bytes() const { return dl_lc_ch_mgr.is_con_res_id_pending() or dl_lc_ch_mgr.has_pending_ces(); }
-
-  /// \brief Computes the number of DL pending bytes that are not already allocated in a DL HARQ. The value is used
-  /// to derive the required transport block size for an DL grant.
-  /// param[in] lcid If the LCID is provided, the method will return the number of pending bytes for that LCID.
-  ///           Otherwise it will return the sum of all LCIDs pending bytes, excluding SRB0.
-  /// \return The number of DL pending bytes that are not already allocated in a DL HARQ.
-  unsigned pending_dl_newtx_bytes(lcid_t lcid = lcid_t::INVALID_LCID) const;
-
-  /// \brief Computes the number of DL pending bytes in SRBs that are not already allocated in a DL
-  /// HARQ. The value is used to derive the required transport block size for an DL grant.
-  /// \return The number of DL pending bytes in SRBs that are not already allocated in a DL HARQ.
-  /// \remark Excludes SRB0 pending bytes.
-  unsigned pending_dl_srb_newtx_bytes() const;
+  void handle_dl_buffer_state_indication(lcid_t lcid, unsigned bs, slot_point hol_toa = {});
 
   /// \brief Computes the number of UL pending bytes that are not already allocated in a UL HARQ. The value is used
   /// to derive the required transport block size for an UL grant.
   unsigned pending_ul_newtx_bytes() const;
 
-  /// \brief Computes the number of UL pending bytes for a LCG ID.
-  unsigned pending_ul_newtx_bytes(lcg_id_t lcg_id) const;
-
-  /// \brief Computes the number of UL pending bytes in SRBs. The value is used to derive the required transport block
-  /// size for an UL grant.
-  /// \return The number of UL pending bytes in SRBs.
-  /// \remark The returned UL pending bytes does not exclude already allocated bytes in UL HARQ(s).
-  unsigned pending_ul_srb_newtx_bytes() const;
-
-  /// \brief Returns whether a SR indication handling is pending.
-  bool has_pending_sr() const;
-
   /// \brief Retrieves UE DRX controller.
   ue_drx_controller& drx_controller() { return drx; }
 
-  /// \brief Defines the list of subPDUs, including LCID and payload size, that will compose the transport block.
-  /// \return Returns the number of bytes reserved in the TB for subPDUs (other than padding).
-  /// \remark Excludes SRB0.
-  unsigned build_dl_transport_block_info(dl_msg_tb_info&                         tb_info,
-                                         unsigned                                tb_size_bytes,
-                                         const bounded_bitset<MAX_NOF_RB_LCIDS>& lcids);
+  /// \brief UE DL logical channels.
+  const dl_logical_channel_manager& dl_logical_channels() const { return dl_lc_ch_mgr; }
+  dl_logical_channel_manager&       dl_logical_channels() { return dl_lc_ch_mgr; }
 
-  /// \brief Defines the list of subPDUs, including LCID and payload size, that will compose the transport block for
-  /// SRB0 or for SRB1 in fallback mode.
-  /// It includes the UE Contention Resolution Identity CE if it is pending.
-  /// \return Returns the number of bytes reserved in the TB for subPDUs (other than padding).
-  unsigned build_dl_fallback_transport_block_info(dl_msg_tb_info& tb_info, unsigned tb_size_bytes);
+  /// \brief UE UL logical channels.
+  const ul_logical_channel_manager& ul_logical_channels() const { return ul_lc_ch_mgr; }
+  ul_logical_channel_manager&       ul_logical_channels() { return ul_lc_ch_mgr; }
 
 private:
+  /// Update UE configuration.
+  void set_config(const ue_configuration& new_cfg, std::optional<slot_point> msg3_rx_slot = std::nullopt);
+
   // Expert config parameters used for UE scheduler.
   const scheduler_ue_expert_config& expert_cfg;
   // Cell configuration. This is common to all UEs within the same cell.
@@ -227,6 +172,8 @@ private:
 
   /// UE UL Logical Channel Manager.
   ul_logical_channel_manager ul_lc_ch_mgr;
+
+  slot_point last_sl_tx;
 
   /// UE Timing Advance Manager.
   ta_manager ta_mgr;

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -52,7 +52,7 @@ public:
     demodulator_config.dft_size                  = config.srate.get_dft_size(config.scs);
     demodulator_config.cp                        = config.cp;
     demodulator_config.nof_samples_window_offset = nof_samples_window_offset;
-    demodulator_config.center_freq_hz            = config.center_freq_Hz;
+    demodulator_config.center_freq_Hz            = config.center_freq_Hz;
 
     // Scale the DFT results to normalize the DFT output power.
     demodulator_config.scale = 1.0F / std::sqrt(config.bandwidth_rb * nof_subcarriers_rb);
@@ -62,6 +62,7 @@ public:
     proc_config.cp                 = config.cp;
     proc_config.nof_rx_ports       = config.nof_rx_ports;
     proc_config.request_queue_size = request_queue_size;
+    proc_config.dft_size           = demodulator_config.dft_size;
 
     return std::make_unique<puxch_processor_impl>(ofdm_factory->create_ofdm_symbol_demodulator(demodulator_config),
                                                   proc_config);

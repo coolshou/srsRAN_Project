@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -19,9 +19,10 @@
 #
 
 add_subdirectory(versioning)
-add_subdirectory(network)
 
 set(SOURCES
+        executors/metrics/executor_metrics_backend.cpp
+        executors/metrics/executor_metrics_channel.cpp
         executors/priority_task_queue.cpp
         executors/priority_task_worker.cpp
         executors/task_execution_manager.cpp
@@ -29,6 +30,14 @@ set(SOURCES
         executors/task_worker_pool.cpp
         executors/unique_thread.cpp
         executors/execution_context_description.cpp
+        executors/executor_decoration_factory.cpp
+        network/io_broker_epoll.cpp
+        network/io_broker_factory.cpp
+        network/io_timer_source.cpp
+        network/sctp_socket.cpp
+        network/sockets.cpp
+        network/transport_layer_address.cpp
+        synchronization/futex_util.cpp
         tracing/resource_usage.cpp
         tracing/event_tracing.cpp
         backtrace.cpp
@@ -37,16 +46,20 @@ set(SOURCES
         byte_buffer_chain.cpp
         config_yaml.cpp
         cpu_architecture_info.cpp
+        resource_usage/powercap_energy_reader_impl.cpp
+        resource_usage/rapl_msr_energy_reader_impl.cpp
+        resource_usage/power_consumption.cpp
+        resource_usage/resource_usage_utils.cpp
+        rate_limiting/token_bucket.cpp
         signal_handling.cpp
         sysinfo.cpp
         timers.cpp
         math_utils.cpp
-	    dynlink_manager.cpp
-        )
+)
 
 add_library(srsran_support STATIC ${SOURCES})
-target_link_libraries(srsran_support PRIVATE srsran_network ${CMAKE_THREAD_LIBS_INIT} ${YAMLCPP_LIBRARY}
-                      ${NUMA_LIBRARIES} srslog)
+target_link_libraries(srsran_support PRIVATE ${CMAKE_THREAD_LIBS_INIT} ${YAML_CPP_LIBRARIES}
+        ${NUMA_LIBRARIES} srslog)
 add_backward(srsran_support)
 
 if (Backward_FOUND AND BACKWARD_HAS_EXTERNAL_LIBRARIES)

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,6 +26,7 @@
 #include "srsran/phy/upper/channel_processors/pusch/factories.h"
 #include "srsran/phy/upper/channel_processors/pusch/formatters.h"
 #include "srsran/phy/upper/equalization/equalization_factories.h"
+#include "srsran/support/executors/inline_task_executor.h"
 #include "srsran/support/math/math_utils.h"
 #ifdef HWACC_PUSCH_ENABLED
 #include "srsran/hal/dpdk/bbdev/bbdev_acc.h"
@@ -102,10 +103,13 @@ using PuschProcessorParams = std::tuple<std::string, test_case_t>;
 class PuschProcessorFixture : public ::testing::TestWithParam<PuschProcessorParams>
 {
 private:
+  inline_task_executor ch_est_executor;
+
   static std::shared_ptr<pusch_decoder_factory>
   create_generic_pusch_decoder_factory(std::shared_ptr<crc_calculator_factory> crc_calculator_factory)
   {
-    std::shared_ptr<ldpc_decoder_factory> ldpc_decoder_factory = create_ldpc_decoder_factory_sw("auto");
+    std::shared_ptr<ldpc_decoder_factory> ldpc_decoder_factory =
+        create_ldpc_decoder_factory_sw("auto", {.force_decoding = false});
     if (!ldpc_decoder_factory) {
       return nullptr;
     }
@@ -182,7 +186,7 @@ private:
     hal::bbdev_hwacc_pusch_dec_factory_configuration hw_decoder_config;
     hw_decoder_config.acc_type            = "acc100";
     hw_decoder_config.bbdev_accelerator   = bbdev_accelerator;
-    hw_decoder_config.ext_softbuffer      = true;
+    hw_decoder_config.force_local_harq    = false;
     hw_decoder_config.harq_buffer_context = harq_buffer_context;
     hw_decoder_config.dedicated_queue     = true;
 
@@ -255,8 +259,14 @@ private:
     }
 
     // Create demodulator mapper factory.
-    std::shared_ptr<channel_modulation_factory> chan_modulation_factory = create_channel_modulation_sw_factory();
-    if (!chan_modulation_factory) {
+    std::shared_ptr<demodulation_mapper_factory> chan_demodulation_factory = create_demodulation_mapper_factory();
+    if (!chan_demodulation_factory) {
+      return nullptr;
+    }
+
+    // Create EVM calculator factory.
+    std::shared_ptr<evm_calculator_factory> evm_calc_factory = create_evm_calculator_factory();
+    if (!evm_calc_factory) {
       return nullptr;
     }
 
@@ -295,7 +305,13 @@ private:
 
     // Create DM-RS for PUSCH channel estimator.
     std::shared_ptr<dmrs_pusch_estimator_factory> dmrs_pusch_chan_estimator_factory =
-        create_dmrs_pusch_estimator_factory_sw(prg_factory, low_papr_sequence_gen_factory, port_chan_estimator_factory);
+        create_dmrs_pusch_estimator_factory_sw(prg_factory,
+                                               low_papr_sequence_gen_factory,
+                                               port_chan_estimator_factory,
+                                               ch_est_executor,
+                                               port_channel_estimator_fd_smoothing_strategy::filter,
+                                               port_channel_estimator_td_interpolation_strategy::average,
+                                               true);
     if (!dmrs_pusch_chan_estimator_factory) {
       return nullptr;
     }
@@ -314,7 +330,7 @@ private:
 
     // Create PUSCH demodulator factory.
     std::shared_ptr<pusch_demodulator_factory> pusch_demod_factory = create_pusch_demodulator_factory_sw(
-        eq_factory, precoding_factory, chan_modulation_factory, prg_factory, MAX_NOF_PRBS, true, true);
+        eq_factory, precoding_factory, chan_demodulation_factory, evm_calc_factory, prg_factory, MAX_NOF_PRBS, true);
     if (!pusch_demod_factory) {
       return nullptr;
     }

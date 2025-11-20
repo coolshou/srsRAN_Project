@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "srsran/phy/support/precoding_formatters.h"
 #include "srsran/phy/support/support_formatters.h"
 #include "srsran/phy/upper/channel_processors/pdsch/formatters.h"
 

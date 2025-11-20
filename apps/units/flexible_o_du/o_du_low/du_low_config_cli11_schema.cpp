@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,10 +21,13 @@
  */
 
 #include "du_low_config_cli11_schema.h"
-#include "apps/services/logger/logger_appconfig_cli11_utils.h"
+#include "apps/helpers/logger/logger_appconfig_cli11_utils.h"
+#include "apps/helpers/metrics/metrics_config_cli11_schema.h"
 #include "apps/services/worker_manager/cli11_cpu_affinities_parser_helper.h"
 #include "du_low_config.h"
 #include "srsran/adt/expected.h"
+#include "srsran/ran/slot_point.h"
+#include "srsran/ran/slot_point_extended.h"
 #include "srsran/support/cli11_utils.h"
 #include "srsran/support/config_parsers.h"
 
@@ -44,8 +47,8 @@ static expected<Integer, std::string> parse_int(const std::string& value)
 
 static void configure_cli11_log_args(CLI::App& app, du_low_unit_logger_config& log_params)
 {
-  app_services::add_log_option(app, log_params.phy_level, "--phy_level", "PHY log level");
-  app_services::add_log_option(app, log_params.hal_level, "--hal_level", "HAL log level");
+  app_helpers::add_log_option(app, log_params.phy_level, "--phy_level", "PHY log level");
+  app_helpers::add_log_option(app, log_params.hal_level, "--hal_level", "HAL log level");
 
   add_option(app,
              "--broadcast_enabled",
@@ -75,71 +78,84 @@ static void configure_cli11_log_args(CLI::App& app, du_low_unit_logger_config& l
                  "\"phy_rx_symbols_filename\" is set.")
       ->capture_default_str();
 
-  add_option(
-      app, "--hex_max_size", log_params.hex_max_size, "Maximum number of bytes to print in hex (zero for no hex dumps)")
+  add_option(app,
+             "--hex_max_size",
+             log_params.hex_max_size,
+             "Maximum number of bytes to print in hex (zero for no hex dumps, -1 for unlimited bytes)")
       ->capture_default_str()
-      ->check(CLI::Range(0, 1024));
+      ->check(CLI::Range(-1, 1024));
 }
 
-static void configure_cli11_cell_affinity_args(CLI::App& app, du_low_unit_cpu_affinities_cell_config& config)
+static void configure_cli11_trace_args(CLI::App& app, du_low_unit_tracer_config& config)
 {
-  add_option_function<std::string>(
-      app,
-      "--l1_dl_cpus",
-      [&config](const std::string& value) { parse_affinity_mask(config.l1_dl_cpu_cfg.mask, value, "l1_dl_cpus"); },
-      "CPU cores assigned to L1 downlink tasks");
-
-  add_option_function<std::string>(
-      app,
-      "--l1_ul_cpus",
-      [&config](const std::string& value) { parse_affinity_mask(config.l1_ul_cpu_cfg.mask, value, "l1_ul_cpus"); },
-      "CPU cores assigned to L1 uplink tasks");
-
-  add_option_function<std::string>(
-      app,
-      "--l1_dl_pinning",
-      [&config](const std::string& value) {
-        config.l1_dl_cpu_cfg.pinning_policy = to_affinity_mask_policy(value);
-        if (config.l1_dl_cpu_cfg.pinning_policy == sched_affinity_mask_policy::last) {
-          report_error("Incorrect value={} used in {} property", value, "l1_dl_pinning");
-        }
-      },
-      "Policy used for assigning CPU cores to L1 downlink tasks");
-
-  add_option_function<std::string>(
-      app,
-      "--l1_ul_pinning",
-      [&config](const std::string& value) {
-        config.l1_ul_cpu_cfg.pinning_policy = to_affinity_mask_policy(value);
-        if (config.l1_ul_cpu_cfg.pinning_policy == sched_affinity_mask_policy::last) {
-          report_error("Incorrect value={} used in {} property", value, "l1_ul_pinning");
-        }
-      },
-      "Policy used for assigning CPU cores to L1 uplink tasks");
+  CLI::App* layers_subcmd = add_subcommand(app, "layers", "Layer basis tracing configuration")->configurable();
+  add_option(
+      *layers_subcmd, "--phy_enable", config.executor_tracing_enable, "Enable tracing for physical layer executors")
+      ->capture_default_str();
 }
 
 static void configure_cli11_upper_phy_threads_args(CLI::App& app, du_low_unit_expert_threads_config& config)
 {
   auto pdsch_processor_check = [](const std::string& value) -> std::string {
-    if ((value == "auto") || (value == "generic") || (value == "concurrent") || (value == "lite")) {
+    if ((value == "auto") || (value == "generic") || (value == "flexible")) {
       return {};
     }
-    return "Invalid PDSCH processor type. Accepted values [auto,generic,concurrent,lite]";
+    return "Invalid PDSCH processor type. Accepted values [auto,generic,flexible]";
   };
 
-  add_option(app,
-             "--pdsch_processor_type",
-             config.pdsch_processor_type,
-             "PDSCH processor type: auto, generic, concurrent and lite.")
+  auto pdsch_cb_batch_length_transform = [](const std::string& value) -> std::string {
+    unsigned pdsch_cb_batch_length;
+    if ((value == "auto") || (value == "default")) {
+      pdsch_cb_batch_length = du_low_unit_expert_threads_config::default_cb_batch_length;
+    } else if (value == "synchronous") {
+      pdsch_cb_batch_length = du_low_unit_expert_threads_config::synchronous_cb_batch_length;
+    } else {
+      char* val             = nullptr;
+      pdsch_cb_batch_length = std::strtol(value.c_str(), &val, 10);
+      if (val != value.c_str() + value.length()) {
+        return fmt::format("Invalid PDSCH CB batch size '{}'. Set to auto, synchronous, or an integer number.", value);
+      }
+    }
+    return std::to_string(pdsch_cb_batch_length);
+  };
+
+  add_option(
+      app, "--pdsch_processor_type", config.pdsch_processor_type, "PDSCH processor type: auto, generic and flexible.")
       ->capture_default_str()
       ->check(pdsch_processor_check);
-  add_option(app, "--nof_pusch_decoder_threads", config.nof_pusch_decoder_threads, "Number of threads to decode PUSCH.")
+  add_option(app,
+             "--pdsch_cb_batch_length",
+             config.pdsch_cb_batch_length,
+             "PDSCH flexible processor codeblock-batch size.\n"
+             "Set it to 'auto' to adapt the batch length to the number of threads dedicated to downlink processing,\n"
+             "set it to 'synchronous' to disable batch-splitting and ensure that TB processing remains within the \n"
+             "calling thread without parallelization.")
+      ->capture_default_str()
+      ->transform(pdsch_cb_batch_length_transform);
+  add_option(app,
+             "--max_pucch_concurrency",
+             config.max_pucch_concurrency,
+             "Maximum PUCCH processing concurrency for all cells.\n"
+             "Limits the maximum number of threads that can concurrently process Physical Uplink Control Channel\n"
+             "(PUCCH). Set it to zero for no limit of threads.")
       ->capture_default_str()
       ->check(CLI::Number);
-  add_option(app, "--nof_ul_threads", config.nof_ul_threads, "Number of upper PHY threads to process uplink.")
+  add_option(app,
+             "--max_pusch_and_srs_concurrency",
+             config.max_pusch_and_srs_concurrency,
+             "Maximum PUSCH and SRS processing concurrency for all cells.\n"
+             "Limits the maximum number of threads that can concurrently process Physical Uplink Shared Channel \n"
+             "(PUSCH) and Sounding Reference Signals (SRS). Set it to zero for no limitation. If hardware \n"
+             "acceleration is enabled, this parameter is set to the number of the accelerator queues.")
       ->capture_default_str()
       ->check(CLI::Number);
-  add_option(app, "--nof_dl_threads", config.nof_dl_threads, "Number of upper PHY threads to process downlink.")
+  add_option(app,
+             "--max_pdsch_concurrency",
+             config.max_pdsch_concurrency,
+             "Maximum concurrency level for PDSCH processing for all cells.\n"
+             "Limits the number of threads that can concurrently process Physical Downlink Shared Channel (PDSCH).\n"
+             "Set to zero for no limitation. If hardware acceleration is enabled, this parameter is set to the\n"
+             "number of the accelerator queues.")
       ->capture_default_str()
       ->check(CLI::Number);
 }
@@ -153,24 +169,6 @@ static void configure_cli11_expert_execution_args(CLI::App& app, du_low_unit_exp
   CLI::App* upper_phy_threads_subcmd =
       add_subcommand(*threads_subcmd, "upper_phy", "Upper PHY thread configuration")->configurable();
   configure_cli11_upper_phy_threads_args(*upper_phy_threads_subcmd, config.threads);
-
-  // Cell affinity section.
-  add_option_cell(
-      app,
-      "--cell_affinities",
-      [&config](const std::vector<std::string>& values) {
-        config.cell_affinities.resize(values.size());
-        for (unsigned i = 0, e = values.size(); i != e; ++i) {
-          CLI::App subapp("DU low expert execution cell CPU affinities",
-                          "DU low expert execution cell CPU affinities config, item #" + std::to_string(i));
-          subapp.config_formatter(create_yaml_config_parser());
-          subapp.allow_config_extras();
-          configure_cli11_cell_affinity_args(subapp, config.cell_affinities[i]);
-          std::istringstream ss(values[i]);
-          subapp.parse_from_stream(ss);
-        }
-      },
-      "Sets the cell CPU affinities configuration on a per cell basis");
 }
 
 static void configure_cli11_expert_phy_args(CLI::App& app, du_low_unit_expert_upper_phy_config& expert_phy_params)
@@ -180,6 +178,24 @@ static void configure_cli11_expert_phy_args(CLI::App& app, du_low_unit_expert_up
       return {};
     }
     return "Invalid PUSCH SINR calculation method. Accepted values [channel_estimator,post_equalization,evm]";
+  };
+  auto pusch_channel_estimator_fd_strategy_method_check = [](const std::string& value) -> std::string {
+    if ((value == "filter") || (value == "mean") || (value == "none")) {
+      return {};
+    }
+    return "Invalid PUSCH channel estimator frequency-domain strategy. Accepted values [filter,mean,none]";
+  };
+  auto pusch_channel_estimator_td_strategy_method_check = [](const std::string& value) -> std::string {
+    if ((value == "average") || (value == "interpolate")) {
+      return {};
+    }
+    return "Invalid PUSCH channel estimator time-domain strategy. Accepted values [average,interpolate]";
+  };
+  auto pusch_channel_equalizer_algorithm_method_check = [](const std::string& value) -> std::string {
+    if ((value == "zf") || (value == "mmse")) {
+      return {};
+    }
+    return "Invalid PUSCH channel equalizer algorithm. Accepted values [zf,mmse]";
   };
 
   add_option(app,
@@ -200,19 +216,63 @@ static void configure_cli11_expert_phy_args(CLI::App& app, du_low_unit_expert_up
              "Enables PUSCH LDPC decoder early stop")
       ->capture_default_str();
   add_option(app,
+             "--pusch_decoder_force_decoding",
+             expert_phy_params.pusch_decoder_force_decoding,
+             "Forces PUSCH LDPC decoder to decode always")
+      ->capture_default_str();
+  add_option(app,
              "--pusch_sinr_calc_method",
              expert_phy_params.pusch_sinr_calc_method,
              "PUSCH SINR calculation method: channel_estimator, post_equalization and evm.")
       ->capture_default_str()
       ->check(pusch_sinr_method_check);
   add_option(app,
+             "--pusch_channel_estimator_fd_strategy",
+             expert_phy_params.pusch_channel_estimator_fd_strategy,
+             "PUSCH channel estimator frequency-domain smoothing strategy: filter, mean and none.")
+      ->capture_default_str()
+      ->check(pusch_channel_estimator_fd_strategy_method_check);
+  add_option(app,
+             "--pusch_channel_estimator_td_strategy",
+             expert_phy_params.pusch_channel_estimator_td_strategy,
+             "PUSCH channel estimator time-domain strategy: average and interpolate.")
+      ->capture_default_str()
+      ->check(pusch_channel_estimator_td_strategy_method_check);
+  add_option(app,
+             "--pusch_channel_estimator_cfo_compensation",
+             expert_phy_params.pusch_channel_estimator_cfo_compensation,
+             "PUSCH channel estimator CFO compensation.")
+      ->capture_default_str();
+  add_option(app,
+             "--pusch_channel_equalizer_algorithm",
+             expert_phy_params.pusch_channel_equalizer_algorithm,
+             "PUSCH channel equalizer algorithm: zf and mmse.")
+      ->capture_default_str()
+      ->check(pusch_channel_equalizer_algorithm_method_check);
+  add_option(app,
              "--max_request_headroom_slots",
              expert_phy_params.nof_slots_request_headroom,
              "Maximum request headroom size in slots.")
       ->capture_default_str()
       ->check(CLI::Range(0, 30));
+  add_option(app,
+             "--allow_request_on_empty_uplink_slot",
+             expert_phy_params.allow_request_on_empty_uplink_slot,
+             "Generates an uplink request in an uplink slot with no PUCCH/PUSCH/SRS PDUs")
+      ->capture_default_str();
+  add_option(app,
+             "--enable_phy_tap",
+             expert_phy_params.enable_phy_tap,
+             "Enables or disables the PHY tap plugin if it is present while building the application.")
+      ->capture_default_str();
+  add_option(app,
+             "--phy_tap_arguments",
+             expert_phy_params.phy_tap_arguments,
+             "PHY tap plugin argument string passed during construction.")
+      ->capture_default_str();
 }
 
+#ifdef DPDK_FOUND
 static void configure_cli11_hwacc_pdsch_enc_args(CLI::App& app, std::optional<hwacc_pdsch_appconfig>& config)
 {
   config.emplace();
@@ -238,11 +298,10 @@ static void configure_cli11_hwacc_pusch_dec_args(CLI::App& app, std::optional<hw
   app.add_option("--nof_hwacc", config->nof_hwacc, "Number of hardware-accelerated PDSCH encoding functions")
       ->capture_default_str()
       ->check(CLI::Range(0, 64));
-  app.add_option("--ext_softbuffer",
-                 config->ext_softbuffer,
-                 "Defines if the soft-buffer is implemented in the accelerator or not")
-      ->capture_default_str();
   app.add_option("--harq_context_size", config->harq_context_size, "Size of the HARQ context repository")
+      ->capture_default_str();
+  app.add_option(
+         "--force_local_harq", config->force_local_harq, "Force using the host memory to implement the HARQ buffer")
       ->capture_default_str();
   app.add_option("--dedicated_queue",
                  config->dedicated_queue,
@@ -252,9 +311,18 @@ static void configure_cli11_hwacc_pusch_dec_args(CLI::App& app, std::optional<hw
 
 static void configure_cli11_bbdev_hwacc_args(CLI::App& app, std::optional<bbdev_appconfig>& config)
 {
+  auto hwacc_type_check = [](const std::string& value) -> std::string {
+    if ((value == "acc100") || (value == "acc200") || (value == "vrb1")) {
+      return {};
+    }
+    return "Invalid BBDEV hardware-accelerator type. Accepted values [acc100,acc200,vrb1]";
+  };
+
   config.emplace();
 
-  app.add_option("--hwacc_type", config->hwacc_type, "Type of BBDEV hardware-accelerator")->capture_default_str();
+  app.add_option("--hwacc_type", config->hwacc_type, "Type of BBDEV hardware-accelerator")
+      ->capture_default_str()
+      ->check(hwacc_type_check);
   app.add_option("--id", config->id, "ID of the BBDEV-based hardware-accelerator.")
       ->capture_default_str()
       ->check(CLI::Range(0, 65535));
@@ -291,7 +359,9 @@ static void configure_cli11_hal_args(CLI::App& app, std::optional<du_low_unit_ha
       add_subcommand(app, "bbdev_hwacc", "BBDEV-based hardware-acceleration configuration parameters");
   configure_cli11_bbdev_hwacc_args(*bbdev_hwacc_subcmd, config->bbdev_hwacc);
 }
+#endif
 
+#ifdef DPDK_FOUND
 static void manage_hal_optional(CLI::App& app, du_low_unit_config& parsed_cfg)
 {
   // Clean the HAL optional.
@@ -306,12 +376,25 @@ static void manage_hal_optional(CLI::App& app, du_low_unit_config& parsed_cfg)
     parsed_cfg.hal_config->bbdev_hwacc.reset();
   }
 }
+#endif
+
+static void configure_cli11_metrics_args(CLI::App& app, du_low_unit_metrics_config& metrics_params)
+{
+  CLI::App* layers_subcmd = add_subcommand(app, "layers", "Layer basis metrics configuration")->configurable();
+  add_option(
+      *layers_subcmd, "--enable_du_low", metrics_params.enable_du_low, "Enable DU low metrics (upper physical layer)")
+      ->capture_default_str();
+}
 
 void srsran::configure_cli11_with_du_low_config_schema(CLI::App& app, du_low_unit_config& parsed_cfg)
 {
   // Loggers section.
   CLI::App* log_subcmd = add_subcommand(app, "log", "Logging configuration")->configurable();
   configure_cli11_log_args(*log_subcmd, parsed_cfg.loggers);
+
+  // Tracer section.
+  CLI::App* trace_subcmd = add_subcommand(app, "trace", "General tracer configuration")->configurable();
+  configure_cli11_trace_args(*trace_subcmd, parsed_cfg.tracer);
 
   // Expert upper PHY section.
   CLI::App* expert_phy_subcmd =
@@ -322,16 +405,19 @@ void srsran::configure_cli11_with_du_low_config_schema(CLI::App& app, du_low_uni
   CLI::App* expert_subcmd = add_subcommand(app, "expert_execution", "Expert execution configuration")->configurable();
   configure_cli11_expert_execution_args(*expert_subcmd, parsed_cfg.expert_execution_cfg);
 
+#ifdef DPDK_FOUND
   // HAL section.
   CLI::App* hal_subcmd = add_subcommand(app, "hal", "HAL configuration")->configurable();
   configure_cli11_hal_args(*hal_subcmd, parsed_cfg.hal_config);
+#endif
+
+  // Metrics section.
+  app_helpers::configure_cli11_with_metrics_appconfig_schema(app, parsed_cfg.metrics_cfg.common_metrics_cfg);
+  CLI::App* metrics_subcmd = add_subcommand(app, "metrics", "Metrics configuration")->configurable();
+  configure_cli11_metrics_args(*metrics_subcmd, parsed_cfg.metrics_cfg);
 }
 
-void srsran::autoderive_du_low_parameters_after_parsing(CLI::App&           app,
-                                                        du_low_unit_config& parsed_cfg,
-                                                        duplex_mode         mode,
-                                                        bool                is_blocking_mode_enabled,
-                                                        unsigned            nof_cells)
+void srsran::autoderive_du_low_parameters_after_parsing(CLI::App& app, du_low_unit_config& parsed_cfg, duplex_mode mode)
 {
   // If max proc delay property is not present in the config, configure the default value.
   CLI::App* expert_cmd = app.get_subcommand("expert_phy");
@@ -353,17 +439,7 @@ void srsran::autoderive_du_low_parameters_after_parsing(CLI::App&           app,
     parsed_cfg.expert_phy_cfg.nof_slots_request_headroom = parsed_cfg.expert_phy_cfg.max_processing_delay_slots;
   }
 
-  // Ignore the default settings based in the number of CPU cores for ZMQ.
-  if (is_blocking_mode_enabled) {
-    du_low_unit_expert_threads_config& upper = parsed_cfg.expert_execution_cfg.threads;
-    upper.nof_pusch_decoder_threads          = 0;
-    upper.nof_ul_threads                     = 1;
-    upper.nof_dl_threads                     = 1;
-  }
-
-  if (parsed_cfg.expert_execution_cfg.cell_affinities.size() < nof_cells) {
-    parsed_cfg.expert_execution_cfg.cell_affinities.resize(nof_cells);
-  }
-
+#ifdef DPDK_FOUND
   manage_hal_optional(app, parsed_cfg);
+#endif
 }

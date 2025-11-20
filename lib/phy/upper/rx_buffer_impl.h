@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -136,7 +136,7 @@ public:
       }
 
       // Append the codeblock identifier to the list.
-      codeblock_ids.push_back(cb_id.value());
+      codeblock_ids.push_back(*cb_id);
     }
 
     // Resize CRCs.
@@ -205,10 +205,10 @@ public:
   }
 
   // See interface for documentation.
-  void lock() override
+  bool try_lock() override
   {
-    state previous_state = current_state.exchange(state::locked);
-    srsran_assert(previous_state == state::reserved, "Failed to lock. Invalid state.");
+    state expected_state = state::reserved;
+    return current_state.compare_exchange_strong(expected_state, state::locked);
   }
 
   // See interface for documentation.
@@ -244,9 +244,9 @@ public:
   bool expire()
   {
     state expected_state = state::reserved;
-    bool  from_reserved  = current_state.compare_exchange_weak(expected_state, state::available);
+    bool  from_reserved  = current_state.compare_exchange_strong(expected_state, state::available);
 
-    // The  buffer cannot be freed if it is locked.
+    // The buffer cannot be freed if it is locked.
     if (!from_reserved) {
       return false;
     }

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,34 +22,29 @@
 
 #pragma once
 
-#include "srsran/adt/span.h"
 #include "srsran/du/du_high/du_high_executor_mapper.h"
-#include "srsran/du/du_high/du_test_mode_config.h"
 #include "srsran/mac/mac.h"
-#include "srsran/mac/mac_cell_result.h"
-#include "srsran/pcap/dlt_pcap.h"
 #include "srsran/srslog/srslog.h"
 
 namespace srsran {
 
-struct mac_control_config {
-  srslog::basic_logger&                 logger;
-  mac_ul_ccch_notifier&                 event_notifier;
-  srs_du::du_high_ue_executor_mapper&   ue_exec_mapper;
-  srs_du::du_high_cell_executor_mapper& cell_exec_mapper;
-  task_executor&                        ctrl_exec;
+class mac_metrics_notifier;
+class timer_manager;
+class mac_clock_controller;
 
-  mac_control_config(mac_ul_ccch_notifier&                 event_notifier_,
-                     srs_du::du_high_ue_executor_mapper&   ul_exec_,
-                     srs_du::du_high_cell_executor_mapper& dl_exec_,
-                     task_executor&                        ctrl_exec_) :
-    logger(srslog::fetch_basic_logger("MAC", true)),
-    event_notifier(event_notifier_),
-    ue_exec_mapper(ul_exec_),
-    cell_exec_mapper(dl_exec_),
-    ctrl_exec(ctrl_exec_)
-  {
-  }
+/// Config for MAC controller.
+struct mac_control_config {
+  struct metrics_config {
+    std::chrono::milliseconds period{1000};
+    mac_metrics_notifier&     mac_notifier;
+    unsigned                  max_nof_ue_events;
+  };
+
+  mac_ul_ccch_notifier& event_notifier;
+  task_executor&        ctrl_exec;
+  mac_clock_controller& time_source;
+  metrics_config        metrics;
+  srslog::basic_logger& logger = srslog::fetch_basic_logger("MAC", true);
 };
 
 } // namespace srsran

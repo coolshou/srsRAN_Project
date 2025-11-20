@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -39,6 +39,19 @@ public:
   FormatFunc format;
 };
 
+template <typename T>
+struct value_or_else {
+  template <typename U>
+  value_or_else(U&& opt_, const char* unit_str_, const char* else_) :
+    opt(std::forward<U>(opt_)), unit_str(unit_str_), else_str(else_)
+  {
+  }
+
+  T           opt;
+  const char* unit_str;
+  const char* else_str;
+};
+
 } // namespace detail
 
 /// \brief Creates a formattable object, whose format function is the passed functor/lambda \c func.
@@ -52,6 +65,23 @@ template <typename FormatFunc>
 detail::custom_formattable<FormatFunc> make_formattable(FormatFunc func)
 {
   return detail::custom_formattable<FormatFunc>(std::move(func));
+}
+
+/// \brief Creates a formattable object that formats the value of an std::optional if present, otherwise it formats
+/// the passed \c else_str string.
+/// \param[in] opt Optional with value to format.
+/// \param[in] else_str String to format in case the optional has no value.
+/// \return Formattable object.
+template <typename T>
+auto format_value_or(T&& opt, const char* else_str)
+{
+  return detail::value_or_else<T>{std::forward<T>(opt), "", else_str};
+}
+
+template <typename T>
+auto format_unit_or(T&& opt, const char* unit_str, const char* else_str)
+{
+  return detail::value_or_else<T>{std::forward<T>(opt), unit_str, else_str};
 }
 
 namespace detail {
@@ -91,21 +121,49 @@ template <typename FormatFunc>
 struct formatter<srsran::detail::custom_formattable<FormatFunc>> : public basic_parser {
 public:
   template <typename FormatContext>
-  auto format(const srsran::detail::custom_formattable<FormatFunc>& f, FormatContext& ctx)
+  auto format(const srsran::detail::custom_formattable<FormatFunc>& f, FormatContext& ctx) const
   {
     return f.format(ctx);
   }
 };
 
 template <typename T>
-struct formatter<srsran::detail::optional_prefix_formatter<T>> : public formatter<std::optional<T>> {
+struct formatter<srsran::detail::optional_prefix_formatter<T>> : public basic_parser {
   template <typename FormatContext>
-  auto format(const srsran::detail::optional_prefix_formatter<T>& f, FormatContext& ctx)
+  auto format(const srsran::detail::optional_prefix_formatter<T>& f, FormatContext& ctx) const
   {
-    if (f.value.has_value()) {
-      return fmt::format_to(ctx.out(), "{}{}", f.prefix, f.value);
+    if constexpr (std::is_enum_v<T>) {
+      if (f.value.has_value()) {
+        return fmt::format_to(ctx.out(), "{}{}", f.prefix, fmt::underlying(*f.value));
+      }
+    } else {
+      if (f.value.has_value()) {
+        return fmt::format_to(ctx.out(), "{}{}", f.prefix, *f.value);
+      }
     }
     return ctx.out();
+  }
+};
+
+template <typename T>
+struct formatter<srsran::detail::value_or_else<T>> {
+  using value_type = typename std::decay_t<T>::value_type;
+
+  formatter<value_type> value_formatter;
+
+  template <typename ParseContext>
+  auto parse(ParseContext& ctx)
+  {
+    return value_formatter.parse(ctx);
+  }
+
+  template <typename FormatContext>
+  auto format(const srsran::detail::value_or_else<T>& obj, FormatContext& ctx) const
+  {
+    if (not obj.opt.has_value()) {
+      return fmt::format_to(ctx.out(), "{}", obj.else_str);
+    }
+    return fmt::format_to(value_formatter.format(obj.opt.value(), ctx), "{}", obj.unit_str);
   }
 };
 

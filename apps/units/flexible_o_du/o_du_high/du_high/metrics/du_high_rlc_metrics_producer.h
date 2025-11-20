@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -36,6 +36,9 @@ public:
 
   // See interface for documentation.
   void report_metrics(const rlc_metrics& metrics) override;
+
+  // See interface for documentation.
+  void on_new_report_period() override {}
 
 private:
   app_services::metrics_notifier& notifier;

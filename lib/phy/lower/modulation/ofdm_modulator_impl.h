@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -55,6 +55,10 @@ private:
   std::unique_ptr<dft_processor> dft;
   /// Phase compensation look-up table.
   phase_compensation_lut phase_compensation_table;
+  /// Current center frequency in Hertz.
+  double current_center_freq_Hz;
+  /// Next center frequency in Hertz.
+  std::atomic<double> next_center_freq_Hz;
 
 public:
   /// \brief Constructs an OFDM symbol modulator.
@@ -63,13 +67,19 @@ public:
   ofdm_symbol_modulator_impl(ofdm_modulator_common_configuration& common_config,
                              const ofdm_modulator_configuration&  ofdm_config);
 
-  // See interface for documentation.
+  // See the interface for documentation.
   unsigned get_symbol_size(unsigned symbol_index) const override
   {
     return cp.get_length(symbol_index, scs).to_samples(sampling_rate_Hz) + dft_size;
   }
 
-  // See interface for documentation.
+  // See the interface for documentation.
+  void set_center_frequency(double center_frequency_Hz) override
+  {
+    next_center_freq_Hz.store(center_frequency_Hz, std::memory_order_relaxed);
+  }
+
+  // See the interface for documentation.
   void
   modulate(span<cf_t> ouput, const resource_grid_reader& grid, unsigned port_index, unsigned symbol_index) override;
 };
@@ -83,17 +93,17 @@ private:
   /// Resource grid numerology.
   unsigned numerology;
   /// Instance of symbol modulator.
-  ofdm_symbol_modulator_impl symbol_modulator;
+  std::unique_ptr<ofdm_symbol_modulator> symbol_modulator;
 
 public:
   /// \brief Constructs an OFDM slot modulator.
-  /// \param[in] common_config Provides specific configuration parameters from the factory.
-  /// \param[in] ofdm_config Provides generic OFDM configuration parameters.
-  ofdm_slot_modulator_impl(ofdm_modulator_common_configuration& common_config,
-                           const ofdm_modulator_configuration&  ofdm_config) :
-    cp(ofdm_config.cp), numerology(ofdm_config.numerology), symbol_modulator(common_config, ofdm_config)
+  /// \param[in] ofdm_config       OFDM factory parameters.
+  /// \param[in] symbol_modulator_ OFDM symbol modulator instance.
+  ofdm_slot_modulator_impl(const ofdm_modulator_configuration&    ofdm_config,
+                           std::unique_ptr<ofdm_symbol_modulator> symbol_modulator_) :
+    cp(ofdm_config.cp), numerology(ofdm_config.numerology), symbol_modulator(std::move(symbol_modulator_))
   {
-    // Do nothing.
+    srsran_assert(symbol_modulator, "Invalid OFDM symbol modulator.");
   }
 
   // See interface for documentation;

@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -38,7 +38,7 @@ target_compile_options(e1ap_asn1 PRIVATE -Os -fno-exceptions)
 target_link_libraries(e1ap_asn1 asn1_utils)
 
 # E2AP ASN1
-add_library(e2ap_asn1 STATIC e2ap/e2ap.cpp e2sm/e2sm_common_ies.cpp e2sm/e2sm_kpm_ies.cpp e2sm/e2sm_rc_ies.cpp)
+add_library(e2ap_asn1 STATIC e2ap/e2ap.cpp e2sm/e2sm_common_ies.cpp e2sm/e2sm_kpm_ies.cpp e2sm/e2sm_rc_ies.cpp e2sm/e2sm_ccc.cpp)
 target_compile_options(e2ap_asn1 PRIVATE -Os -fno-exceptions)
 target_link_libraries(e2ap_asn1 asn1_utils)
 
@@ -46,9 +46,3 @@ target_link_libraries(e2ap_asn1 asn1_utils)
 add_library(ngap_asn1 STATIC ngap/common.cpp ngap/ngap_ies.cpp ngap/ngap_pdu_contents.cpp ngap/ngap.cpp)
 target_compile_options(ngap_asn1 PRIVATE -Os -fno-exceptions)
 target_link_libraries(ngap_asn1 asn1_utils)
-
-# NRPPa ASN1
-add_library(nrppa_asn1 STATIC nrppa/nrppa.cpp)
-target_compile_options(nrppa_asn1 PRIVATE -Os -fno-exceptions)
-target_link_libraries(nrppa_asn1 asn1_utils)
-

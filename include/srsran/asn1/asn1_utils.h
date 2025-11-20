@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -47,13 +47,13 @@ constexpr Integer ceil_frac(Integer n, Integer d)
 
 namespace detail {
 
-inline constexpr std::size_t max_size_impl(std::size_t lhs, std::size_t rhs)
+constexpr std::size_t max_size_impl(std::size_t lhs, std::size_t rhs)
 {
   return lhs < rhs ? rhs : lhs;
 }
 
 template <typename ItBegin, typename ItEnd>
-inline constexpr std::size_t max_array_impl(ItBegin b, ItEnd e)
+constexpr std::size_t max_array_impl(ItBegin b, ItEnd e)
 {
   return b + 1 == e ? *b : max_size_impl(*b, max_array_impl(b + 1, e));
 }
@@ -62,7 +62,7 @@ inline constexpr std::size_t max_array_impl(ItBegin b, ItEnd e)
 
 /// \brief Compute maximum value of an array of std::size.
 template <std::size_t N>
-inline constexpr std::size_t max_size(const std::size_t (&arr)[N])
+constexpr std::size_t max_size(const std::size_t (&arr)[N])
 {
   return detail::max_array_impl(arr, arr + N);
 }
@@ -134,6 +134,11 @@ void log_error_code(SRSASN_CODE code, const char* filename, int line);
   } while (0)
 
 const char* convert_enum_idx(const char* array[], uint32_t nof_types, uint32_t enum_val, const char* enum_type);
+bool        convert_enum_str(const char* array[],
+                             uint32_t    nof_types,
+                             const char* str,
+                             uint32_t&   enum_val,
+                             const char* enum_type);
 template <class ItemType>
 ItemType map_enum_number(ItemType* array, uint32_t nof_types, uint32_t enum_val, const char* enum_type);
 
@@ -246,6 +251,18 @@ public:
     size_ = other.size();
     std::copy(other.data(), other.data() + other.size(), data());
     return *this;
+  }
+  void reserve(uint32_t new_cap)
+  {
+    if (new_cap > cap_) {
+      T* new_data = new T[new_cap];
+      if (data_ != nullptr) {
+        std::move(data_, data_ + size_, new_data);
+      }
+      cap_ = new_cap;
+      delete[] data_;
+      data_ = new_data;
+    }
   }
   void resize(uint32_t new_size, uint32_t new_cap = 0)
   {
@@ -462,7 +479,7 @@ private:
 *********************/
 
 SRSASN_CODE pack_unsupported_ext_flag(bit_ref& bref, bool ext);
-SRSASN_CODE unpack_unsupported_ext_flag(bool& ext, bit_ref& bref);
+SRSASN_CODE unpack_unsupported_ext_flag(bool& ext, cbit_ref& bref);
 
 /************************
     asn1 null packing
@@ -661,7 +678,7 @@ public:
   IntType              value;
   integer() = default;
   integer(IntType value_) : value(value_) {}
-              operator IntType() const { return value; }
+  operator IntType() const { return value; }
   SRSASN_CODE pack(bit_ref& bref) const { return pack_integer(bref, value, lb, ub, has_ext, is_aligned); }
   SRSASN_CODE unpack(cbit_ref& bref) { return unpack_integer(value, bref, lb, ub, has_ext, is_aligned); }
 };
@@ -898,6 +915,7 @@ public:
 
   std::string              to_string() const;
   unbounded_octstring<Al>& from_string(const std::string& hexstr);
+  unbounded_octstring<Al>& from_bytes(srsran::span<const uint8_t> bytes);
 
   uint64_t                 to_number() const;
   unbounded_octstring<Al>& from_number(uint64_t val);
@@ -957,7 +975,7 @@ public:
   explicit bitstring(const std::string& s)
   {
     resize(s.size());
-    memset(&octets_[0], 0, nof_octets());
+    std::memset(&octets_[0], 0, nof_octets());
     for (uint32_t i = 0; i < s.size(); ++i)
       set(s.size() - i - 1, s[i] == '1');
   }
@@ -973,7 +991,7 @@ public:
   {
     nof_bits = new_size;
     octets_.resize(nof_octets());
-    memset(data(), 0, nof_octets()); // resize always resets content
+    std::memset(data(), 0, nof_octets()); // resize always resets content
   }
 
   // comparison
@@ -1005,7 +1023,7 @@ public:
   uint64_t   to_number() const { return bitstring_utils::to_number(data(), length()); }
   this_type& from_number(uint64_t val)
   {
-    auto nof_bits_ = std::max((uint32_t)ceilf(log2(std::max(val, (uint64_t)1u))), LB);
+    auto nof_bits_ = std::max((uint32_t)std::ceil(std::log2(std::max(val, (uint64_t)1u))), LB);
     if (nof_bits_ > UB) {
       log_error("The provided bitstring value {} does not fit the bounds [{}, {}]", val, uint32_t(lb), uint32_t(ub));
       return *this;
@@ -1387,8 +1405,7 @@ struct choice_buffer_base_t {
 
 template <typename... Ts>
 struct choice_buffer_t : public choice_buffer_base_t<max_size({sizeof(alignment_t), sizeof(Ts)...}),
-                                                     max_size({alignof(alignment_t), alignof(Ts)...})> {
-};
+                                                     max_size({alignof(alignment_t), alignof(Ts)...})> {};
 
 using pod_choice_buffer_t = choice_buffer_t<>;
 
@@ -1468,6 +1485,45 @@ private:
   cbit_ref*       bref_tracker        = nullptr;
 };
 
+/// \brief Used to decode extension groups.
+class ext_groups_unpacker
+{
+public:
+  ext_groups_unpacker(cbit_ref& bref_, bool aligned_ = false);
+
+  /// Unpacks presence flags and extension groups.
+  [[nodiscard]] SRSASN_CODE unpack_next_group();
+
+  /// Retrieves a bit_ref representing the last unpacked extension group.
+  /// \return Returns false if there was no extension group left to unpack.
+  [[nodiscard]] bool get_last_group_range(cbit_ref& bref)
+  {
+    srsran_sanity_check(next_group_idx > 0, "No group has been unpacked yet");
+    if (state != state_t::done and groups[next_group_idx - 1]) {
+      bref = group_bref;
+      return true;
+    }
+    return false;
+  }
+
+  /// Skips all remaining extension groups and sets the position of bit_ref.
+  [[nodiscard]] SRSASN_CODE consume_remaining_groups(cbit_ref& bref);
+
+private:
+  enum class state_t : uint8_t { unpack_presence_flags, unpack_groups, done };
+
+  // Decodes only the presence flags of the extension groups.
+  SRSASN_CODE unpack_presence_flags();
+
+  const bool      aligned;
+  state_t         state               = state_t::unpack_presence_flags;
+  uint32_t        nof_unpacked_groups = 0;
+  uint32_t        next_group_idx      = 0;
+  cbit_ref        outer_bref;
+  cbit_ref        group_bref;
+  ext_array<bool> groups;
+};
+
 /*********************
    Var Length Field
 *********************/
@@ -1490,6 +1546,8 @@ class varlength_field_unpack_guard
 public:
   explicit varlength_field_unpack_guard(cbit_ref& bref, bool align = false);
   ~varlength_field_unpack_guard();
+
+  uint32_t length() const { return len; }
 
 private:
   uint32_t  len = 0;
@@ -1583,9 +1641,9 @@ class real_s
 public:
   float value;
   real_s() = default;
-  SRSASN_CODE pack(bit_ref& bref) const { return pack_unconstrained_real(bref, value, true); };
-  SRSASN_CODE unpack(cbit_ref& bref) { return unpack_unconstrained_real(value, bref, true); };
-  void        to_json(json_writer& j) const { j.write_float(value); };
+  SRSASN_CODE pack(bit_ref& bref) const { return pack_unconstrained_real(bref, value, true); }
+  SRSASN_CODE unpack(cbit_ref& bref) { return unpack_unconstrained_real(value, bref, true); }
+  void        to_json(json_writer& j) const { j.write_float(value); }
 };
 
 /*******************

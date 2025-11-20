@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,9 +24,11 @@
 
 #include "../support/uplink_context_repository.h"
 #include "ofh_closed_rx_window_handler.h"
-#include "ofh_message_receiver.h"
+#include "ofh_message_receiver_impl.h"
 #include "ofh_message_receiver_task_dispatcher.h"
 #include "ofh_receiver_controller.h"
+#include "ofh_receiver_metrics_collector_impl.h"
+#include "ofh_rx_symbol_reorderer.h"
 #include "ofh_rx_window_checker.h"
 #include "srsran/ofh/receiver/ofh_receiver.h"
 #include "srsran/ofh/receiver/ofh_receiver_configuration.h"
@@ -43,8 +45,6 @@ struct receiver_impl_dependencies {
   struct message_rx_dependencies {
     /// Logger.
     srslog::basic_logger* logger = nullptr;
-    /// Ethernet receiver.
-    std::unique_ptr<ether::receiver> eth_receiver;
     /// eCPRI packet decoder.
     std::unique_ptr<ecpri::packet_decoder> ecpri_decoder;
     /// Ethernet frame decoder.
@@ -56,6 +56,13 @@ struct receiver_impl_dependencies {
     /// Sequence id checker.
     std::unique_ptr<sequence_id_checker> seq_id_checker;
   };
+
+  struct close_rx_window_dependencies {
+    std::shared_ptr<prach_context_repository>  prach_repo;
+    std::shared_ptr<uplink_context_repository> uplink_repo;
+    std::shared_ptr<uplane_rx_symbol_notifier> notifier;
+  };
+
   /// Logger.
   srslog::basic_logger* logger = nullptr;
   /// Task executor.
@@ -63,7 +70,11 @@ struct receiver_impl_dependencies {
   /// Message receiver dependencies.
   message_rx_dependencies msg_rx_dependencies;
   /// Closed reception window handler dependencies.
-  closed_rx_window_handler_dependencies window_handler_dependencies;
+  close_rx_window_dependencies window_handler_dependencies;
+  /// Received symbol reorderer.
+  std::shared_ptr<rx_symbol_reorderer> symbol_reorderer;
+  /// Ethernet receiver.
+  std::unique_ptr<ether::receiver> eth_receiver;
 };
 
 /// OTA symbol boundary dispatcher for the receiver.
@@ -77,7 +88,7 @@ public:
   }
 
   // See interface for documentation
-  void on_new_symbol(slot_symbol_point symbol_point) override;
+  void on_new_symbol(const slot_symbol_point_context& symbol_point_context) override;
 };
 
 /// \brief Open Fronthaul receiver.
@@ -88,17 +99,24 @@ class receiver_impl : public receiver
 public:
   receiver_impl(const receiver_config& config, receiver_impl_dependencies&& dependencies);
 
+  ~receiver_impl() override { get_operation_controller().stop(); }
+
   // See interface for documentation.
   ota_symbol_boundary_notifier* get_ota_symbol_boundary_notifier() override;
 
   // See interface for documentation.
-  controller& get_controller() override;
+  operation_controller& get_operation_controller() override;
+
+  // See interface for documentation.
+  receiver_metrics_collector* get_metrics_collector() override;
 
 private:
+  std::shared_ptr<rx_symbol_reorderer> symbol_reorderer;
   closed_rx_window_handler             closed_window_handler;
   rx_window_checker                    window_checker;
   ota_symbol_boundary_dispatcher       symbol_boundary_dispatcher;
   message_receiver_impl                msg_receiver;
+  receiver_metrics_collector_impl      metrics_collector;
   ofh_message_receiver_task_dispatcher rcv_task_dispatcher;
   receiver_controller                  ctrl;
 };

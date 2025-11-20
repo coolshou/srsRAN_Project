@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,11 +22,16 @@
 
 #pragma once
 
+#include "../config/logical_channel_list_config.h"
+#include "../slicing/ran_slice_id.h"
+#include "srsran/adt/intrusive_list.h"
+#include "srsran/adt/ring_buffer.h"
 #include "srsran/mac/mac_pdu_format.h"
 #include "srsran/ran/logical_channel/lcid_dl_sch.h"
-#include "srsran/scheduler/config/logical_channel_config.h"
-#include "srsran/scheduler/scheduler_slot_handler.h"
+#include "srsran/scheduler/result/pdsch_info.h"
+#include "srsran/support/math/moving_averager.h"
 #include <queue>
+#include <variant>
 
 namespace srsran {
 
@@ -41,64 +46,84 @@ public:
     std::variant<ta_cmd_ce_payload, dummy_ce_payload> ce_payload;
   };
 
-  dl_logical_channel_manager();
+  dl_logical_channel_manager(subcarrier_spacing              scs_common,
+                             bool                            starts_in_fallback,
+                             logical_channel_config_list_ptr log_channels_configs);
+
+  /// Signal the start of a new slot.
+  void slot_indication();
 
   /// \brief Deactivate all bearers.
   void deactivate();
 
-  /// \brief Activate/Deactivate Bearer.
-  void set_status(lcid_t lcid, bool active)
+  /// Set UE fallback state.
+  void set_fallback_state(bool enter_fallback);
+
+  /// Setups up an observer for DL pending data for a given RAN slice.
+  void register_ran_slice(ran_slice_id_t slice_id);
+
+  /// Assign a RAN slice to a logical channel.
+  void set_lcid_ran_slice(lcid_t lcid, ran_slice_id_t slice_id);
+
+  /// Detach logical channel from previously set RAN slice.
+  void reset_lcid_ran_slice(lcid_t lcid);
+
+  /// Remove RAN slice and detach all associated logical channels.
+  void deregister_ran_slice(ran_slice_id_t slice_id);
+
+  /// Determines whether a RAN slice has at least one bearer associated with it.
+  bool has_slice(ran_slice_id_t slice_id) const
   {
-    srsran_sanity_check(lcid < MAX_NOF_RB_LCIDS, "Max LCID value 32 exceeded");
-    channels[lcid].active = active;
+    unsigned idx = slice_id.value();
+    return idx < slice_lcid_list_lookup.size() and not slice_lcid_list_lookup[idx].empty();
   }
+
+  /// Get the RAN slice ID associated with a logical channel.
+  std::optional<ran_slice_id_t> get_slice_id(lcid_t lcid) const { return channels[lcid].slice_id; }
 
   /// \brief Update the configurations of the provided lists of bearers.
-  void configure(span<const logical_channel_config> log_channels_configs);
+  void configure(logical_channel_config_list_ptr log_channels_configs);
 
   /// \brief Verifies if logical channel is activated for DL.
-  bool is_active(lcid_t lcid) const
-  {
-    if (lcid > LCID_MAX_DRB) {
-      return false;
-    }
-    return channels[lcid].active;
-  }
+  bool is_active(lcid_t lcid) const { return lcid <= LCID_MAX_DRB and channels[lcid].active; }
 
-  /// \brief Checks whether the UE has pending data.
-  /// \remark Excludes data for SRB0.
+  /// \brief Check whether the UE has pending data, given its current state.
   bool has_pending_bytes() const
   {
-    return has_pending_ces() or std::any_of(channels.begin() + 1, channels.end(), [](const auto& ch) {
-             return ch.active and ch.buf_st > 0;
+    if (fallback_state) {
+      return is_con_res_id_pending() or has_pending_bytes(LCID_SRB0) or has_pending_bytes(LCID_SRB1);
+    }
+    return has_pending_ces() or std::any_of(sorted_channels.begin(), sorted_channels.end(), [this](lcid_t lcid) {
+             return lcid != LCID_SRB0 and channels[lcid].active and channels[lcid].buf_st > 0;
            });
   }
 
+  /// \brief Check whether the UE has pending data in the provided RAN slice.
+  bool has_pending_bytes(ran_slice_id_t slice_id) const;
+
   /// \brief Checks whether a logical channel has pending data.
-  bool has_pending_bytes(lcid_t lcid) const { return pending_bytes(lcid) > 0; }
+  bool has_pending_bytes(lcid_t lcid) const { return channels[lcid].active and channels[lcid].buf_st > 0; }
 
   /// \brief Checks whether a ConRes CE is pending for transmission.
   bool is_con_res_id_pending() const { return pending_con_res_id; }
 
   /// \brief Checks whether UE has pending CEs to be scheduled (ConRes excluded).
-  bool has_pending_ces() const { return not pending_ces.empty(); }
+  bool has_pending_ces() const { return pending_con_res_id or not pending_ces.empty(); }
 
-  /// \brief Calculates total number of DL bytes, including MAC header overhead.
-  /// \remark Excludes data for SRB0 and UE Contention Resolution Identity CE.
-  unsigned pending_bytes() const
-  {
-    unsigned bytes = pending_ce_bytes();
-    // Skip index 0 ==> SRB0.
-    for (unsigned i = 1; i <= MAX_LCID; ++i) {
-      bytes += pending_bytes((lcid_t)i);
-    }
-    return bytes;
-  }
+  /// \brief Calculates total number of DL bytes, including MAC header overhead, and without taking into account
+  /// the UE state.
+  unsigned total_pending_bytes() const;
+
+  /// \brief Calculates number of DL pending bytes, including MAC header overhead, and taking UE state into account.
+  unsigned pending_bytes() const;
+
+  /// Calculates the number of DL pending bytes, including MAC header overhead, for a RAN slice.
+  unsigned pending_bytes(ran_slice_id_t slice_id) const;
 
   /// \brief Returns the UE pending CEs' bytes to be scheduled, if any.
   unsigned pending_ce_bytes() const
   {
-    unsigned bytes = pending_ue_con_res_id_ce_bytes();
+    unsigned bytes = pending_con_res_ce_bytes();
     for (const auto& ce : pending_ces) {
       bytes += ce.ce_lcid.is_var_len_ce() ? get_mac_sdu_required_bytes(ce.ce_lcid.sizeof_ce())
                                           : FIXED_SIZED_MAC_CE_SUBHEADER_SIZE + ce.ce_lcid.sizeof_ce();
@@ -107,7 +132,7 @@ public:
   }
 
   /// \brief Checks whether UE has pending UE Contention Resolution Identity CE to be scheduled.
-  unsigned pending_ue_con_res_id_ce_bytes() const
+  unsigned pending_con_res_ce_bytes() const
   {
     static const auto ce_size = lcid_dl_sch_t{lcid_dl_sch_t::UE_CON_RES_ID}.sizeof_ce();
     return is_con_res_id_pending() ? FIXED_SIZED_MAC_CE_SUBHEADER_SIZE + ce_size : 0;
@@ -119,31 +144,29 @@ public:
     return is_active(lcid) ? get_mac_sdu_required_bytes(channels[lcid].buf_st) : 0;
   }
 
-  /// \brief Update DL buffer status for a given LCID.
-  void handle_dl_buffer_status_indication(lcid_t lcid, unsigned buffer_status)
+  /// \brief Average bit rate, in bps, for a given LCID.
+  double average_bit_rate(lcid_t lcid) const
   {
+    return not is_srb(lcid) and is_active(lcid) and channels[lcid].avg_bytes_per_slot.size() > 0
+               ? channels[lcid].avg_bytes_per_slot.average() * 8 * slots_per_sec
+               : 0.0;
+  }
+
+  slot_point hol_toa(lcid_t lcid) const { return is_active(lcid) ? channels[lcid].hol_toa : slot_point{}; }
+
+  /// \brief Update DL buffer status for a given LCID.
+  void handle_dl_buffer_status_indication(lcid_t lcid, unsigned buffer_status, slot_point hol_toa = {})
+  {
+    // We apply this limit to avoid potential overflows.
+    static constexpr unsigned max_buffer_status = 1U << 24U;
     srsran_sanity_check(lcid < MAX_NOF_RB_LCIDS, "Max LCID value 32 exceeded");
-    channels[lcid].buf_st = buffer_status;
+    channels[lcid].buf_st  = std::min(buffer_status, max_buffer_status);
+    channels[lcid].hol_toa = hol_toa;
   }
 
   /// \brief Enqueue new MAC CE to be scheduled.
-  void handle_mac_ce_indication(const mac_ce_info& ce)
-  {
-    if (ce.ce_lcid == lcid_dl_sch_t::UE_CON_RES_ID) {
-      pending_con_res_id = true;
-      return;
-    }
-    if (ce.ce_lcid == lcid_dl_sch_t::TA_CMD) {
-      auto ce_it = std::find_if(pending_ces.begin(), pending_ces.end(), [](const mac_ce_info& c) {
-        return c.ce_lcid == lcid_dl_sch_t::TA_CMD;
-      });
-      if (ce_it != pending_ces.end()) {
-        ce_it->ce_payload = ce.ce_payload;
-        return;
-      }
-    }
-    pending_ces.push_back(ce);
-  }
+  /// \return True if the MAC CE was enqueued successfully, false if the queue was full.
+  [[nodiscard]] bool handle_mac_ce_indication(const mac_ce_info& ce);
 
   /// \brief Allocates highest priority MAC SDU within space of \c rem_bytes bytes. Updates \c lch_info with allocated
   /// bytes for the MAC SDU (no MAC subheader).
@@ -161,11 +184,25 @@ public:
   /// \return Allocated bytes for UE Contention Resolution Identity MAC CE (with subheader).
   unsigned allocate_ue_con_res_id_mac_ce(dl_msg_lc_info& lch_info, unsigned rem_bytes);
 
+  /// \brief Returns a list of LCIDs sorted based on decreasing order of priority.
+  span<const lcid_t> get_prioritized_logical_channels() const { return sorted_channels; }
+
 private:
-  struct channel_context {
+  struct channel_context : public intrusive_double_linked_list_element<> {
+    /// Whether the configured logical channel is currently active.
     bool active = false;
     /// DL Buffer status of this logical channel.
     unsigned buf_st = 0;
+    /// Bytes-per-slot average for this logical channel.
+    moving_averager<unsigned> avg_bytes_per_slot;
+    /// Current slot sched bytes.
+    unsigned last_sched_bytes = 0;
+    /// Head-of-line (HOL) time-of-arrival
+    slot_point hol_toa;
+    /// Slice associated with this channel.
+    std::optional<ran_slice_id_t> slice_id;
+
+    void reset();
   };
 
   /// \brief Returns the next highest priority LCID. The prioritization policy is implementation-defined.
@@ -174,12 +211,30 @@ private:
   /// \brief Updates DL Buffer State for a given LCID based on available space.
   unsigned allocate_mac_sdu(dl_msg_lc_info& subpdu, lcid_t lcid, unsigned rem_bytes);
 
+  // Number of slots per second given the used SCS. Parameter used to compute bit rates.
+  const unsigned slots_per_sec;
+
+  // List of UE-dedicated logical channel configurations.
+  logical_channel_config_list_ptr channel_configs;
+
+  // State of configured channels.
   std::array<channel_context, MAX_NOF_RB_LCIDS> channels;
 
+  // List of active logical channel IDs sorted in decreasing order of priority. i.e. first element has the highest
+  // priority.
+  std::vector<lcid_t> sorted_channels;
+
+  // Mapping of RAN slice ID to the list of associated LCIDs.
+  std::vector<intrusive_double_linked_list<channel_context>> slice_lcid_list_lookup;
+
+  // Whether the UE is in fallback (no DRB tx).
+  bool fallback_state = false;
+
+  // Whether a CON RES CE needs to be sent.
   bool pending_con_res_id{false};
 
-  /// \brief List of pending CEs except UE Contention Resolution Identity.
-  std::deque<mac_ce_info> pending_ces;
+  // List of pending CEs except UE Contention Resolution Identity.
+  ring_buffer<mac_ce_info> pending_ces;
 };
 
 /// \brief Allocate MAC SDUs and corresponding MAC subPDU subheaders.
@@ -209,5 +264,22 @@ unsigned allocate_mac_ces(dl_msg_tb_info& tb_info, dl_logical_channel_manager& l
 /// \return Total number of bytes allocated (including MAC subheaders).
 unsigned
 allocate_ue_con_res_id_mac_ce(dl_msg_tb_info& tb_info, dl_logical_channel_manager& lch_mng, unsigned total_tbs);
+
+/// \brief Defines the list of subPDUs, including LCID and payload size, that will compose the transport block for
+/// SRB0 or for SRB1 in fallback mode.
+/// It includes the UE Contention Resolution Identity CE if it is pending.
+/// \return Returns the number of bytes reserved in the TB for subPDUs (other than padding).
+unsigned build_dl_fallback_transport_block_info(dl_msg_tb_info&             tb_info,
+                                                dl_logical_channel_manager& lch_mng,
+                                                unsigned                    tb_size_bytes);
+
+/// \brief Defines the list of subPDUs, including LCID and payload size, that will compose the transport block for a
+/// given RAN slice.
+/// \return Returns the number of bytes reserved in the TB for subPDUs (other than padding).
+/// \remark Excludes SRB0, as this operation is specific to a given RAN slice.
+unsigned build_dl_transport_block_info(dl_msg_tb_info&             tb_info,
+                                       dl_logical_channel_manager& lch_mng,
+                                       unsigned                    tb_size_bytes,
+                                       ran_slice_id_t              slice_id);
 
 } // namespace srsran

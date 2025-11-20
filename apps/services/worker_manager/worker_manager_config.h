@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,13 +26,15 @@
 
 namespace srsran {
 
+class timer_manager;
+class executor_metrics_channel_registry;
+
 /// Worker manager configuration.
 struct worker_manager_config {
   /// RU OFH worker configuration.
   struct ru_ofh_config {
-    bool is_downlink_parallelized;
-    /// Number of downlink antennas indexed by cell.
-    std::vector<unsigned> nof_downlink_antennas;
+    /// Number of cells.
+    unsigned nof_cells;
     /// RU timing CPU affinity mask.
     os_sched_affinity_bitmask ru_timing_cpu;
     /// Vector of affinities for the txrx workers.
@@ -43,15 +45,15 @@ struct worker_manager_config {
   struct ru_sdr_config {
     /// Lower physical layer thread profiles.
     enum class lower_phy_thread_profile {
-      /// Same task worker as the rest of the PHY (ZMQ only).
-      blocking = 0,
-      /// Single task worker for all the lower physical layer task executors.
+      /// Sequential mode - it guarantees that the entire physical layer operates in sequential mode using a single
+      /// executor. This mode might not satisfy with real-time timings.
+      sequential = 0,
+      /// Single task worker for all the baseband processing.
       single,
-      /// Two task workers - one for the downlink and one for the uplink.
+      /// Two task workers - one for baseband reception and another for baseband transmission.
       dual,
-      /// Dedicated task workers for each of the subtasks (downlink processing, uplink processing, reception and
-      /// transmission).
-      quad
+      /// Dedicated task workers for each of the subtasks (transmission, reception and demodulation).
+      triple
     };
 
     lower_phy_thread_profile profile;
@@ -68,32 +70,49 @@ struct worker_manager_config {
 
   /// DU low worker configuration.
   struct du_low_config {
-    bool     is_blocking_mode_active;
-    unsigned nof_ul_threads;
-    unsigned nof_dl_threads;
-    unsigned nof_pusch_decoder_threads;
-    unsigned nof_cells;
+    bool     is_sequential_mode_active;
+    unsigned max_pucch_concurrency;
+    unsigned max_pusch_and_srs_concurrency;
+    unsigned max_pdsch_concurrency;
+    /// Number of downlink antennas indexed by cell. The vector size must match the number of cells.
+    std::vector<unsigned> cell_nof_dl_antennas;
+    /// Number of uplink antennas indexed by cell. The vector size must match the number of cells.
+    std::vector<unsigned> cell_nof_ul_antennas;
+    /// Whether to enable task tracing.
+    bool executor_tracing_enable;
   };
 
-  /// DU high worker configuration.
+  /// DU high executor configuration.
   struct du_high_config {
-    /// DU-high PDU queue size.
-    unsigned pdu_queue_size;
+    /// DU-high UE data related tasks queue size.
+    unsigned ue_data_tasks_queue_size;
     /// DU high number of cells.
     unsigned nof_cells;
     /// Real-time mode enabled flag.
     bool is_rt_mode_enabled;
-    /// Multicell DU enabled flag.
-    bool is_du_multicell_enabled;
+    /// Whether to enable task tracing.
+    bool executor_tracing_enable;
   };
 
-  // CU-UP worker configuration
+  /// CU-UP executor configuration
   struct cu_up_config {
     unsigned max_nof_ue_strands = 16;
-    /// GTPU queue size.
-    unsigned gtpu_queue_size        = 2048;
-    bool     dedicated_io_ul_strand = true;
+    /// UE task queue size.
+    uint32_t dl_ue_executor_queue_size   = 2048;
+    uint32_t ul_ue_executor_queue_size   = 2048;
+    uint32_t ctrl_ue_executor_queue_size = 2048;
+    /// Maximum batch size used in CU-UP strands.
+    unsigned strand_batch_size = 256;
+    /// Wether to offload socket TX to a dedicated strand.
+    bool dedicated_io_ul_strand = true;
+    /// Whether to enable task tracing.
+    bool executor_tracing_enable = false;
+    /// Whether to skip CU-UP executors when executors logging is enabled application wide.
+    bool skip_cu_up_executor = true;
   };
+
+  /// CU-CP executor configuration.
+  struct cu_cp_config {};
 
   /// PCAP worker configuration.
   struct pcap_config {
@@ -107,18 +126,26 @@ struct worker_manager_config {
     bool is_rlc_enabled  = false;
   };
 
-  /// Number of low priority threads.
-  unsigned nof_low_prio_threads;
-  /// Low priority task worker queue size.
-  unsigned low_prio_task_queue_size;
-  /// Low priority CPU bitmasks.
-  os_sched_affinity_config low_prio_sched_config;
+  /// Size, in number of threads, of the main thread pool.
+  std::optional<unsigned> nof_main_pool_threads;
+  /// Main thread pool task queue size.
+  unsigned main_pool_task_queue_size;
+  /// Main thread pool back-off period, in microseconds, when the task queue is empty.
+  std::chrono::microseconds main_pool_backoff_period{50};
+  /// Main thread pool CPU bitmasks.
+  os_sched_affinity_config main_pool_affinity_cfg;
   /// PCAP configuration.
   pcap_config pcap_cfg;
+  /// Timer config.
+  timer_manager* app_timers = nullptr;
   /// Vector of affinities mask indexed by cell.
   std::vector<std::vector<os_sched_affinity_config>> config_affinities;
+  /// Split 6 enabled flag.
+  bool is_split6_enabled = false;
   /// CU-UP configuration.
   std::optional<cu_up_config> cu_up_cfg;
+  /// CU-CP configuration.
+  std::optional<cu_cp_config> cu_cp_cfg;
   /// DU high configuration.
   std::optional<du_high_config> du_hi_cfg;
   /// FAPI configuration.
@@ -131,6 +158,8 @@ struct worker_manager_config {
   std::optional<ru_ofh_config> ru_ofh_cfg;
   /// RU dummy configuration.
   std::optional<ru_dummy_config> ru_dummy_cfg;
+  /// Executor metrics channel registry.
+  executor_metrics_channel_registry* exec_metrics_channel_registry;
 };
 
 } // namespace srsran

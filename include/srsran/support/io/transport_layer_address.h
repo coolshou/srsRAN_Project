@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -95,8 +95,7 @@ namespace fmt {
 template <>
 struct formatter<srsran::transport_layer_address> : public formatter<std::string> {
   template <typename FormatContext>
-  auto format(const srsran::transport_layer_address& s, FormatContext& ctx)
-
+  auto format(const srsran::transport_layer_address& s, FormatContext& ctx) const
   {
     std::array<char, NI_MAXHOST> ip_addr;
     int                          port;

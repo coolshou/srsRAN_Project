@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,21 +26,12 @@
 
 using namespace srsran;
 
-/// Obtain duration after which we consider that the scheduler did not perform its operations within the RT deadline.
-static std::chrono::microseconds get_tracer_thres(const cell_configuration& cell_cfg)
-{
-  std::chrono::microseconds slot_dur{1000 >>
-                                     to_numerology_value(cell_cfg.dl_cfg_common.init_dl_bwp.generic_params.scs)};
-  return cell_cfg.expert_cfg.log_high_latency_diagnostics ? slot_dur : std::chrono::microseconds{0};
-}
-
 cell_scheduler::cell_scheduler(const scheduler_expert_config&                  sched_cfg,
                                const sched_cell_configuration_request_message& msg,
                                const cell_configuration&                       cell_cfg_,
                                ue_scheduler&                                   ue_sched_,
                                cell_metrics_handler&                           metrics_handler) :
   cell_cfg(cell_cfg_),
-  ue_sched(ue_sched_),
   res_grid(cell_cfg),
   event_logger(cell_cfg.cell_index, cell_cfg.pci),
   metrics(metrics_handler),
@@ -48,23 +39,27 @@ cell_scheduler::cell_scheduler(const scheduler_expert_config&                  s
   logger(srslog::fetch_basic_logger("SCHED")),
   ssb_sch(cell_cfg),
   pdcch_sch(cell_cfg),
+  si_sch(cell_cfg, pdcch_sch, msg),
   csi_sch(cell_cfg),
   ra_sch(sched_cfg.ra, cell_cfg, pdcch_sch, event_logger, metrics),
   prach_sch(cell_cfg),
   pucch_alloc(cell_cfg, sched_cfg.ue.max_pucchs_per_slot, sched_cfg.ue.max_ul_grants_per_slot),
   uci_alloc(pucch_alloc),
-  sib1_sch(sched_cfg.si, cell_cfg, pdcch_sch, msg),
-  si_msg_sch(sched_cfg.si, cell_cfg, pdcch_sch, msg),
-  pucch_guard_sch(cell_cfg),
-  pg_sch(sched_cfg, cell_cfg, pdcch_sch, msg),
-  res_usage_tracer(fmt::format("cell_sched_{}", cell_cfg.cell_index),
-                   logger_event_tracer<true>{sched_cfg.log_high_latency_diagnostics ? &logger.warning : nullptr},
-                   get_tracer_thres(cell_cfg),
-                   8)
+  pg_sch(sched_cfg, cell_cfg, pdcch_sch, msg)
 {
   // Register new cell in the UE scheduler.
-  ue_sched.add_cell(ue_scheduler_cell_params{
+  ue_sched = ue_sched_.add_cell(ue_cell_scheduler_creation_request{
       msg.cell_index, &pdcch_sch, &pucch_alloc, &uci_alloc, &res_grid, &metrics, &event_logger});
+}
+
+void cell_scheduler::handle_si_update_request(const si_scheduling_update_request& msg)
+{
+  si_sch.handle_si_update_request(msg);
+}
+
+void cell_scheduler::handle_slice_reconfiguration_request(const du_cell_slice_reconfig_request& slice_reconf_req)
+{
+  ue_sched->handle_slice_reconfiguration_request(slice_reconf_req);
 }
 
 void cell_scheduler::handle_crc_indication(const ul_crc_indication& crc_ind)
@@ -88,9 +83,9 @@ void cell_scheduler::handle_crc_indication(const ul_crc_indication& crc_ind)
     // Forward CRC to Msg3 HARQs that has no ueId yet associated.
     ra_sch.handle_crc_indication(msg3_crcs);
     // Forward remaining CRCs to UE scheduler.
-    ue_sched.get_feedback_handler().handle_crc_indication(ue_crcs);
+    ue_sched->get_feedback_handler().handle_crc_indication(ue_crcs);
   } else {
-    ue_sched.get_feedback_handler().handle_crc_indication(crc_ind);
+    ue_sched->get_feedback_handler().handle_crc_indication(crc_ind);
   }
 }
 
@@ -98,25 +93,23 @@ void cell_scheduler::run_slot(slot_point sl_tx)
 {
   // Mark the start of the slot.
   auto slot_start_tp = std::chrono::high_resolution_clock::now();
-  res_usage_tracer.start();
 
   // If there are skipped slots, handle them. Otherwise, the cell grid and cached results are not correctly cleared.
   if (SRSRAN_LIKELY(res_grid.slot_tx().valid())) {
     while (SRSRAN_UNLIKELY(res_grid.slot_tx() + 1 != sl_tx)) {
       slot_point skipped_slot = res_grid.slot_tx() + 1;
-      logger.info("Status: Detected skipped slot={}.", skipped_slot);
-      res_grid.slot_indication(skipped_slot);
-      pdcch_sch.slot_indication(skipped_slot);
-      pucch_alloc.slot_indication(skipped_slot);
-      uci_alloc.slot_indication(skipped_slot);
+      logger.info("cell={}: Detected skipped slot={}.", fmt::underlying(cell_cfg.cell_index), skipped_slot);
+      reset_resource_grid(skipped_slot);
+    }
+  } else {
+    if (SRSRAN_UNLIKELY(not active)) {
+      // Implicitly activate cell on slot_indication.
+      start();
     }
   }
 
   // > Start with clearing old allocations from the grid.
-  res_grid.slot_indication(sl_tx);
-  pdcch_sch.slot_indication(sl_tx);
-  pucch_alloc.slot_indication(sl_tx);
-  uci_alloc.slot_indication(sl_tx);
+  reset_resource_grid(sl_tx);
 
   // > SSB scheduling.
   ssb_sch.run_slot(res_grid, sl_tx);
@@ -125,11 +118,7 @@ void cell_scheduler::run_slot(slot_point sl_tx)
   csi_sch.run_slot(res_grid[0]);
 
   // > Schedule SIB1 and SI-message signalling.
-  sib1_sch.run_slot(res_grid, sl_tx);
-  si_msg_sch.run_slot(res_grid[0]);
-
-  // > Schedule PUCCH guardbands.
-  pucch_guard_sch.run_slot(res_grid);
+  si_sch.run_slot(res_grid);
 
   // > Schedule PRACH PDUs.
   prach_sch.run_slot(res_grid);
@@ -140,15 +129,12 @@ void cell_scheduler::run_slot(slot_point sl_tx)
   // > Schedule Paging.
   pg_sch.run_slot(res_grid);
 
-  res_usage_tracer.add_section("sched_common");
-
   // > Schedule UE DL and UL data.
-  ue_sched.run_slot(sl_tx);
+  ue_sched->run_slot(sl_tx);
 
   // > Mark stop of the slot processing
   auto slot_stop_tp = std::chrono::high_resolution_clock::now();
   auto slot_dur     = std::chrono::duration_cast<std::chrono::microseconds>(slot_stop_tp - slot_start_tp);
-  res_usage_tracer.stop("sched_ue");
 
   // > Log processed events.
   event_logger.log();
@@ -158,4 +144,64 @@ void cell_scheduler::run_slot(slot_point sl_tx)
 
   // > Push the scheduler results to the metrics handler.
   metrics.push_result(sl_tx, last_result(), slot_dur);
+}
+
+void cell_scheduler::handle_error_indication(slot_point sl_tx, scheduler_slot_handler::error_outcome event)
+{
+  ue_sched->handle_error_indication(sl_tx, event);
+}
+
+void cell_scheduler::reset_resource_grid(slot_point sl_tx)
+{
+  // Reset cell resource grid.
+  res_grid.slot_indication(sl_tx);
+
+  // Reset PDCCH slot context.
+  pdcch_sch.slot_indication(sl_tx);
+
+  // Reset PUCCH slot context.
+  pucch_alloc.slot_indication(sl_tx);
+
+  // Reset UCI slot context.
+  uci_alloc.slot_indication(sl_tx);
+}
+
+void cell_scheduler::start()
+{
+  if (active) {
+    return;
+  }
+  active = true;
+  logger.info("cell={}: Cell scheduling was activated.", fmt::underlying(cell_cfg.cell_index));
+
+  ue_sched->start();
+}
+
+void cell_scheduler::stop()
+{
+  // From this point onwards, no slot indications are expected until the cell is reenabled.
+
+  if (not active) {
+    // Do nothing.
+    return;
+  }
+  active = false;
+  logger.info("cell={}: Cell scheduling was deactivated.", fmt::underlying(cell_cfg.cell_index));
+
+  // Stop sub-schedulers.
+  ssb_sch.stop();
+  si_sch.stop();
+  prach_sch.stop();
+  ra_sch.stop();
+  pg_sch.stop();
+  ue_sched->stop();
+
+  // Reset resource grid and sub-allocators.
+  res_grid.stop();
+  pdcch_sch.stop();
+  pucch_alloc.stop();
+  uci_alloc.stop();
+
+  // Report last metrics.
+  metrics.handle_cell_deactivation();
 }

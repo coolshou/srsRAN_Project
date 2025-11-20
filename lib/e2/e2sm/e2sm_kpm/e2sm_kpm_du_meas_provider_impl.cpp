@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -72,10 +72,6 @@ e2sm_kpm_du_meas_provider_impl::e2sm_kpm_du_meas_provider_impl(srs_du::f1ap_ue_i
       e2sm_kpm_supported_metric_t{
           NO_LABEL, ALL_LEVELS, true, &e2sm_kpm_du_meas_provider_impl::get_drb_dl_rlc_sdu_latency});
 
-  supported_metrics.emplace(
-      "DRB.PacketSuccessRateUlgNBUu",
-      e2sm_kpm_supported_metric_t{
-          NO_LABEL, E2_NODE_LEVEL | UE_LEVEL, true, &e2sm_kpm_du_meas_provider_impl::get_drb_ul_success_rate});
   supported_metrics.emplace(
       "DRB.UEThpDl",
       e2sm_kpm_supported_metric_t{
@@ -162,14 +158,40 @@ void e2sm_kpm_du_meas_provider_impl::report_metrics(const scheduler_cell_metrics
   for (auto& ue_metric : cell_metrics.ue_metrics) {
     last_ue_metrics.push_back(ue_metric);
   }
+  // Scheduler metrics are always delivered, RLC only when UEs are present to clear RLC history.
+  clear_rlc_metrics();
 }
 
 void e2sm_kpm_du_meas_provider_impl::report_metrics(const rlc_metrics& metrics)
 {
-  logger.debug("Received RLC metrics: ue={} {}.", metrics.ue_index, metrics.rb_id.get_drb_id());
+  logger.debug("Received RLC metrics: ue={} {}.", fmt::underlying(metrics.ue_index), metrics.rb_id.get_drb_id());
   ue_aggr_rlc_metrics[metrics.ue_index].push_back(metrics);
   if (ue_aggr_rlc_metrics[metrics.ue_index].size() > max_rlc_metrics) {
     ue_aggr_rlc_metrics[metrics.ue_index].pop_front();
+  }
+}
+
+void e2sm_kpm_du_meas_provider_impl::clear_rlc_metrics()
+{
+  // Check if enough time has passed since last clear (at least 1 second)
+  auto current_time = std::chrono::system_clock::now();
+  auto time_since_last_clear =
+      std::chrono::duration_cast<std::chrono::milliseconds>(current_time - last_rlc_metrics_clear_time);
+
+  if (time_since_last_clear.count() <= 1000) {
+    return;
+  }
+
+  last_rlc_metrics_clear_time = current_time;
+  auto it                     = ue_aggr_rlc_metrics.begin();
+  while (it != ue_aggr_rlc_metrics.end()) {
+    du_ue_index_t       ue_index   = to_du_ue_index(it->first);
+    gnb_du_ue_f1ap_id_t ue_f1ap_id = f1ap_ue_id_provider.get_gnb_du_ue_f1ap_id(ue_index);
+    if (ue_f1ap_id == gnb_du_ue_f1ap_id_t::invalid) {
+      it = ue_aggr_rlc_metrics.erase(it);
+    } else {
+      ++it;
+    }
   }
 }
 
@@ -230,14 +252,14 @@ bool e2sm_kpm_du_meas_provider_impl::get_ues_matching_test_conditions(
 {
   // TODO: add test condition checking, now return all UEs
   for (const auto& ue : ue_aggr_rlc_metrics) {
-    du_ue_index_t       ue_index          = to_du_ue_index(ue.first);
-    gnb_cu_ue_f1ap_id_t gnb_cu_ue_f1ap_id = f1ap_ue_id_provider.get_gnb_cu_ue_f1ap_id(ue_index);
-    if (gnb_cu_ue_f1ap_id == gnb_cu_ue_f1ap_id_t::invalid) {
+    du_ue_index_t                      ue_index          = to_du_ue_index(ue.first);
+    std::optional<gnb_cu_ue_f1ap_id_t> gnb_cu_ue_f1ap_id = f1ap_ue_id_provider.get_gnb_cu_ue_f1ap_id(ue_index);
+    if (not gnb_cu_ue_f1ap_id.has_value()) {
       continue;
     }
     ue_id_c        ueid;
     ue_id_gnb_du_s ueid_gnb_du{};
-    ueid_gnb_du.gnb_cu_ue_f1ap_id = gnb_cu_ue_f1ap_id_to_uint(gnb_cu_ue_f1ap_id);
+    ueid_gnb_du.gnb_cu_ue_f1ap_id = gnb_cu_ue_f1ap_id_to_uint(gnb_cu_ue_f1ap_id.value());
     ueid_gnb_du.ran_ue_id_present = false;
     ueid.set_gnb_du_ue_id()       = ueid_gnb_du;
     ues.push_back(ueid);
@@ -252,14 +274,14 @@ bool e2sm_kpm_du_meas_provider_impl::get_ues_matching_test_conditions(
 {
   // TODO: add test condition checking, now return all UEs
   for (const auto& ue : ue_aggr_rlc_metrics) {
-    du_ue_index_t       ue_index          = to_du_ue_index(ue.first);
-    gnb_cu_ue_f1ap_id_t gnb_cu_ue_f1ap_id = f1ap_ue_id_provider.get_gnb_cu_ue_f1ap_id(ue_index);
-    if (gnb_cu_ue_f1ap_id == gnb_cu_ue_f1ap_id_t::invalid) {
+    du_ue_index_t                      ue_index          = to_du_ue_index(ue.first);
+    std::optional<gnb_cu_ue_f1ap_id_t> gnb_cu_ue_f1ap_id = f1ap_ue_id_provider.get_gnb_cu_ue_f1ap_id(ue_index);
+    if (not gnb_cu_ue_f1ap_id.has_value()) {
       continue;
     }
     ue_id_c        ueid;
     ue_id_gnb_du_s ueid_gnb_du{};
-    ueid_gnb_du.gnb_cu_ue_f1ap_id = gnb_cu_ue_f1ap_id_to_uint(gnb_cu_ue_f1ap_id);
+    ueid_gnb_du.gnb_cu_ue_f1ap_id = gnb_cu_ue_f1ap_id_to_uint(gnb_cu_ue_f1ap_id.value());
     ueid_gnb_du.ran_ue_id_present = false;
     ueid.set_gnb_du_ue_id()       = ueid_gnb_du;
     ues.push_back(ueid);
@@ -322,7 +344,7 @@ bool e2sm_kpm_du_meas_provider_impl::get_cqi(const asn1::e2sm::label_info_list_l
 
   meas_record_item_c meas_record_item;
   meas_record_item.set_integer() = ue_metrics.cqi_stats.get_nof_observations() > 0
-                                       ? static_cast<uint64_t>(std::roundf(ue_metrics.cqi_stats.get_mean()))
+                                       ? static_cast<uint64_t>(std::round(ue_metrics.cqi_stats.get_mean()))
                                        : 0;
   items.push_back(meas_record_item);
   meas_collected = true;
@@ -386,7 +408,7 @@ bool e2sm_kpm_du_meas_provider_impl::get_prb_avail_dl(const asn1::e2sm::label_in
       std::accumulate(last_ue_metrics.begin(),
                       last_ue_metrics.end(),
                       0,
-                      [](size_t sum, const scheduler_ue_metrics& metric) { return sum + metric.tot_dl_prbs_used; }) /
+                      [](size_t sum, const scheduler_ue_metrics& metric) { return sum + metric.tot_pdsch_prbs_used; }) /
       nof_dl_slots;
 
   for (size_t i = 0; i < std::max(ues.size(), size_t(1)); ++i) {
@@ -417,7 +439,7 @@ bool e2sm_kpm_du_meas_provider_impl::get_prb_avail_ul(const asn1::e2sm::label_in
       std::accumulate(last_ue_metrics.begin(),
                       last_ue_metrics.end(),
                       0,
-                      [](size_t sum, const scheduler_ue_metrics& metric) { return sum + metric.tot_ul_prbs_used; }) /
+                      [](size_t sum, const scheduler_ue_metrics& metric) { return sum + metric.tot_pusch_prbs_used; }) /
       nof_ul_slots;
 
   for (size_t i = 0; i < std::max(ues.size(), size_t(1)); ++i) {
@@ -446,12 +468,13 @@ bool e2sm_kpm_du_meas_provider_impl::get_prb_used_dl(const asn1::e2sm::label_inf
   }
 
   if (ues.empty()) {
-    double dl_prbs_used =
-        std::accumulate(last_ue_metrics.begin(),
-                        last_ue_metrics.end(),
-                        0,
-                        [](size_t sum, const scheduler_ue_metrics& metric) { return sum + metric.tot_dl_prbs_used; }) /
-        nof_dl_slots;
+    double dl_prbs_used = std::accumulate(last_ue_metrics.begin(),
+                                          last_ue_metrics.end(),
+                                          0,
+                                          [](size_t sum, const scheduler_ue_metrics& metric) {
+                                            return sum + metric.tot_pdsch_prbs_used;
+                                          }) /
+                          nof_dl_slots;
     meas_record_item_c meas_record_item;
     meas_record_item.set_integer() = dl_prbs_used;
     items.push_back(meas_record_item);
@@ -462,7 +485,12 @@ bool e2sm_kpm_du_meas_provider_impl::get_prb_used_dl(const asn1::e2sm::label_inf
     gnb_cu_ue_f1ap_id_t gnb_cu_ue_f1ap_id = int_to_gnb_cu_ue_f1ap_id(ue.gnb_du_ue_id().gnb_cu_ue_f1ap_id);
     uint32_t            ue_idx            = f1ap_ue_id_provider.get_ue_index(gnb_cu_ue_f1ap_id);
     meas_record_item_c  meas_record_item;
-    meas_record_item.set_integer() = last_ue_metrics[ue_idx].mean_dl_prbs_used;
+    if (ue_idx != du_ue_index_t::INVALID_DU_UE_INDEX && ue_idx < last_ue_metrics.size()) {
+      unsigned ue_mean_dl_prbs_used = nof_dl_slots > 0 ? last_ue_metrics[ue_idx].tot_pdsch_prbs_used / nof_dl_slots : 0;
+      meas_record_item.set_integer() = ue_mean_dl_prbs_used;
+    } else {
+      meas_record_item.set_no_value();
+    }
     items.push_back(meas_record_item);
     meas_collected = true;
   }
@@ -486,12 +514,13 @@ bool e2sm_kpm_du_meas_provider_impl::get_prb_used_ul(const asn1::e2sm::label_inf
   }
 
   if (ues.empty()) {
-    double ul_prbs_used =
-        std::accumulate(last_ue_metrics.begin(),
-                        last_ue_metrics.end(),
-                        0,
-                        [](size_t sum, const scheduler_ue_metrics& metric) { return sum + metric.tot_ul_prbs_used; }) /
-        nof_ul_slots;
+    double ul_prbs_used = std::accumulate(last_ue_metrics.begin(),
+                                          last_ue_metrics.end(),
+                                          0,
+                                          [](size_t sum, const scheduler_ue_metrics& metric) {
+                                            return sum + metric.tot_pusch_prbs_used;
+                                          }) /
+                          nof_ul_slots;
     meas_record_item_c meas_record_item;
     meas_record_item.set_integer() = ul_prbs_used;
     items.push_back(meas_record_item);
@@ -502,7 +531,12 @@ bool e2sm_kpm_du_meas_provider_impl::get_prb_used_ul(const asn1::e2sm::label_inf
     gnb_cu_ue_f1ap_id_t gnb_cu_ue_f1ap_id = int_to_gnb_cu_ue_f1ap_id(ue.gnb_du_ue_id().gnb_cu_ue_f1ap_id);
     uint32_t            ue_idx            = f1ap_ue_id_provider.get_ue_index(gnb_cu_ue_f1ap_id);
     meas_record_item_c  meas_record_item;
-    meas_record_item.set_integer() = last_ue_metrics[ue_idx].mean_ul_prbs_used;
+    if (ue_idx != du_ue_index_t::INVALID_DU_UE_INDEX && ue_idx < last_ue_metrics.size()) {
+      unsigned ue_mean_ul_prbs_used = nof_ul_slots > 0 ? last_ue_metrics[ue_idx].tot_pusch_prbs_used / nof_ul_slots : 0;
+      meas_record_item.set_integer() = ue_mean_ul_prbs_used;
+    } else {
+      meas_record_item.set_no_value();
+    }
     items.push_back(meas_record_item);
     meas_collected = true;
   }
@@ -526,12 +560,13 @@ bool e2sm_kpm_du_meas_provider_impl::get_prb_use_perc_dl(const asn1::e2sm::label
   }
 
   if (ues.empty()) {
-    double mean_dl_prbs_used =
-        std::accumulate(last_ue_metrics.begin(),
-                        last_ue_metrics.end(),
-                        0,
-                        [](size_t sum, const scheduler_ue_metrics& metric) { return sum + metric.tot_dl_prbs_used; }) /
-        nof_dl_slots;
+    double mean_dl_prbs_used = std::accumulate(last_ue_metrics.begin(),
+                                               last_ue_metrics.end(),
+                                               0,
+                                               [](size_t sum, const scheduler_ue_metrics& metric) {
+                                                 return sum + metric.tot_pdsch_prbs_used;
+                                               }) /
+                               nof_dl_slots;
     meas_record_item_c meas_record_item;
     meas_record_item.set_integer() = mean_dl_prbs_used * 100 / nof_cell_prbs;
     items.push_back(meas_record_item);
@@ -542,7 +577,12 @@ bool e2sm_kpm_du_meas_provider_impl::get_prb_use_perc_dl(const asn1::e2sm::label
     gnb_cu_ue_f1ap_id_t gnb_cu_ue_f1ap_id = int_to_gnb_cu_ue_f1ap_id(ue.gnb_du_ue_id().gnb_cu_ue_f1ap_id);
     uint32_t            ue_idx            = f1ap_ue_id_provider.get_ue_index(gnb_cu_ue_f1ap_id);
     meas_record_item_c  meas_record_item;
-    meas_record_item.set_integer() = last_ue_metrics[ue_idx].mean_dl_prbs_used * 100 / nof_cell_prbs;
+    if (ue_idx != du_ue_index_t::INVALID_DU_UE_INDEX && ue_idx < last_ue_metrics.size()) {
+      unsigned ue_mean_dl_prbs_used = nof_dl_slots > 0 ? last_ue_metrics[ue_idx].tot_pdsch_prbs_used / nof_dl_slots : 0;
+      meas_record_item.set_integer() = ue_mean_dl_prbs_used * 100 / nof_cell_prbs;
+    } else {
+      meas_record_item.set_no_value();
+    }
     items.push_back(meas_record_item);
     meas_collected = true;
   }
@@ -565,12 +605,13 @@ bool e2sm_kpm_du_meas_provider_impl::get_prb_use_perc_ul(const asn1::e2sm::label
     return meas_collected;
   }
   if (ues.empty()) {
-    double mean_ul_prbs_used =
-        std::accumulate(last_ue_metrics.begin(),
-                        last_ue_metrics.end(),
-                        0,
-                        [](size_t sum, const scheduler_ue_metrics& metric) { return sum + metric.tot_ul_prbs_used; }) /
-        nof_ul_slots;
+    double mean_ul_prbs_used = std::accumulate(last_ue_metrics.begin(),
+                                               last_ue_metrics.end(),
+                                               0,
+                                               [](size_t sum, const scheduler_ue_metrics& metric) {
+                                                 return sum + metric.tot_pusch_prbs_used;
+                                               }) /
+                               nof_ul_slots;
     meas_record_item_c meas_record_item;
     meas_record_item.set_integer() = mean_ul_prbs_used * 100 / nof_cell_prbs;
     items.push_back(meas_record_item);
@@ -581,7 +622,12 @@ bool e2sm_kpm_du_meas_provider_impl::get_prb_use_perc_ul(const asn1::e2sm::label
     gnb_cu_ue_f1ap_id_t gnb_cu_ue_f1ap_id = int_to_gnb_cu_ue_f1ap_id(ue.gnb_du_ue_id().gnb_cu_ue_f1ap_id);
     uint32_t            ue_idx            = f1ap_ue_id_provider.get_ue_index(gnb_cu_ue_f1ap_id);
     meas_record_item_c  meas_record_item;
-    meas_record_item.set_integer() = last_ue_metrics[ue_idx].mean_ul_prbs_used * 100 / nof_cell_prbs;
+    if (ue_idx != du_ue_index_t::INVALID_DU_UE_INDEX && ue_idx < last_ue_metrics.size()) {
+      unsigned ue_mean_ul_prbs_used = nof_ul_slots > 0 ? last_ue_metrics[ue_idx].tot_pusch_prbs_used / nof_ul_slots : 0;
+      meas_record_item.set_integer() = ue_mean_ul_prbs_used * 100 / nof_cell_prbs;
+    } else {
+      meas_record_item.set_no_value();
+    }
     items.push_back(meas_record_item);
     meas_collected = true;
   }
@@ -605,15 +651,16 @@ bool e2sm_kpm_du_meas_provider_impl::get_delay_ul(const asn1::e2sm::label_info_l
   }
 
   if (ues.empty()) {
-    double mean_ul_delay_ms =
-        std::accumulate(last_ue_metrics.begin(),
-                        last_ue_metrics.end(),
-                        0,
-                        [](size_t sum, const scheduler_ue_metrics& metric) { return sum + metric.ul_delay_ms; }) /
-        last_ue_metrics.size();
+    float mean_ul_delay_ms = std::accumulate(last_ue_metrics.begin(),
+                                             last_ue_metrics.end(),
+                                             0,
+                                             [](size_t sum, const scheduler_ue_metrics& metric) {
+                                               return sum + metric.avg_crc_delay_ms.value_or(0.0f);
+                                             }) /
+                             last_ue_metrics.size();
     meas_record_item_c meas_record_item;
     if (mean_ul_delay_ms) {
-      meas_record_item.set_real().value = static_cast<float>(mean_ul_delay_ms);
+      meas_record_item.set_real().value = mean_ul_delay_ms * 10; // unit is 0.1ms
     } else {
       meas_record_item.set_no_value();
     }
@@ -625,8 +672,12 @@ bool e2sm_kpm_du_meas_provider_impl::get_delay_ul(const asn1::e2sm::label_info_l
     gnb_cu_ue_f1ap_id_t gnb_cu_ue_f1ap_id = int_to_gnb_cu_ue_f1ap_id(ue.gnb_du_ue_id().gnb_cu_ue_f1ap_id);
     uint32_t            ue_idx            = f1ap_ue_id_provider.get_ue_index(gnb_cu_ue_f1ap_id);
     meas_record_item_c  meas_record_item;
-    if (last_ue_metrics[ue_idx].ul_delay_ms) {
-      meas_record_item.set_real().value = static_cast<float>(last_ue_metrics[ue_idx].ul_delay_ms);
+    if (ue_idx != du_ue_index_t::INVALID_DU_UE_INDEX && ue_idx < last_ue_metrics.size()) {
+      if (last_ue_metrics[ue_idx].avg_crc_delay_ms.has_value()) {
+        meas_record_item.set_real().value = (last_ue_metrics[ue_idx].avg_crc_delay_ms.value() * 10); // unit is 0.1ms
+      } else {
+        meas_record_item.set_no_value();
+      }
     } else {
       meas_record_item.set_no_value();
     }
@@ -655,6 +706,7 @@ bool e2sm_kpm_du_meas_provider_impl::get_prach_cell_count(const asn1::e2sm::labe
   meas_record_item_c meas_record_item;
   meas_record_item.set_integer() = nof_ded_cell_preambles;
   items.push_back(meas_record_item);
+  meas_collected = true;
 
   return meas_collected;
 }
@@ -683,25 +735,23 @@ bool e2sm_kpm_du_meas_provider_impl::get_drb_dl_mean_throughput(const asn1::e2sm
   std::map<uint16_t, unsigned> ue_throughput;
   for (auto& ue : ue_aggr_rlc_metrics) {
     size_t num_pdu_bytes_with_segmentation;
-    switch (ue.second.front().tx.tx_low.mode) {
-      case rlc_mode::um_bidir:
-      case rlc_mode::um_unidir_dl:
-        // get average from queue
-        num_pdu_bytes_with_segmentation =
-            std::accumulate(ue.second.begin(), ue.second.end(), 0, [](size_t sum, const rlc_metrics& metric) {
-              return sum + metric.tx.tx_low.mode_specific.um.num_pdu_bytes_with_segmentation;
-            });
-        num_pdu_bytes_with_segmentation /= ue.second.size();
-        break;
-      case rlc_mode::am:
-        num_pdu_bytes_with_segmentation =
-            std::accumulate(ue.second.begin(), ue.second.end(), 0, [](size_t sum, const rlc_metrics& metric) {
-              return sum + metric.tx.tx_low.mode_specific.am.num_pdu_bytes_with_segmentation;
-            });
-        num_pdu_bytes_with_segmentation /= ue.second.size();
-        break;
-      default:
-        num_pdu_bytes_with_segmentation = 0;
+    if (std::holds_alternative<rlc_um_tx_metrics_lower>(ue.second.front().tx.tx_low.mode_specific)) {
+      // get average from queue
+      num_pdu_bytes_with_segmentation =
+          std::accumulate(ue.second.begin(), ue.second.end(), 0, [](size_t sum, const rlc_metrics& metric) {
+            auto& um = std::get<rlc_um_tx_metrics_lower>(metric.tx.tx_low.mode_specific);
+            return sum + um.num_pdu_bytes_with_segmentation;
+          });
+      num_pdu_bytes_with_segmentation /= ue.second.size();
+    } else if (std::holds_alternative<rlc_am_tx_metrics_lower>(ue.second.front().tx.tx_low.mode_specific)) {
+      num_pdu_bytes_with_segmentation =
+          std::accumulate(ue.second.begin(), ue.second.end(), 0, [](size_t sum, const rlc_metrics& metric) {
+            auto& am = std::get<rlc_am_tx_metrics_lower>(metric.tx.tx_low.mode_specific);
+            return sum + am.num_pdu_bytes_with_segmentation;
+          });
+      num_pdu_bytes_with_segmentation /= ue.second.size();
+    } else {
+      num_pdu_bytes_with_segmentation = 0;
     }
     auto num_pdu_bytes_no_segmentation =
         std::accumulate(ue.second.begin(), ue.second.end(), 0, [](size_t sum, const rlc_metrics& metric) {
@@ -789,82 +839,6 @@ bool e2sm_kpm_du_meas_provider_impl::get_drb_ul_mean_throughput(const asn1::e2sm
       continue;
     }
     meas_record_item.set_real().value = ue_throughput[ue_idx];
-    items.push_back(meas_record_item);
-    meas_collected = true;
-  }
-  return meas_collected;
-}
-
-bool e2sm_kpm_du_meas_provider_impl::get_drb_ul_success_rate(const asn1::e2sm::label_info_list_l     label_info_list,
-                                                             const std::vector<asn1::e2sm::ue_id_c>& ues,
-                                                             const std::optional<asn1::e2sm::cgi_c>  cell_global_id,
-                                                             std::vector<asn1::e2sm::meas_record_item_c>& items)
-{
-  bool meas_collected = false;
-  if (ue_aggr_rlc_metrics.empty()) {
-    return handle_no_meas_data_available(ues, items, asn1::e2sm::meas_record_item_c::types::options::no_value);
-  }
-  if ((label_info_list.size() > 1 or
-       (label_info_list.size() == 1 and not label_info_list[0].meas_label.no_label_present))) {
-    logger.debug("Metric: DRB.PacketSuccessRateUlgNBUu supports only NO_LABEL label.");
-    return meas_collected;
-  }
-  if (cell_global_id.has_value()) {
-    logger.debug("Metric: DRB.PacketSuccessRateUlgNBUu currently does not support cell_global_id filter.");
-  }
-  if (ues.empty()) {
-    // E2 level measurements.
-    meas_record_item_c meas_record_item;
-    float              success_rate    = 0;
-    uint32_t           total_lost_pdus = 0;
-    uint32_t           total_pdus      = 0;
-    for (auto& ue_metric : ue_aggr_rlc_metrics) {
-      // rlc_metrics& rlc_metric = ue_metric.second;
-      total_lost_pdus += std::accumulate(
-          ue_metric.second.begin(), ue_metric.second.end(), 0, [](size_t sum, const rlc_metrics& metric) {
-            return sum + metric.rx.num_lost_pdus;
-          });
-      total_pdus += std::accumulate(ue_metric.second.begin(),
-                                    ue_metric.second.end(),
-                                    0,
-                                    [](size_t sum, const rlc_metrics& metric) { return sum + metric.rx.num_pdus; });
-    }
-    if (total_pdus) {
-      success_rate = 1.0 * (total_pdus - total_lost_pdus) / total_pdus;
-    }
-    uint32_t success_rate_int      = success_rate * 100;
-    meas_record_item.set_integer() = success_rate_int;
-    items.push_back(meas_record_item);
-    meas_collected = true;
-  }
-
-  for (auto& ue : ues) {
-    meas_record_item_c  meas_record_item;
-    gnb_cu_ue_f1ap_id_t gnb_cu_ue_f1ap_id = int_to_gnb_cu_ue_f1ap_id(ue.gnb_du_ue_id().gnb_cu_ue_f1ap_id);
-    uint32_t            ue_idx            = f1ap_ue_id_provider.get_ue_index(gnb_cu_ue_f1ap_id);
-    if (ue_aggr_rlc_metrics.count(ue_idx) == 0) {
-      meas_record_item.set_no_value();
-      items.push_back(meas_record_item);
-      meas_collected = true;
-      continue;
-    }
-    float success_rate    = 0;
-    float total_lost_pdus = 0;
-    float total_pdus      = 0;
-    auto  ue_metric       = ue_aggr_rlc_metrics[ue_idx];
-    total_lost_pdus +=
-        std::accumulate(ue_metric.begin(), ue_metric.end(), 0, [](size_t sum, const rlc_metrics& metric) {
-          return sum + metric.rx.num_lost_pdus;
-        });
-    total_pdus += std::accumulate(ue_metric.begin(), ue_metric.end(), 0, [](size_t sum, const rlc_metrics& metric) {
-      return sum + metric.rx.num_pdus;
-    });
-
-    if (total_pdus) {
-      success_rate = 1.0 * (total_pdus - total_lost_pdus) / total_pdus;
-    }
-    uint32_t success_rate_int      = success_rate * 100;
-    meas_record_item.set_integer() = success_rate_int;
     items.push_back(meas_record_item);
     meas_collected = true;
   }
@@ -1103,7 +1077,7 @@ bool e2sm_kpm_du_meas_provider_impl::get_drb_dl_rlc_sdu_latency(const asn1::e2sm
       }
     }
     if (av_ue_sdu_latency_us) {
-      float av_ue_sdu_latency_ms = (av_ue_sdu_latency_us / ue_aggr_rlc_metrics.size()) / 1e3; // Unit is 0.1 ms.
+      float av_ue_sdu_latency_ms = (av_ue_sdu_latency_us / ue_aggr_rlc_metrics.size()) / 100; // Unit is 0.1 ms.
       av_ue_sdu_latency_ms       = std::round(av_ue_sdu_latency_ms * 10.0f) / 10.0f;
       meas_record_item.set_real();
       meas_record_item.real().value = av_ue_sdu_latency_ms;
@@ -1137,7 +1111,7 @@ bool e2sm_kpm_du_meas_provider_impl::get_drb_dl_rlc_sdu_latency(const asn1::e2sm
                           0,
                           [](size_t sum, const rlc_metrics& metric) { return sum + metric.tx.tx_high.num_sdus; });
       if (tot_sdu_latency_us) {
-        float av_ue_sdu_latency_ms = (tot_sdu_latency_us / tot_num_sdus) / 1e3; // Unit is 0.1 ms.
+        float av_ue_sdu_latency_ms = (static_cast<float>(tot_sdu_latency_us) / tot_num_sdus) / 100; // Unit is 0.1 ms.
         av_ue_sdu_latency_ms       = std::round(av_ue_sdu_latency_ms * 10.0f) / 10.0f;
         meas_record_item.set_real();
         meas_record_item.real().value = av_ue_sdu_latency_ms;
@@ -1187,7 +1161,7 @@ bool e2sm_kpm_du_meas_provider_impl::get_drb_ul_rlc_sdu_latency(const asn1::e2sm
     }
     if (av_ue_sdu_latency_us) {
       meas_record_item.set_real();
-      meas_record_item.real().value = (av_ue_sdu_latency_us / ue_aggr_rlc_metrics.size()) / 1e3; // Unit is ms.
+      meas_record_item.real().value = (av_ue_sdu_latency_us / ue_aggr_rlc_metrics.size()) / 100; // Unit is 0.1ms.
       items.push_back(meas_record_item);
       meas_collected = true;
     } else {
@@ -1207,7 +1181,7 @@ bool e2sm_kpm_du_meas_provider_impl::get_drb_ul_rlc_sdu_latency(const asn1::e2sm
         meas_collected = true;
         continue;
       }
-      int tot_sdu_latency =
+      int tot_sdu_latency_us =
           std::accumulate(ue_aggr_rlc_metrics[ue_idx].begin(),
                           ue_aggr_rlc_metrics[ue_idx].end(),
                           0,
@@ -1217,9 +1191,9 @@ bool e2sm_kpm_du_meas_provider_impl::get_drb_ul_rlc_sdu_latency(const asn1::e2sm
                           ue_aggr_rlc_metrics[ue_idx].end(),
                           0,
                           [](size_t sum, const rlc_metrics& metric) { return sum + metric.rx.num_sdus; });
-      if (tot_sdu_latency) {
+      if (tot_sdu_latency_us) {
         meas_record_item.set_real();
-        meas_record_item.real().value = (tot_sdu_latency / tot_num_sdus) / 1e3; // Unit is ms.
+        meas_record_item.real().value = (static_cast<float>(tot_sdu_latency_us) / tot_num_sdus) / 100; // Unit is 0.1ms.
         items.push_back(meas_record_item);
         meas_collected = true;
       } else {

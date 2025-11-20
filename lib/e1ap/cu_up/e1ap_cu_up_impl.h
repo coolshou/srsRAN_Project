@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,9 +22,11 @@
 
 #pragma once
 
+#include "cu_up/e1ap_cu_up_metrics_collector.h"
 #include "e1ap_cu_up_connection_handler.h"
 #include "ue_context/e1ap_cu_up_ue_context.h"
 #include "srsran/asn1/e1ap/e1ap.h"
+#include "srsran/e1ap/cu_up/e1ap_configuration.h"
 #include "srsran/e1ap/cu_up/e1ap_cu_up.h"
 #include "srsran/support/executors/task_executor.h"
 #include "srsran/support/timers.h"
@@ -37,7 +39,8 @@ class e1ap_event_manager;
 class e1ap_cu_up_impl final : public e1ap_interface
 {
 public:
-  e1ap_cu_up_impl(e1_connection_client&        e1_client_handler_,
+  e1ap_cu_up_impl(const e1ap_configuration&    e1ap_cfg_,
+                  e1_connection_client&        e1_client_handler_,
                   e1ap_cu_up_manager_notifier& cu_up_notifier_,
                   timer_manager&               timers_,
                   task_executor&               cu_up_exec_);
@@ -47,6 +50,7 @@ public:
   [[nodiscard]] bool connect_to_cu_cp() override;
   // E1AP interface management procedures functions as per TS38.463, Section 8.2.
   async_task<cu_up_e1_setup_response> handle_cu_up_e1_setup_request(const cu_up_e1_setup_request& request) override;
+  async_task<void>                    handle_cu_up_e1ap_release_request() override;
 
   // e1ap message handler functions
   void handle_message(const e1ap_message& msg) override;
@@ -54,8 +58,13 @@ public:
   // e1ap control message handler functions
   void handle_bearer_context_inactivity_notification(const e1ap_bearer_context_inactivity_notification& msg) override;
 
+  void handle_pdcp_max_count_reached(ue_index_t ue_index) override;
+
   // e1ap event handler functions
-  void handle_connection_loss() override {}
+  void handle_connection_loss() override
+  {
+    // TODO
+  }
 
   // e1ap_statistics_handler functions
   size_t get_nof_ues() const override { return ue_ctxt_list.size(); }
@@ -96,6 +105,8 @@ private:
   /// \param[in] msg The Bearer Context Release Command.
   void handle_bearer_context_release_command(const asn1::e1ap::bearer_context_release_cmd_s& msg);
 
+  void handle_cu_up_e1ap_reset(const asn1::e1ap::reset_s& msg);
+
   /// \brief Notify about the reception of an successful outcome.
   /// \param[in] msg The received successful outcome message.
   void handle_successful_outcome(const asn1::e1ap::successful_outcome_s& outcome);
@@ -104,7 +115,8 @@ private:
   /// \param[in] msg The received unsuccessful outcome message.
   void handle_unsuccessful_outcome(const asn1::e1ap::unsuccessful_outcome_s& outcome);
 
-  srslog::basic_logger& logger;
+  const e1ap_configuration e1ap_cfg;
+  srslog::basic_logger&    logger;
 
   // nofifiers and handles
   e1ap_cu_up_manager_notifier& cu_up_notifier;
@@ -119,6 +131,10 @@ private:
   e1ap_ue_context_list ue_ctxt_list;
 
   std::unique_ptr<e1ap_event_manager> ev_mng;
+
+  unique_timer metrics_timer;
+
+  e1ap_cu_up_metrics_collector metrics;
 };
 
 } // namespace srsran::srs_cu_up

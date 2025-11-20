@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -44,7 +44,7 @@ struct mac_cell_group_config {
   /// \c phr-Config.
   std::optional<phr_config> phr_cfg;
   /// \c skipUplinkTxDynamic.
-  bool skip_uplink_tx_dynamic;
+  bool skip_uplink_tx_dynamic = false;
   // TODO: add remaining fields.
 };
 

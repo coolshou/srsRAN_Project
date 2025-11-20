@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,8 +22,8 @@
 
 #pragma once
 
+#include "apps/units/flexible_o_du/split_dynamic/dynamic_o_du_unit_config.h"
 #include "apps/units/flexible_o_du/split_helpers/flexible_o_du_factory.h"
-#include "dynamic_o_du_unit_config.h"
 
 namespace srsran {
 
@@ -33,10 +33,7 @@ class dynamic_o_du_factory : public flexible_o_du_factory
   const dynamic_o_du_unit_config& unit_config;
 
 public:
-  explicit dynamic_o_du_factory(const dynamic_o_du_unit_config& config_) :
-    flexible_o_du_factory({config_.odu_high_cfg, config_.du_low_cfg}), unit_config(config_)
-  {
-  }
+  explicit dynamic_o_du_factory(const dynamic_o_du_unit_config& config_);
 
 private:
   std::unique_ptr<radio_unit> create_radio_unit(const flexible_o_du_ru_config&       ru_config,

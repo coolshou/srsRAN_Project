@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,6 +25,7 @@
 #include "srsran/srslog/srslog.h"
 #include "srsran/support/format/fmt_basic_parser.h"
 #include "srsran/support/format/fmt_to_c_str.h"
+#include "fmt/std.h"
 
 using namespace srsran;
 
@@ -38,26 +39,28 @@ struct pdu_log_prefix {
   std::optional<lcid_ul_sch_t> lcid;
 };
 
-pdu_log_prefix create_prefix(const decoded_mac_rx_pdu& pdu)
+} // namespace
+
+static pdu_log_prefix create_prefix(const decoded_mac_rx_pdu& pdu)
 {
   return pdu_log_prefix{.type = "UL", .rnti = pdu.pdu_rx.rnti, .ue_index = pdu.ue_index};
 }
 
-pdu_log_prefix create_prefix(const decoded_mac_rx_pdu& pdu, const mac_ul_sch_subpdu& subpdu)
+static pdu_log_prefix create_prefix(const decoded_mac_rx_pdu& pdu, const mac_ul_sch_subpdu& subpdu)
 {
   return pdu_log_prefix{.type = "UL", .rnti = pdu.pdu_rx.rnti, .ue_index = pdu.ue_index, .lcid = subpdu.lcid()};
 }
 
-} // namespace
+namespace fmt {
 
 template <>
-struct fmt::formatter<pdu_log_prefix> : public basic_parser {
+struct formatter<pdu_log_prefix> : public basic_parser {
   template <typename FormatContext>
-  auto format(const pdu_log_prefix& p, FormatContext& ctx)
+  auto format(const pdu_log_prefix& p, FormatContext& ctx) const
   {
     fmt::format_to(ctx.out(), "{} rnti={}", p.type, p.rnti);
     if (p.ue_index != srsran::INVALID_DU_UE_INDEX) {
-      fmt::format_to(ctx.out(), " ue={}", p.ue_index);
+      fmt::format_to(ctx.out(), " ue={}", fmt::underlying(p.ue_index));
     }
     if (p.lcid.has_value()) {
       const char* event = p.lcid->is_sdu() ? p.lcid->is_ccch() ? "UL-CCCH" : "UL-DCCH" : "CE";
@@ -66,6 +69,8 @@ struct fmt::formatter<pdu_log_prefix> : public basic_parser {
     return ctx.out();
   }
 };
+
+} // namespace fmt
 
 pdu_rx_handler::pdu_rx_handler(mac_ul_ccch_notifier&               ccch_notifier_,
                                srs_du::du_high_ue_executor_mapper& ue_exec_mapper_,
@@ -104,7 +109,7 @@ bool pdu_rx_handler::handle_rx_pdu(slot_point sl_rx, du_cell_index_t cell_index,
   if (logger.info.enabled()) {
     // Note: Since subPDUs are just views, they should not be passed by value to the logging backend.
     fmt::memory_buffer fmtbuf;
-    fmt::format_to(fmtbuf, "{}", ctx.decoded_subpdus);
+    fmt::format_to(std::back_inserter(fmtbuf), "{}", ctx.decoded_subpdus);
     logger.info("{} subPDUs: [{}]", create_prefix(ctx), to_c_str(fmtbuf));
   }
 
@@ -133,7 +138,9 @@ bool pdu_rx_handler::push_ul_ccch_msg(du_ue_index_t ue_index, byte_buffer ul_ccc
 {
   mac_ul_ue_context* ue = ue_manager.find_ue(ue_index);
   if (ue == nullptr) {
-    logger.warning("UL subPDU ue={}, lcid={} UL-CCCH: Received UL-CCCH for non-existent UE", ue_index, LCID_SRB0);
+    logger.warning("UL subPDU ue={}, lcid={} UL-CCCH: Received UL-CCCH for non-existent UE",
+                   fmt::underlying(ue_index),
+                   fmt::underlying(LCID_SRB0));
     return false;
   }
 
@@ -160,7 +167,7 @@ bool pdu_rx_handler::handle_rx_subpdus(const decoded_mac_rx_pdu& ctx)
 {
   mac_ul_ue_context* ue = ue_manager.find_ue(ctx.ue_index);
 
-  // Process SDUs and MAC CEs that are not C-RNTI MAC CE
+  // Process SDUs and MAC CEs that are not C-RNTI MAC CE.
   for (const mac_ul_sch_subpdu& subpdu : ctx.decoded_subpdus) {
     const bool ret = subpdu.lcid().is_sdu() ? handle_sdu(ctx, subpdu, ue) : handle_mac_ce(ctx, subpdu);
     if (not ret) {
@@ -220,7 +227,9 @@ bool pdu_rx_handler::handle_mac_ce(const decoded_mac_rx_pdu& ctx, const mac_ul_s
           logger.warning("{}: Discarding PDU. Cause: Rx PDU is filled with zeros, meaning that it was likely corrupted",
                          create_prefix(ctx, subpdu));
         } else {
-          logger.warning("{}: Discarding PDU. Cause: UL-CCCH should be only for Msg3", create_prefix(ctx, subpdu));
+          // This should not happen, but there is a tiny chance that there is a false alarm of an SR during UE creation
+          // and double toggle of the NDI, which will make the UE interpret a new UL grant as a Msg3 reTx.
+          logger.info("{}: Discarding PDU. Cause: UL-CCCH should be only for Msg3", create_prefix(ctx, subpdu));
         }
         return false;
       }
@@ -393,7 +402,7 @@ bool pdu_rx_handler::handle_crnti_ce(const decoded_mac_rx_pdu& ctx, const mac_ul
   return true;
 }
 
-void pdu_rx_handler::write_pcap_rx_pdu(const slot_point& sl_rx, const mac_rx_pdu& pdu)
+void pdu_rx_handler::write_pcap_rx_pdu(slot_point sl_rx, const mac_rx_pdu& pdu)
 {
   if (not pcap.is_write_enabled()) {
     return;

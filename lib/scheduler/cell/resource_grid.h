@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,14 +26,12 @@
 #include "../support/bwp_helpers.h"
 #include "../support/rb_helper.h"
 #include "srsran/adt/circular_array.h"
+#include "srsran/adt/circular_vector.h"
 #include "srsran/ran/slot_point.h"
-#include "srsran/scheduler/mac_scheduler.h"
 #include "srsran/scheduler/resource_grid_util.h"
+#include "srsran/scheduler/result/sched_result.h"
 
 namespace srsran {
-
-/// Bitset of CRBs with size up to 275.
-using crb_bitmap = bounded_bitset<MAX_NOF_PRBS, true>;
 
 /// Parameters of a PDSCH or PUSCH grant allocation within a BWP.
 struct bwp_sch_grant_info {
@@ -65,6 +63,18 @@ struct grant_info {
   grant_info(const bwp_sch_grant_info& grant) :
     scs(grant.bwp_cfg->scs), symbols(grant.symbols), crbs(prb_to_crb(*grant.bwp_cfg, grant.prbs))
   {
+  }
+
+  bool operator==(const grant_info& other) const
+  {
+    return scs == other.scs and symbols == other.symbols and crbs == other.crbs;
+  }
+  bool operator!=(const grant_info& other) const { return not(*this == other); }
+
+  /// Checks whether this grant overlaps with another grant in time and frequency.
+  bool overlaps(const grant_info& other) const
+  {
+    return scs == other.scs and symbols.overlaps(other.symbols) and crbs.overlaps(other.crbs);
   }
 };
 
@@ -125,6 +135,14 @@ public:
   /// \return an CRB bitmap with bits set to one for unavailable CRBs.
   crb_bitmap used_crbs(crb_interval bwp_crb_lims, ofdm_symbol_range symbols) const;
 
+  /// \brief Calculates a bitmap where each bit set one represents a PRB that is occupied or unavailable.
+  /// A PRB is considered occupied if it is already allocated in at least one OFDM symbol of the provided symbol range.
+  /// \param[in] bwp_crb_lims CRB range where the BWP is located in the frequency domain, and used for the CRB to PRB
+  /// conversion.
+  /// \param[in] symbols Range of OFDM symbols, where the search for available PRBs is carrier out.
+  /// \return an PRB bitmap of the BWP with bits set to one for unavailable PRBs.
+  prb_bitmap used_prbs(crb_interval bwp_crb_lims, ofdm_symbol_range symbols) const;
+
   /// Checks whether the provided symbol x CRB range in the carrier resource grid is set.
   /// \param symbols OFDM symbol interval of the allocation. Interval must fall within [0, 14).
   /// \param crbs CRB interval, where CRB=0 corresponds to the CRB closest to pointA.
@@ -135,7 +153,7 @@ private:
   /// Represents a matrix of symbol index x carrier RB index. The matrix dimensions get scaled based on the number
   /// of carrier RBs. RB index=0 corresponds to the carrier offset. Resources in the bitset are represented in the
   /// following order: [{symb=0,RB=0}, {symb=0,RB=1}, ..., {symb=1,RB=0}, ..., {symb=14,RB=carrierRBs}]
-  using slot_rb_bitmap = bounded_bitset<NOF_OFDM_SYM_PER_SLOT_NORMAL_CP * MAX_NOF_PRBS, true>;
+  using slot_rb_bitmap = bounded_bitset<NOF_OFDM_SYM_PER_SLOT_NORMAL_CP * MAX_NOF_PRBS>;
 
   /// Carrier configuration containining numerology, carrier offset and carrier bandwidth.
   scs_specific_carrier carrier_cfg;
@@ -192,6 +210,14 @@ public:
   /// \return a CRB bitmap with bits set to one for unavailable CRBs.
   crb_bitmap used_crbs(subcarrier_spacing scs, crb_interval crb_lims, ofdm_symbol_range symbols) const;
 
+  /// \brief Calculates a bitmap where each bit set to one represents a PRB that is occupied or unavailable.
+  /// A PRB is considered occupied if it is already allocated in at least one OFDM symbol of the provided symbol range.
+  /// \param[in] scs Subcarrier spacing of interest.
+  /// \param[in] crb_lims CRB limits used for the allocation.
+  /// \param[in] symbols Range of OFDM symbols, where the search for available CRBs is carrier out.
+  /// \return a PRB bitmap of the BWP with bits set to one for unavailable PRBs.
+  prb_bitmap used_prbs(subcarrier_spacing scs, crb_interval crb_lims, ofdm_symbol_range symbols) const;
+
   /// Checks whether all the provided symbol x RB range in the cell resource grid are set.
   /// \param grant contains the symbol x RB range to be tested.
   /// \return true if all symbols x RBs of grant are currently set in the resource grid.
@@ -244,12 +270,14 @@ struct cell_slot_resource_allocator {
 
   /// copies and moves are disabled to ensure pointer/reference validity.
   cell_slot_resource_allocator(const cell_slot_resource_allocator&)            = delete;
-  cell_slot_resource_allocator(cell_slot_resource_allocator&&)                 = delete;
+  cell_slot_resource_allocator(cell_slot_resource_allocator&&) noexcept        = default;
   cell_slot_resource_allocator& operator=(const cell_slot_resource_allocator&) = delete;
-  cell_slot_resource_allocator& operator=(cell_slot_resource_allocator&&)      = delete;
 
   /// Sets new slot.
   void slot_indication(slot_point sl);
+
+  /// Clears all the allocated resources and resets the scheduling result.
+  void clear();
 };
 
 /// Circular Ring of cell_slot_resource_grid objects. This class manages the automatic resetting of
@@ -258,8 +286,8 @@ struct cell_resource_allocator {
   /// \brief Number of previous slot results to keep in history before they get deleted.
   ///
   /// Having access to past decisions is useful during the handling of error indications.
-  static const size_t RING_MAX_HISTORY_SIZE = 8;
-  /// Number of slots managed by this container.
+  static const size_t RING_MAX_HISTORY_SIZE = 16;
+  /// Maximum number of slots managed by this container.
   static const size_t RING_ALLOCATOR_SIZE = get_allocator_ring_size_gt_min(
       RING_MAX_HISTORY_SIZE + get_max_slot_ul_alloc_delay(NTN_CELL_SPECIFIC_KOFFSET_MAX));
 
@@ -274,6 +302,9 @@ struct cell_resource_allocator {
 
   /// Indicate the processing of a new slot in the scheduler.
   void slot_indication(slot_point sl_tx);
+
+  /// Called when cell is deactivated.
+  void stop();
 
   /// Cell index of the resource grid.
   du_cell_index_t cell_index() const { return cfg.cell_index; }
@@ -290,7 +321,7 @@ struct cell_resource_allocator {
   {
     assert_valid_sl(slot_delay);
     slot_point                          sl_tx = last_slot_ind + slot_delay;
-    const cell_slot_resource_allocator& r     = *slots[sl_tx.to_uint() % slots.size()];
+    const cell_slot_resource_allocator& r     = slots[sl_tx.count()];
     srsran_assert(r.slot == sl_tx, "Bad access to uninitialized cell_resource_grid");
     return r;
   }
@@ -298,7 +329,7 @@ struct cell_resource_allocator {
   {
     assert_valid_sl(slot_delay);
     slot_point                    sl_tx = last_slot_ind + slot_delay;
-    cell_slot_resource_allocator& r     = *slots[sl_tx.to_uint() % slots.size()];
+    cell_slot_resource_allocator& r     = slots[sl_tx.count()];
     srsran_assert(r.slot == sl_tx, "Bad access to uninitialized cell_resource_grid");
     return r;
   }
@@ -316,7 +347,7 @@ struct cell_resource_allocator {
     if (diff < 0 or diff >= static_cast<int>(RING_MAX_HISTORY_SIZE)) {
       return nullptr;
     }
-    const cell_slot_resource_allocator& r = *slots[slot.to_uint() % slots.size()];
+    const cell_slot_resource_allocator& r = slots[slot.count()];
     srsran_assert(r.slot == slot, "Bad access to uninitialized cell_resource_grid");
     return &r;
   }
@@ -334,7 +365,7 @@ private:
   slot_point last_slot_ind;
 
   /// Circular pool of cell resource grids, where each entry represents a separate slot.
-  std::vector<std::unique_ptr<cell_slot_resource_allocator>> slots;
+  circular_vector<cell_slot_resource_allocator> slots;
 };
 
 } // namespace srsran
@@ -350,7 +381,7 @@ struct formatter<srsran::carrier_subslot_resource_grid> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::carrier_subslot_resource_grid& grid, FormatContext& ctx)
+  auto format(const srsran::carrier_subslot_resource_grid& grid, FormatContext& ctx) const
   {
     for (unsigned i = 0; i != srsran::NOF_OFDM_SYM_PER_SLOT_NORMAL_CP; ++i) {
       format_to(ctx.out(), "\n{}", grid.used_crbs({0, grid.nof_rbs()}, {i, i + 1}));
@@ -368,7 +399,7 @@ struct formatter<srsran::cell_slot_resource_grid> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::cell_slot_resource_grid& grid, FormatContext& ctx)
+  auto format(const srsran::cell_slot_resource_grid& grid, FormatContext& ctx) const
   {
     auto scs_list = grid.active_scs();
     for (srsran::subcarrier_spacing scs : scs_list) {

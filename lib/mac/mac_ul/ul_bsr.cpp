@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,13 +26,13 @@
 using namespace srsran;
 
 /// TS 38.321, Table 6.1.3.1-1 Buffer size levels (in bytes) for 5-bit Buffer Size field, all values <= except marked
-constexpr auto buffer_size_levels_5bit = to_array<uint32_t>(
+static constexpr auto buffer_size_levels_5bit = to_array<uint32_t>(
     {/* == */ 0, 10,    14,    20,    28,    38,    53,    74,     102,    142,           198,
      276,        384,   535,   745,   1038,  1446,  2014,  2806,   3909,   5446,          7587,
      10570,      14726, 20516, 28581, 39818, 55474, 77284, 107669, 150000, /* > */ 150000});
 
 /// TS 38.321, Table 6.1.3.1-2: Buffer size levels (in bytes) for 8-bit Buffer Size field, all values <= except marked
-constexpr auto buffer_size_levels_8bit =
+static constexpr auto buffer_size_levels_8bit =
     to_array<uint32_t>({/* == */ 0, 10,       11,       12,       13,
                         14,         15,       16,       17,       18,
                         19,         20,       22,       23,       25,
@@ -170,10 +170,14 @@ expected<long_bsr_report> srsran::decode_lbsr(bsr_format format, byte_buffer_vie
 /// \return The actual buffer size level in Bytes.
 uint32_t srsran::buff_size_field_to_bytes(size_t buff_size_index, bsr_format format)
 {
-  // Difference between the 2nd largest and the largest UL buffer size in bytes (Implementation-defined).
-  static constexpr uint32_t max_offset = 150000;
+  // [Implementation-defined] Difference between the 2nd largest and the largest UL buffer size in bytes.
+  // The resulting value of largest UL buffer (700kB) is approx. the amount of UL data that can be transmitted during 1
+  // frame, assuming (i) 1 UE; (ii) 2 layers-UL MIMO; (iii) 2D1S7U TDD pattern. This value is enough to guarantee that
+  // the scheduler UL pending data never reach 0 in between 2 consecutive BSRs, which we observed to be reported every
+  // frame during UL-UDP full buffer (this value depends on the configuration).
+  static constexpr uint32_t max_offset = 550000;
 
-  // early exit
+  // Early exit
   if (buff_size_index == 0) {
     return 0;
   }

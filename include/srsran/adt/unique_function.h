@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -47,11 +47,14 @@ class oper_table_t
 {
 public:
   constexpr oper_table_t()                         = default;
-  virtual ~oper_table_t()                          = default;
   virtual R    call(void* src, Args... args) const = 0;
   virtual void move(void* src, void* dest) const   = 0;
   virtual void dtor(void* src) const               = 0;
   virtual bool is_in_small_buffer() const          = 0;
+
+protected:
+  // Note: Using a virtual dtor causes a malloc when initiatilizing the tables in static storage.
+  ~oper_table_t() = default;
 };
 
 /// Specialization of move/call/destroy operations for when the "unique_function<R(Args...)>" is empty
@@ -104,11 +107,9 @@ public:
 
 /// Metafunction to check if a type is an instantiation of unique_function<R(Args...)>
 template <class>
-struct is_unique_function : std::false_type {
-};
+struct is_unique_function : std::false_type {};
 template <class Sig, size_t Capacity, bool ForbidAlloc>
-struct is_unique_function<unique_function<Sig, Capacity, ForbidAlloc>> : std::true_type {
-};
+struct is_unique_function<unique_function<Sig, Capacity, ForbidAlloc>> : std::true_type {};
 
 template <typename FunT, typename R, typename... Args>
 const auto& get_unique_heap_oper_ptr()

@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -24,3 +24,8 @@ add_executable(context_repository_helpers_test context_repository_helpers_test.c
 target_link_libraries(context_repository_helpers_test srsran_support gtest gtest_main)
 target_include_directories(context_repository_helpers_test PRIVATE ${CMAKE_SOURCE_DIR}/lib/ofh/support)
 gtest_discover_tests(context_repository_helpers_test)
+
+add_executable(uplink_notified_grid_symbol_repository_test uplink_notified_grid_symbol_repository_test.cpp)
+target_link_libraries(uplink_notified_grid_symbol_repository_test srsran_support gtest gtest_main)
+target_include_directories(uplink_notified_grid_symbol_repository_test PRIVATE ${CMAKE_SOURCE_DIR}/lib/ofh/support)
+gtest_discover_tests(uplink_notified_grid_symbol_repository_test)

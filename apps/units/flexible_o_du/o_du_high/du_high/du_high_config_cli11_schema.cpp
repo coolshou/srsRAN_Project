@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,14 +21,17 @@
  */
 
 #include "du_high_config_cli11_schema.h"
-#include "apps/services/logger/logger_appconfig_cli11_utils.h"
-#include "apps/services/logger/metrics_logger_appconfig_cli11_schema.h"
+#include "apps/helpers/logger/logger_appconfig_cli11_utils.h"
+#include "apps/helpers/metrics/metrics_config_cli11_schema.h"
 #include "apps/services/worker_manager/cli11_cpu_affinities_parser_helper.h"
 #include "du_high_config.h"
+#include "du_high_config_cli11_ntn_schema.h"
 #include "srsran/adt/ranges/transform.h"
 #include "srsran/ran/drx_config.h"
 #include "srsran/ran/du_types.h"
 #include "srsran/ran/duplex_mode.h"
+#include "srsran/ran/slot_point_extended.h"
+#include "srsran/scheduler/config/scheduler_expert_config.h"
 #include "srsran/support/cli11_utils.h"
 #include "srsran/support/config_parsers.h"
 #include "srsran/support/format/fmt_to_c_str.h"
@@ -59,11 +62,11 @@ static std::function<std::string()> get_vector_default_function(span<const Integ
     }
 
     fmt::memory_buffer buffer;
-    fmt::format_to(buffer, "[");
+    fmt::format_to(std::back_inserter(buffer), "[");
     for (unsigned i = 0, e = value.size() - 1; i != e; ++i) {
-      fmt::format_to(buffer, "{},", value[i]);
+      fmt::format_to(std::back_inserter(buffer), "{},", value[i]);
     }
-    fmt::format_to(buffer, "{}]", value.back());
+    fmt::format_to(std::back_inserter(buffer), "{}]", value.back());
 
     return to_c_str(buffer);
   };
@@ -71,17 +74,19 @@ static std::function<std::string()> get_vector_default_function(span<const Integ
 
 static void configure_cli11_log_args(CLI::App& app, du_high_unit_logger_config& log_params)
 {
-  app_services::add_log_option(app, log_params.mac_level, "--mac_level", "MAC log level");
-  app_services::add_log_option(app, log_params.rlc_level, "--rlc_level", "RLC log level");
-  app_services::add_log_option(app, log_params.f1ap_level, "--f1ap_level", "F1AP log level");
-  app_services::add_log_option(app, log_params.f1u_level, "--f1u_level", "F1-U log level");
-  app_services::add_log_option(app, log_params.gtpu_level, "--gtpu_level", "GTPU log level");
-  app_services::add_log_option(app, log_params.du_level, "--du_level", "Log level for the DU");
+  app_helpers::add_log_option(app, log_params.mac_level, "--mac_level", "MAC log level");
+  app_helpers::add_log_option(app, log_params.rlc_level, "--rlc_level", "RLC log level");
+  app_helpers::add_log_option(app, log_params.f1ap_level, "--f1ap_level", "F1AP log level");
+  app_helpers::add_log_option(app, log_params.f1u_level, "--f1u_level", "F1-U log level");
+  app_helpers::add_log_option(app, log_params.gtpu_level, "--gtpu_level", "GTPU log level");
+  app_helpers::add_log_option(app, log_params.du_level, "--du_level", "Log level for the DU");
 
-  add_option(
-      app, "--hex_max_size", log_params.hex_max_size, "Maximum number of bytes to print in hex (zero for no hex dumps)")
+  add_option(app,
+             "--hex_max_size",
+             log_params.hex_max_size,
+             "Maximum number of bytes to print in hex (zero for no hex dumps, -1 for unlimited bytes)")
       ->capture_default_str()
-      ->check(CLI::Range(0, 1024));
+      ->check(CLI::Range(-1, 1024));
   add_option(app,
              "--broadcast_enabled",
              log_params.broadcast_enabled,
@@ -96,45 +101,21 @@ static void configure_cli11_log_args(CLI::App& app, du_high_unit_logger_config& 
       ->always_capture_default();
 }
 
-static void configure_cli11_cell_affinity_args(CLI::App& app, du_high_unit_cpu_affinities_cell_config& config)
+static void configure_cli11_trace_args(CLI::App& app, du_high_unit_tracer_config& config)
 {
-  add_option_function<std::string>(
-      app,
-      "--l2_cell_cpus",
-      [&config](const std::string& value) { parse_affinity_mask(config.l2_cell_cpu_cfg.mask, value, "l2_cell_cpus"); },
-      "CPU cores assigned to L2 cell tasks");
-
-  add_option_function<std::string>(
-      app,
-      "--l2_cell_pinning",
-      [&config](const std::string& value) {
-        config.l2_cell_cpu_cfg.pinning_policy = to_affinity_mask_policy(value);
-        if (config.l2_cell_cpu_cfg.pinning_policy == sched_affinity_mask_policy::last) {
-          report_error("Incorrect value={} used in {} property", value, "l2_cell_pinning");
-        }
-      },
-      "Policy used for assigning CPU cores to L2 cell tasks");
+  CLI::App* layers_subcmd = add_subcommand(app, "layers", "Layer basis tracing configuration")->configurable();
+  add_option(*layers_subcmd, "--du_high_enable", config.executor_tracing_enable, "Enable tracing for DU-high executors")
+      ->capture_default_str();
 }
 
 static void configure_cli11_expert_execution_args(CLI::App& app, du_high_unit_expert_execution_config& config)
 {
-  // Cell affinity section.
-  add_option_cell(
-      app,
-      "--cell_affinities",
-      [&config](const std::vector<std::string>& values) {
-        config.cell_affinities.resize(values.size());
-        for (unsigned i = 0, e = values.size(); i != e; ++i) {
-          CLI::App subapp("DU high expert execution cell CPU affinities",
-                          "DU high expert execution cell CPU affinities config, item #" + std::to_string(i));
-          subapp.config_formatter(create_yaml_config_parser());
-          subapp.allow_config_extras();
-          configure_cli11_cell_affinity_args(subapp, config.cell_affinities[i]);
-          std::istringstream ss(values[i]);
-          subapp.parse_from_stream(ss);
-        }
-      },
-      "Sets the cell CPU affinities configuration on a per cell basis");
+  CLI::App* queues_subcmd = add_subcommand(app, "queues", "Task executor queue parameters")->configurable();
+  add_option(*queues_subcmd,
+             "--du_ue_data_executor_queue_size",
+             config.du_queue_cfg.ue_data_executor_queue_size,
+             "DU's UE executor task queue size for PDU processing")
+      ->capture_default_str();
 }
 
 static void configure_cli11_pdcch_common_args(CLI::App& app, pdcch_common_unit_config& common_params)
@@ -214,6 +195,12 @@ static void configure_cli11_pdcch_dedicated_args(CLI::App& app, pdcch_dedicated_
       "SearchSpace type for UE dedicated SearchSpace#2")
       ->default_str("ue_dedicated")
       ->check(CLI::IsMember({"common", "ue_dedicated"}, CLI::ignore_case));
+  add_option(app,
+             "--al_cqi_offset",
+             ded_params.al_cqi_offset,
+             "Offset to apply to the CQI value used in the PDCCH aggregation level calculation.")
+      ->capture_default_str()
+      ->check(CLI::Range(-15, 15));
 }
 
 static void configure_cli11_pdcch_args(CLI::App& app, du_high_unit_pdcch_config& pdcch_params)
@@ -241,15 +228,24 @@ static void configure_cli11_pdsch_args(CLI::App& app, du_high_unit_pdsch_config&
   add_option(app, "--fixed_sib1_mcs", pdsch_params.fixed_sib1_mcs, "Fixed SIB1 MCS")
       ->capture_default_str()
       ->check(CLI::Range(0, 28));
+  add_option(app, "--harq_mode_b", pdsch_params.harq_mode_b, "Set HARQ Mode B (only for NTN cells)")
+      ->always_capture_default();
   add_option(app, "--nof_harqs", pdsch_params.nof_harqs, "Number of DL HARQ processes")
       ->capture_default_str()
-      ->check(CLI::IsMember({2, 4, 6, 8, 10, 12, 16}));
+      ->check(CLI::IsMember({2, 4, 6, 8, 10, 12, 16, 32}));
   add_option(app,
              "--max_nof_harq_retxs",
              pdsch_params.max_nof_harq_retxs,
              "Maximum number of times a DL HARQ can be retransmitted, before it gets discarded")
       ->capture_default_str()
-      ->check(CLI::Range(0, 4));
+      ->check(CLI::Range(0, 64));
+  add_option(app,
+             "--harq_retx_timeout",
+             pdsch_params.harq_retx_timeout,
+             "Maximum time, in milliseconds, between a HARQ NACK and the scheduler allocating the respective "
+             "HARQ for retransmission. If this timeout is exceeded, the HARQ process is discarded.")
+      ->capture_default_str()
+      ->check(CLI::Range(10, 500));
   add_option(app,
              "--max_consecutive_kos",
              pdsch_params.max_consecutive_kos,
@@ -262,13 +258,19 @@ static void configure_cli11_pdsch_args(CLI::App& app, du_high_unit_pdsch_config&
       app,
       "--mcs_table",
       [&pdsch_params](const std::string& value) {
-        if (value == "qam256") {
+        if (value == "qam64") {
+          pdsch_params.mcs_table = pdsch_mcs_table::qam64;
+        } else if (value == "qam256") {
           pdsch_params.mcs_table = pdsch_mcs_table::qam256;
+        } else if (value == "qam64lowse") {
+          pdsch_params.mcs_table = pdsch_mcs_table::qam64LowSe;
+        } else {
+          report_fatal_error("PDSCH mcs_table={} not in {{qam64,qam256,qam64lowse}}.", value);
         }
       },
       "MCS table to use PDSCH")
-      ->default_str("qam64")
-      ->check(CLI::IsMember({"qam64", "qam256"}, CLI::ignore_case));
+      ->default_str("qam256")
+      ->check(CLI::IsMember({"qam64", "qam256", "qam64lowse"}, CLI::ignore_case));
   add_option(app, "--min_rb_size", pdsch_params.min_rb_size, "Minimum RB size for UE PDSCH resource allocation")
       ->capture_default_str()
       ->check(CLI::Range(1U, (unsigned)MAX_NOF_PRBS));
@@ -351,6 +353,24 @@ static void configure_cli11_pdsch_args(CLI::App& app, du_high_unit_pdsch_config&
   add_option(app, "--dmrs_additional_position", pdsch_params.dmrs_add_pos, "PDSCH DMRS additional position")
       ->capture_default_str()
       ->check(CLI::Range(0, 3));
+  add_option(app,
+             "--interleaving_bundle_size",
+             pdsch_params.interleaving_bundle_size,
+             "PDSCH interleaving bundle size. Valid values: [0, 2, 4]")
+      ->capture_default_str()
+      ->check(CLI::IsMember({0, 2, 4}));
+  add_option(app,
+             "--max_rank",
+             pdsch_params.max_rank,
+             "Maximum number of PDSCH "
+             "transmission layers. The actual maximum is limited by the number of DL antennas.")
+      ->capture_default_str()
+      ->check(CLI::NonNegativeNumber);
+  add_option(app,
+             "--enable_csi_rs_pdsch_multiplexing",
+             pdsch_params.enable_csi_rs_pdsch_multiplexing,
+             "Enable multiplexing of CSI-RS and PDSCH")
+      ->capture_default_str();
 }
 
 static void configure_cli11_du_args(CLI::App& app, bool& warn_on_drop)
@@ -544,37 +564,82 @@ static void configure_cli11_csi_args(CLI::App& app, du_high_unit_csi_config& csi
       ->check(CLI::Range(-8, 15));
 }
 
-static void configure_cli11_pf_scheduler_expert_args(CLI::App& app, time_pf_scheduler_expert_config& expert_params)
+static void configure_cli11_qos_aware_policy_args(CLI::App& app, time_qos_scheduler_config& expert_params)
 {
+  add_option_function<std::string>(
+      app,
+      "--combine_function",
+      [&expert_params](const std::string& value) {
+        if (value == "gbr_prioritized") {
+          expert_params.combine_function = time_qos_scheduler_config::combine_function_type::gbr_prioritized;
+        } else if (value == "geometric_mean") {
+          expert_params.combine_function = time_qos_scheduler_config::combine_function_type::geometric_mean;
+        } else {
+          report_fatal_error("Invalid QoS weight combining function {}", value);
+        }
+      },
+      "QoS-aware scheduler policy weight combining function")
+      ->default_str("gbr_prioritized")
+      ->check(CLI::IsMember({"gbr_prioritized", "geometric_mean"}, CLI::ignore_case));
   add_option(app,
-             "--pf_sched_fairness_coeff",
-             expert_params.pf_sched_fairness_coeff,
-             "Fairness Coefficient to use in Proportional Fair policy scheduler")
+             "--pf_fairness_coeff",
+             expert_params.pf_fairness_coeff,
+             "Fairness Coefficient to use in Proportional Fair (PF) weight")
+      ->capture_default_str();
+  add_option(app,
+             "--prio_enabled",
+             expert_params.priority_enabled,
+             "Whether to take into account the QoS Flow priority in QoS-aware scheduling")
+      ->capture_default_str();
+  add_option(app,
+             "--pdb_enabled",
+             expert_params.pdb_enabled,
+             "Whether to take into account the QoS Flow Packet Delay Budget (PDB) in QoS-aware scheduling")
+      ->capture_default_str();
+  add_option(app,
+             "--gbr_enabled",
+             expert_params.gbr_enabled,
+             "Whether to take into account the QoS Flow Guaranteed Bit Rate (GBR) in QoS-aware scheduling")
       ->capture_default_str();
 }
 
-static void configure_cli11_policy_scheduler_expert_args(CLI::App& app, policy_scheduler_expert_config& expert_params)
+static void configure_cli11_scheduler_policy_args(CLI::App& app, std::optional<scheduler_policy_config>& policy_cfg)
 {
-  static time_pf_scheduler_expert_config pf_sched_expert_cfg;
-  CLI::App*                              pf_sched_cfg_subcmd =
-      add_subcommand(app, "pf_sched", "Proportional Fair policy scheduler expert configuration")->configurable();
-  configure_cli11_pf_scheduler_expert_args(*pf_sched_cfg_subcmd, pf_sched_expert_cfg);
-  auto pf_sched_verify_callback = [&]() {
-    CLI::App* pf_sched_sub_cmd = app.get_subcommand("pf_sched");
-    if (pf_sched_sub_cmd->count() != 0) {
-      expert_params = pf_sched_expert_cfg;
+  static time_qos_scheduler_config qos_cfg;
+  CLI::App*                        qos_sched_cfg_subcmd =
+      add_subcommand(app, "qos_sched", "Time-domain QoS-aware policy configuration")->configurable();
+  configure_cli11_qos_aware_policy_args(*qos_sched_cfg_subcmd, qos_cfg);
+  auto qos_sched_verify_callback = [&]() {
+    CLI::App* qos_sched_sub_cmd = app.get_subcommand("qos_sched");
+    if (qos_sched_sub_cmd->count() != 0) {
+      policy_cfg = qos_cfg;
     }
   };
-  pf_sched_cfg_subcmd->parse_complete_callback(pf_sched_verify_callback);
+  qos_sched_cfg_subcmd->parse_complete_callback(qos_sched_verify_callback);
+
+  CLI::App* rr_sched_cfg_subcmd =
+      add_subcommand(app, "rr_sched", "Time-domain Round-robin policy configuration")->configurable();
+  rr_sched_cfg_subcmd->parse_complete_callback([&]() {
+    CLI::App* rr_sched_sub_cmd = app.get_subcommand("rr_sched");
+    if (rr_sched_sub_cmd->count() != 0) {
+      policy_cfg = time_rr_scheduler_config{};
+    }
+  });
 }
 
-static void configure_cli11_ta_scheduler_expert_args(CLI::App& app, du_high_unit_ta_sched_expert_config& ta_params)
+static void configure_cli11_ta_control_args(CLI::App& app, du_high_unit_ta_sched_control_config& ta_params)
 {
   add_option(app,
              "--ta_measurement_slot_period",
              ta_params.ta_measurement_slot_period,
-             "Measurements periodicity in nof. slots over which the new Timing Advance Command is computed")
+             "Measurements periodicity in number of slots over which the new Timing Advance Command is computed")
       ->capture_default_str();
+  add_option(app,
+             "--ta_measurement_slot_prohibit_period",
+             ta_params.ta_measurement_slot_prohibit_period,
+             "Delay in number of slots between issuing the TA_CMD and starting TA measurements.")
+      ->capture_default_str()
+      ->check(CLI::Range(0, 10000));
   add_option(app,
              "--ta_cmd_offset_threshold",
              ta_params.ta_cmd_offset_threshold,
@@ -584,7 +649,7 @@ static void configure_cli11_ta_scheduler_expert_args(CLI::App& app, du_high_unit
       ->check(CLI::Range(-1, 31));
   add_option(app, "--ta_target", ta_params.ta_target, "Timing Advance target in units of TA")
       ->capture_default_str()
-      ->check(CLI::Range(-30, 30));
+      ->check(CLI::Range(-30.0, 30.0));
   add_option(app,
              "--ta_update_measurement_ul_sinr_threshold",
              ta_params.ta_update_measurement_ul_sinr_threshold,
@@ -592,14 +657,19 @@ static void configure_cli11_ta_scheduler_expert_args(CLI::App& app, du_high_unit
       ->capture_default_str();
 }
 
-static void configure_cli11_scheduler_expert_args(CLI::App& app, du_high_unit_scheduler_expert_config& expert_params)
+static void configure_cli11_scheduler_args(CLI::App& app, du_high_unit_scheduler_config& sched_params)
 {
-  CLI::App* policy_sched_cfg_subcmd =
-      add_subcommand(app, "policy_sched_cfg", "Policy scheduler expert configuration")->configurable();
-  configure_cli11_policy_scheduler_expert_args(*policy_sched_cfg_subcmd, expert_params.policy_sched_expert_cfg);
-  CLI::App* ta_sched_cfg_subcmd =
-      add_subcommand(app, "ta_sched_cfg", "Timing Advance MAC CE scheduling expert configuration")->configurable();
-  configure_cli11_ta_scheduler_expert_args(*ta_sched_cfg_subcmd, expert_params.ta_sched_cfg);
+  add_option(app,
+             "--nof_preselected_newtx_ues",
+             sched_params.nof_preselected_newtx_ues,
+             "Number of UEs pre-selected for potential newTx allocations in a slot. The scheduling policy will only be "
+             "applied to the pre-selected UEs.")
+      ->capture_default_str()
+      ->check(CLI::Range(1U, (unsigned)MAX_NOF_DU_UES));
+  CLI::App* policy_cfg_cmd =
+      add_subcommand(app, "policy", "Scheduler policy configuration. By default, time-domain QoS-aware policy is used.")
+          ->configurable();
+  configure_cli11_scheduler_policy_args(*policy_cfg_cmd, sched_params.policy_cfg);
 }
 
 static void configure_cli11_drx_args(CLI::App& app, du_high_unit_drx_config& drx_params)
@@ -618,6 +688,18 @@ static void configure_cli11_drx_args(CLI::App& app, du_high_unit_drx_config& drx
              "Duration in milliseconds that the UE stays active after PDCCH reception, when DRX is configured.")
       ->capture_default_str()
       ->check(CLI::IsMember(views::transform(drx_helper::valid_inactivity_timer_values(), to_uint)));
+  add_option(app,
+             "--retx_timer_dl",
+             drx_params.retx_timer_dl,
+             "Maximum duration in slots until a DL ReTX is received by the UE, when DRX is configured.")
+      ->capture_default_str()
+      ->check(CLI::IsMember(drx_helper::valid_retx_timer_values()));
+  add_option(app,
+             "--retx_timer_ul",
+             drx_params.retx_timer_ul,
+             "Maximum duration in slots until a grant for UL ReTX is received by the UE, when DRX is configured.")
+      ->capture_default_str()
+      ->check(CLI::IsMember(drx_helper::valid_retx_timer_values()));
   add_option(app,
              "--long_cycle",
              drx_params.long_cycle,
@@ -643,6 +725,12 @@ static void configure_cli11_ul_common_args(CLI::App& app, du_high_unit_ul_common
              "Maximum number of UL grants that can be allocated per slot")
       ->capture_default_str()
       ->check(CLI::Range(1U, (unsigned)(MAX_PUSCH_PDUS_PER_SLOT + MAX_PUCCH_PDUS_PER_SLOT)));
+  add_option(app,
+             "--min_pucch_pusch_prb_distance",
+             ul_common_params.min_pucch_pusch_prb_distance,
+             "Minimum PRB distance between PUCCH and UE-dedicated PUSCH grants")
+      ->capture_default_str()
+      ->check(CLI::Range(0U, (unsigned)MAX_NOF_PRBS / 2U));
 }
 
 static void configure_cli11_pusch_args(CLI::App& app, du_high_unit_pusch_config& pusch_params)
@@ -653,6 +741,24 @@ static void configure_cli11_pusch_args(CLI::App& app, du_high_unit_pusch_config&
   add_option(app, "--max_ue_mcs", pusch_params.max_ue_mcs, "Maximum UE MCS")
       ->capture_default_str()
       ->check(CLI::Range(0, 28));
+  add_option(app, "--harq_mode_b", pusch_params.harq_mode_b, "Set HARQ Mode B (only for NTN cells)")
+      ->always_capture_default();
+  add_option(app, "--nof_harqs", pusch_params.nof_harqs, "Number of UL HARQ processes")
+      ->capture_default_str()
+      ->check(CLI::IsMember({16, 32}));
+  add_option(app,
+             "--max_nof_harq_retxs",
+             pusch_params.max_nof_harq_retxs,
+             "Maximum number of times a UL HARQ can be retransmitted, before it gets discarded")
+      ->capture_default_str()
+      ->check(CLI::Range(0, 64));
+  add_option(app,
+             "--harq_retx_timeout",
+             pusch_params.harq_retx_timeout,
+             "Maximum time, in milliseconds, between a CRC=KO and the scheduler allocating the respective "
+             "HARQ for retransmission. If this timeout is exceeded, the HARQ process is discarded.")
+      ->capture_default_str()
+      ->check(CLI::Range(10, 500));
   add_option(app,
              "--max_consecutive_kos",
              pusch_params.max_consecutive_kos,
@@ -665,13 +771,19 @@ static void configure_cli11_pusch_args(CLI::App& app, du_high_unit_pusch_config&
       app,
       "--mcs_table",
       [&pusch_params](const std::string& value) {
-        if (value == "qam256") {
+        if (value == "qam64") {
+          pusch_params.mcs_table = pusch_mcs_table::qam64;
+        } else if (value == "qam256") {
           pusch_params.mcs_table = pusch_mcs_table::qam256;
+        } else if (value == "qam64lowse") {
+          pusch_params.mcs_table = pusch_mcs_table::qam64LowSe;
+        } else {
+          report_fatal_error("PUSCH mcs_table={} not in {{qam64,qam256,qam64lowse}}.", value);
         }
       },
       "MCS table to use PUSCH")
-      ->default_str("qam64")
-      ->check(CLI::IsMember({"qam64", "qam256"}, CLI::ignore_case));
+      ->default_str(pusch_mcs_table_to_string(pusch_params.mcs_table))
+      ->check(CLI::IsMember({"qam64", "qam256", "qam64lowse"}, CLI::ignore_case));
   add_option(app,
              "--max_rank",
              pusch_params.max_rank,
@@ -815,6 +927,14 @@ static void configure_cli11_pusch_args(CLI::App& app, du_high_unit_pusch_config&
   app.add_option("--end_rb", pusch_params.end_rb, "End RB for resource allocation of UE PUSCHs")
       ->capture_default_str()
       ->check(CLI::Range(0U, (unsigned)MAX_NOF_PRBS));
+  app.add_option("--enable_cl_loop_pw_control",
+                 pusch_params.enable_closed_loop_pw_control,
+                 "Enable closed-loop power control for PUSCH")
+      ->capture_default_str();
+  app.add_option("--enable_phr_bw_adaptation",
+                 pusch_params.enable_phr_bw_adaptation,
+                 "Enable bandwidth adaptation to prevent negative PHR")
+      ->capture_default_str();
   app.add_option("--target_sinr", pusch_params.target_pusch_sinr, "Target PUSCH SINR in dB")
       ->capture_default_str()
       ->check(CLI::Range(-5.0, 30.0));
@@ -836,6 +956,27 @@ static void configure_cli11_pusch_args(CLI::App& app, du_high_unit_pusch_config&
 
 static void configure_cli11_pucch_args(CLI::App& app, du_high_unit_pucch_config& pucch_params)
 {
+  // Lambda function to map the argument values to max_pucch_code_rate values.
+  auto map_max_code_rate = [](max_pucch_code_rate& max_code_rate) {
+    return [&max_code_rate](const std::string& value) {
+      if (value == "dot08") {
+        max_code_rate = max_pucch_code_rate::dot_08;
+      } else if (value == "dot15") {
+        max_code_rate = max_pucch_code_rate::dot_15;
+      } else if (value == "dot25") {
+        max_code_rate = max_pucch_code_rate::dot_25;
+      } else if (value == "dot35") {
+        max_code_rate = max_pucch_code_rate::dot_35;
+      } else if (value == "dot45") {
+        max_code_rate = max_pucch_code_rate::dot_45;
+      } else if (value == "dot60") {
+        max_code_rate = max_pucch_code_rate::dot_60;
+      } else if (value == "dot80") {
+        max_code_rate = max_pucch_code_rate::dot_80;
+      }
+    };
+  };
+
   add_option(app,
              "--p0_nominal",
              pucch_params.p0_nominal,
@@ -864,6 +1005,20 @@ static void configure_cli11_pucch_args(CLI::App& app, du_high_unit_pucch_config&
       ->check(CLI::IsMember({1.0F, 2.0F, 2.5F, 4.0F, 5.0F, 8.0F, 10.0F, 16.0F, 20.0F, 40.0F, 80.0F, 160.0F, 320.0F}));
   add_option(app, "--use_format_0", pucch_params.use_format_0, "Use Format 0 for PUCCH resources from resource set 0")
       ->capture_default_str();
+  app.add_option_function<unsigned>(
+         "--pucch_set1_format",
+         [&pucch_params](unsigned value) {
+           if (value == 3) {
+             pucch_params.set1_format = pucch_format::FORMAT_3;
+           } else if (value == 4) {
+             pucch_params.set1_format = pucch_format::FORMAT_4;
+           } else {
+             pucch_params.set1_format = pucch_format::FORMAT_2;
+           }
+         },
+         "Format to use for the resources from resource set 1. Values: {2, 3, 4}. Default: 2")
+      ->default_val(2U)
+      ->check(CLI::Range(2U, 4U));
   add_option(app,
              "--nof_ue_res_harq_per_set",
              pucch_params.nof_ue_pucch_res_harq_per_set,
@@ -873,7 +1028,7 @@ static void configure_cli11_pucch_args(CLI::App& app, du_high_unit_pucch_config&
   add_option(app,
              "--f0_or_f1_nof_cell_res_sr",
              pucch_params.nof_cell_sr_resources,
-             "Number of PUCCH F1 resources available per cell for SR")
+             "Number of PUCCH F0/F1 resources available per cell for SR")
       ->capture_default_str()
       ->check(CLI::Range(1, 100));
   add_option(app,
@@ -884,7 +1039,7 @@ static void configure_cli11_pucch_args(CLI::App& app, du_high_unit_pucch_config&
   add_option(app, "--f1_enable_occ", pucch_params.f1_enable_occ, "Enable OCC for PUCCH F1")->capture_default_str();
   add_option(app,
              "--f1_nof_cyclic_shifts",
-             pucch_params.nof_cyclic_shift,
+             pucch_params.f1_nof_cyclic_shifts,
              "Number of possible cyclic shifts available for PUCCH F1 resources")
       ->capture_default_str()
       ->check(CLI::IsMember({1, 2, 3, 4, 6, 12}));
@@ -901,42 +1056,72 @@ static void configure_cli11_pucch_args(CLI::App& app, du_high_unit_pucch_config&
       ->capture_default_str()
       ->check(CLI::Range(1, 10));
   add_option(app,
-             "--f2_nof_cell_res_csi",
+             "--f2_or_f3_or_f4_nof_cell_res_csi",
              pucch_params.nof_cell_csi_resources,
-             "Number of PUCCH F2 resources available per cell for CSI")
+             "Number of PUCCH F2/F3/F4 resources available per cell for CSI")
       ->capture_default_str()
       ->check(CLI::Range(0, 100));
   add_option(app, "--f2_max_nof_rbs", pucch_params.f2_max_nof_rbs, "Max number of RBs for PUCCH F2 resources")
       ->capture_default_str()
       ->check(CLI::Range(1, 16));
-  add_option(app, "--f2_max_payload", pucch_params.max_payload_bits, "Max number payload bits for PUCCH F2 resources")
-      ->check(CLI::Range(1, 11));
+  add_option(app,
+             "--f2_max_payload",
+             pucch_params.f2_max_payload_bits,
+             "Min required payload capacity in bits for PUCCH F2 resources")
+      ->check(CLI::Range(4, 40));
   add_option_function<std::string>(
       app,
       "--f2_max_code_rate",
-      [&pucch_params](const std::string& value) {
-        if (value == "dot08") {
-          pucch_params.max_code_rate = max_pucch_code_rate::dot_08;
-        } else if (value == "dot15") {
-          pucch_params.max_code_rate = max_pucch_code_rate::dot_15;
-        } else if (value == "dot25") {
-          pucch_params.max_code_rate = max_pucch_code_rate::dot_25;
-        } else if (value == "dot35") {
-          pucch_params.max_code_rate = max_pucch_code_rate::dot_35;
-        } else if (value == "dot45") {
-          pucch_params.max_code_rate = max_pucch_code_rate::dot_45;
-        } else if (value == "dot60") {
-          pucch_params.max_code_rate = max_pucch_code_rate::dot_60;
-        } else if (value == "dot80") {
-          pucch_params.max_code_rate = max_pucch_code_rate::dot_80;
-        }
-      },
+      map_max_code_rate(pucch_params.f2_max_code_rate),
       "PUCCH F2 max code rate {dot08, dot15, dot25, dot35, dot45, dot60, dot80}. Default: dot35")
       ->check(CLI::IsMember({"dot08", "dot15", "dot25", "dot35", "dot45", "dot60", "dot80"}, CLI::ignore_case));
   add_option(app,
              "--f2_intraslot_freq_hop",
              pucch_params.f2_intraslot_freq_hopping,
              "Enable intra-slot frequency hopping for PUCCH F2")
+      ->capture_default_str();
+  add_option(app, "--f3_max_nof_rbs", pucch_params.f3_max_nof_rbs, "Max number of RBs for PUCCH F3 resources")
+      ->capture_default_str()
+      ->check(CLI::IsMember({1, 2, 3, 4, 5, 6, 8, 9, 10, 12, 15, 16}));
+  add_option(app,
+             "--f3_max_payload",
+             pucch_params.f3_max_payload_bits,
+             "Min required payload capacity in bits for PUCCH F3 resources")
+      ->check(CLI::Range(4, 40));
+  add_option_function<std::string>(
+      app,
+      "--f3_max_code_rate",
+      map_max_code_rate(pucch_params.f3_max_code_rate),
+      "PUCCH F3 max code rate {dot08, dot15, dot25, dot35, dot45, dot60, dot80}. Default: dot35")
+      ->check(CLI::IsMember({"dot08", "dot15", "dot25", "dot35", "dot45", "dot60", "dot80"}, CLI::ignore_case));
+  add_option(app,
+             "--f3_intraslot_freq_hop",
+             pucch_params.f3_intraslot_freq_hopping,
+             "Enable intra-slot frequency hopping for PUCCH F3")
+      ->capture_default_str();
+  add_option(app, "--f3_additional_dmrs", pucch_params.f3_additional_dmrs, "Enable additional DM-RS for PUCCH F3")
+      ->capture_default_str();
+  add_option(app, "--f3_pi2_bpsk", pucch_params.f3_pi2_bpsk, "Enable pi/2-BPSK modulation for PUCCH F3")
+      ->capture_default_str();
+  add_option_function<std::string>(
+      app,
+      "--f4_max_code_rate",
+      map_max_code_rate(pucch_params.f4_max_code_rate),
+      "PUCCH F4 max code rate {dot08, dot15, dot25, dot35, dot45, dot60, dot80}. Default: dot35")
+      ->check(CLI::IsMember({"dot08", "dot15", "dot25", "dot35", "dot45", "dot60", "dot80"}, CLI::ignore_case));
+  add_option(app,
+             "--f4_intraslot_freq_hop",
+             pucch_params.f4_intraslot_freq_hopping,
+             "Enable intra-slot frequency hopping for PUCCH F4")
+      ->capture_default_str();
+  add_option(app, "--f4_additional_dmrs", pucch_params.f4_additional_dmrs, "Enable additional DM-RS for PUCCH F4")
+      ->capture_default_str();
+  add_option(app, "--f4_pi2_bpsk", pucch_params.f4_pi2_bpsk, "Enable pi/2-BPSK modulation for PUCCH F4")
+      ->capture_default_str();
+  add_option(app, "--f4_occ_length", pucch_params.f4_occ_length, "OCC length for PUCCH F4")
+      ->capture_default_str()
+      ->check(CLI::IsMember({2, 4}));
+  add_option(app, "--f4_enable_occ", pucch_params.f4_enable_occ, "Enable OCC multiplexing for PUCCH F4")
       ->capture_default_str();
   add_option(app,
              "--min_k1",
@@ -951,6 +1136,19 @@ static void configure_cli11_pucch_args(CLI::App& app, du_high_unit_pucch_config&
              pucch_params.max_consecutive_kos,
              "Maximum number of consecutive undecoded PUCCH F2 for CSI before an Radio Link Failure is reported")
       ->capture_default_str();
+  app.add_option("--enable_cl_loop_pw_control",
+                 pucch_params.enable_closed_loop_pw_control,
+                 "Enable closed-loop power control for PUCCH")
+      ->capture_default_str();
+  app.add_option("--target_sinr_f0", pucch_params.pucch_f0_sinr_target_dB, "Target PUCCH F0 SINR in dB")
+      ->capture_default_str()
+      ->check(CLI::Range(-10.0, 20.0));
+  app.add_option("--target_sinr_f2", pucch_params.pucch_f2_sinr_target_dB, "Target PUCCH F2 SINR in dB")
+      ->capture_default_str()
+      ->check(CLI::Range(-10.0, 20.0));
+  app.add_option("--target_sinr_f3", pucch_params.pucch_f3_sinr_target_dB, "Target PUCCH F3 SINR in dB")
+      ->capture_default_str()
+      ->check(CLI::Range(-15.0, 10.0));
 }
 
 static void configure_cli11_srs_args(CLI::App& app, du_high_unit_srs_config& srs_params)
@@ -1002,6 +1200,23 @@ static void configure_cli11_srs_args(CLI::App& app, du_high_unit_srs_config& srs
              "Enable the reuse of SRS sequence id with the set reuse factor")
       ->capture_default_str()
       ->check(CLI::IsMember({1, 2, 3, 5, 6, 10, 15, 30}));
+  add_option(app,
+             "--srs_p0",
+             srs_params.p0,
+             "P0 value for SRS. Value in dBm. Valid values must be multiple of 2 and "
+             "within the [-202, 24] interval.  Default: -84")
+      ->capture_default_str()
+      ->check([](const std::string& value) -> std::string {
+        std::stringstream ss(value);
+        int               pw;
+        ss >> pw;
+        const std::string& error_message = "Must be a multiple of 2 and within the [-202, 24] interval";
+        if (pw < -202 or pw > 24 or pw % 2 != 0) {
+          return error_message;
+        }
+
+        return "";
+      });
 }
 
 static void configure_cli11_si_sched_info(CLI::App& app, du_high_unit_sib_config::si_sched_info_config& si_sched_info)
@@ -1015,7 +1230,7 @@ static void configure_cli11_si_sched_info(CLI::App& app, du_high_unit_sib_config
              "Mapping of SIB types to SI-messages. SIB numbers should not be repeated")
       ->default_function(get_vector_default_function(span<const uint8_t>(si_sched_info.sib_mapping_info)))
       ->capture_default_str()
-      ->check(CLI::IsMember({2, 19}));
+      ->check(CLI::IsMember({2, 6, 7, 8, 19}));
   add_option(
       app, "--si_window_position", si_sched_info.si_window_position, "SI window position of the associated SI-message")
       ->capture_default_str()
@@ -1030,7 +1245,11 @@ static void configure_cli11_prach_args(CLI::App& app, du_high_unit_prach_config&
              "PRACH configuration index. If not set, the value is derived, so that the PRACH fits in an UL slot")
       ->capture_default_str()
       ->check(CLI::Range(0, 255));
-  add_option(app, "--prach_root_sequence_index", prach_params.prach_root_sequence_index, "PRACH root sequence index")
+  add_option(
+      app,
+      "--prach_root_sequence_index",
+      prach_params.prach_root_sequence_index,
+      "PRACH root sequence index. NOTE: values: [0, 837] for PRACH format 0, 1, 2, 3. [0, 137] for other formats")
       ->capture_default_str()
       ->check(CLI::Range(0, 837));
   add_option(app, "--zero_correlation_zone", prach_params.zero_correlation_zone, "Zero correlation zone index")
@@ -1043,9 +1262,19 @@ static void configure_cli11_prach_args(CLI::App& app, du_high_unit_prach_config&
       app, "--max_msg3_harq_retx", prach_params.max_msg3_harq_retx, "Maximum number of message 3 HARQ retransmissions")
       ->capture_default_str()
       ->check(CLI::Range(0, 4));
-  add_option(
-      app, "--total_nof_ra_preambles", prach_params.total_nof_ra_preambles, "Number of different PRACH preambles")
+  add_option(app,
+             "--total_nof_ra_preambles",
+             prach_params.total_nof_ra_preambles,
+             "Number of different contention-based PRACH preambles per occasion. If less than 64 preambles are used, "
+             "the remaining preambles can be used for contention-free PRACHs")
+      ->capture_default_str()
       ->check(CLI::Range(1, 64));
+  add_option(app,
+             "--cfra_enabled",
+             prach_params.cfra_enabled,
+             "Whether to enable Contention-free Random Access (CFRA). If enabled, the total_nof_ra_preambles must be "
+             "lower than 64")
+      ->capture_default_str();
   add_option(app,
              "--prach_frequency_start",
              prach_params.prach_frequency_start,
@@ -1095,6 +1324,58 @@ static void configure_cli11_prach_args(CLI::App& app, du_high_unit_prach_config&
   add_option(app, "--ra_resp_window", prach_params.ra_resp_window, "RA-Response window length in number of slots.")
       ->capture_default_str()
       ->check(CLI::IsMember({1, 2, 4, 8, 10, 20, 40, 80}));
+  add_option(app,
+             "--nof_prach_guardbands_rbs",
+             prach_params.nof_prach_guardbands_rbs,
+             "Number of RBs that are used as guardband on each side of the PRACH RBs interval for short PRACH formats.")
+      ->capture_default_str()
+      ->check(CLI::Range(1U, 10U));
+}
+
+static void configure_cli11_etws_args(CLI::App& app, du_high_unit_sib_config::etws_config& sib_params)
+{
+  add_option(app, "--message_id", sib_params.message_id, "ETWS message ID.")
+      ->capture_default_str()
+      ->check(CLI::Range(0, 0xffff));
+
+  add_option(app, "--serial_num", sib_params.serial_num, "ETWS message serial number.")
+      ->capture_default_str()
+      ->check(CLI::Range(0, 0xffff));
+
+  add_option(app, "--warning_type", sib_params.warning_type, "ETWS warning type.")
+      ->capture_default_str()
+      ->check(CLI::Range(0, 0xffff));
+
+  add_option(app, "--data_coding_scheme", sib_params.data_coding_scheme, "ETWS message CBS coding scheme.")
+      ->capture_default_str()
+      ->check(CLI::Range(0, 0xff));
+
+  add_option(app,
+             "--warning_message",
+             sib_params.warning_message,
+             "ETWS warning message. Max. Length and character support depends on the chosen coding scheme.")
+      ->capture_default_str();
+}
+
+static void configure_cli11_cmas_args(CLI::App& app, du_high_unit_sib_config::cmas_config& sib_params)
+{
+  add_option(app, "--message_id", sib_params.message_id, "CMAS message ID.")
+      ->capture_default_str()
+      ->check(CLI::Range(0, 0xffff));
+
+  add_option(app, "--serial_num", sib_params.serial_num, "CMAS message serial number.")
+      ->capture_default_str()
+      ->check(CLI::Range(0, 0xffff));
+
+  add_option(app, "--data_coding_scheme", sib_params.data_coding_scheme, "CMAS message CBS coding scheme.")
+      ->capture_default_str()
+      ->check(CLI::Range(0, 0xff));
+
+  add_option(app,
+             "--warning_message",
+             sib_params.warning_message,
+             "CMAS warning message. Max. Length and character support depends on the chosen coding scheme.")
+      ->capture_default_str();
 }
 
 static void configure_cli11_sib_args(CLI::App& app, du_high_unit_sib_config& sib_params)
@@ -1125,6 +1406,32 @@ static void configure_cli11_sib_args(CLI::App& app, du_high_unit_sib_config& sib
         }
       },
       "Configures the scheduling for each of the SI-messages broadcast by the gNB");
+
+  CLI::App* etws_subcmd = add_subcommand(app, "etws", "ETWS configuration parameters");
+  static du_high_unit_sib_config::etws_config etws_cfg;
+  configure_cli11_etws_args(*etws_subcmd, etws_cfg);
+  auto etws_verify_callback = [&]() {
+    CLI::App* etws_sub_cmd = app.get_subcommand("etws");
+    if (etws_sub_cmd->count() != 0) {
+      sib_params.etws_cfg.emplace(etws_cfg);
+    } else {
+      etws_sub_cmd->disabled();
+    }
+  };
+  etws_subcmd->parse_complete_callback(etws_verify_callback);
+
+  static du_high_unit_sib_config::cmas_config cmas_cfg;
+  CLI::App* cmas_subcmd = add_subcommand(app, "cmas", "CMAS configuration parameters");
+  configure_cli11_cmas_args(*cmas_subcmd, cmas_cfg);
+  auto cmas_verify_callback = [&]() {
+    CLI::App* cmas_sub_cmd = app.get_subcommand("cmas");
+    if (cmas_sub_cmd->count() != 0) {
+      sib_params.cmas_cfg.emplace(cmas_cfg);
+    } else {
+      cmas_sub_cmd->disabled();
+    }
+  };
+  cmas_subcmd->parse_complete_callback(cmas_verify_callback);
 
   add_option(app,
              "--t300",
@@ -1191,11 +1498,24 @@ static void configure_cli11_slicing_scheduling_args(CLI::App&                   
              "Maximum percentage of PRBs to be allocated to the slice")
       ->capture_default_str()
       ->check(CLI::Range(1U, 100U));
+  add_option(app,
+             "--ded_prb_policy_ratio",
+             slice_sched_params.ded_prb_policy_ratio,
+             "Dedicated percentage of PRBs to be allocated to the slice")
+      ->capture_default_str()
+      ->check(CLI::Range(1U, 100U));
+  add_option(app, "--priority", slice_sched_params.priority, "Slice priority")
+      ->capture_default_str()
+      ->check(CLI::Range(0U, 254U));
 
-  // Policy scheduler configuration.
-  CLI::App* policy_sched_cfg_subcmd =
-      add_subcommand(app, "policy_sched_cfg", "Policy scheduler configuration for the slice")->configurable();
-  configure_cli11_policy_scheduler_expert_args(*policy_sched_cfg_subcmd, slice_sched_params.slice_policy_sched_cfg);
+  // Scheduler policy configuration.
+  CLI::App* policy_cfg_cmd =
+      add_subcommand(
+          app,
+          "policy",
+          "Scheduler policy configuration for the slice. If not specified, the policy configured for the cell is used")
+          ->configurable();
+  configure_cli11_scheduler_policy_args(*policy_cfg_cmd, slice_sched_params.slice_policy_cfg);
 }
 
 static void configure_cli11_slicing_args(CLI::App& app, du_high_unit_cell_slice_config& slice_params)
@@ -1208,6 +1528,30 @@ static void configure_cli11_slicing_args(CLI::App& app, du_high_unit_cell_slice_
   // Scheduling configuration.
   CLI::App* sched_cfg_subcmd = add_subcommand(app, "sched_cfg", "Slice scheduling configuration")->configurable();
   configure_cli11_slicing_scheduling_args(*sched_cfg_subcmd, slice_params.sched_cfg);
+}
+
+static void configure_cli11_rlm_args(CLI::App& app, du_high_unit_rlm_config& rlm_params)
+{
+  auto map_rlm_resource_type = [](rlm_resource_type& res_type) {
+    return [&res_type](const std::string& value) {
+      if (value == "default_type") {
+        res_type = rlm_resource_type::default_type;
+      } else if (value == "ssb") {
+        res_type = rlm_resource_type::ssb;
+      } else if (value == "csi_rs") {
+        res_type = rlm_resource_type::csi_rs;
+      } else if (value == "ssb_and_csi_rs") {
+        res_type = rlm_resource_type::ssb_and_csi_rs;
+      }
+    };
+  };
+
+  add_option_function<std::string>(app,
+                                   "--rlm_resource_type",
+                                   map_rlm_resource_type(rlm_params.resource_type),
+                                   "Radio Link Monitoring resource detection type {default_type, ssb, csi_rs, "
+                                   "ssb_and_csi_rs}. Default: default_type")
+      ->check(CLI::IsMember({"default_type", "ssb", "csi_rs", "ssb_and_csi_rs"}, CLI::ignore_case));
 }
 
 static void configure_cli11_common_cell_args(CLI::App& app, du_high_unit_base_cell_config& cell_params)
@@ -1268,7 +1612,13 @@ static void configure_cli11_common_cell_args(CLI::App& app, du_high_unit_base_ce
       ->capture_default_str();
   add_option(app, "--nof_antennas_dl", cell_params.nof_antennas_dl, "Number of antennas in downlink")
       ->capture_default_str();
-  add_option(app, "--plmn", cell_params.plmn, "PLMN")->capture_default_str();
+  auto plmn_is_valid = [](const std::string& value) -> std::string {
+    return plmn_identity::parse(value).has_value() ? "" : "Invalid PLMN format";
+  };
+  add_option(app, "--plmn", cell_params.plmn, "PLMN")->capture_default_str()->check(plmn_is_valid);
+  add_option(app, "--additional_plmns", cell_params.additional_plmns, "List of PLMNs")
+      ->capture_default_str()
+      ->check(plmn_is_valid);
   add_option(app, "--tac", cell_params.tac, "TAC")->capture_default_str()->check([](const std::string& value) {
     std::stringstream ss(value);
     unsigned          tac;
@@ -1281,6 +1631,8 @@ static void configure_cli11_common_cell_args(CLI::App& app, du_high_unit_base_ce
 
     return (tac <= 0xffffffU) ? "" : "TAC value out of range";
   });
+  add_option(app, "--enabled", cell_params.enabled, "Automatically activate the cell on startup")
+      ->capture_default_str();
   add_option(app,
              "--q_rx_lev_min",
              cell_params.q_rx_lev_min,
@@ -1341,8 +1693,8 @@ static void configure_cli11_common_cell_args(CLI::App& app, du_high_unit_base_ce
   configure_cli11_prach_args(*prach_subcmd, cell_params.prach_cfg);
 
   // TDD UL DL configuration.
-  // NOTE: As the cell TDD pattern can be configured in the common cell and not in the cell, use a different variable to
-  // parse the cell TDD property. If the TDD pattern is present for the cell, update the cell TDD pattern value,
+  // NOTE: As the cell TDD pattern can be configured in the common cell and not in the cell, use a different variable
+  // to parse the cell TDD property. If the TDD pattern is present for the cell, update the cell TDD pattern value,
   // otherwise do nothing (this will cause that the cell TDD pattern value equals than the common cell TDD pattern).
   // CLI11 needs that the life of the variable last longer than the call of callback function. Therefore, the
   // cell_tdd_pattern variable needs to be static.
@@ -1370,8 +1722,12 @@ static void configure_cli11_common_cell_args(CLI::App& app, du_high_unit_base_ce
   configure_cli11_csi_args(*csi_subcmd, cell_params.csi_cfg);
 
   // Scheduler expert configuration.
-  CLI::App* sched_expert_subcmd = add_subcommand(app, "sched_expert_cfg", "Scheduler expert parameters");
-  configure_cli11_scheduler_expert_args(*sched_expert_subcmd, cell_params.sched_expert_cfg);
+  CLI::App* sched_cfg_subcmd = add_subcommand(app, "scheduler", "Scheduler parameters");
+  configure_cli11_scheduler_args(*sched_cfg_subcmd, cell_params.scheduler_cfg);
+
+  // Scheduler TA configuration.
+  CLI::App* ta_sched_cfg_subcmd = add_subcommand(app, "ta", "Time Advance (TA) parameters")->configurable();
+  configure_cli11_ta_control_args(*ta_sched_cfg_subcmd, cell_params.ta_cfg);
 
   CLI::App* drx_subcmd = add_subcommand(app, "drx", "DRX parameters");
   configure_cli11_drx_args(*drx_subcmd, cell_params.drx_cfg);
@@ -1392,6 +1748,10 @@ static void configure_cli11_common_cell_args(CLI::App& app, du_high_unit_base_ce
     }
   };
   add_option_cell(app, "--slicing", slicing_lambda, "Network slicing configuration");
+
+  // Radio Link Monitoring configuration.
+  CLI::App* rlm_subcmd = add_subcommand(app, "rlm", "Radio Link Monitoring parameters");
+  configure_cli11_rlm_args(*rlm_subcmd, cell_params.rlm_cfg);
 }
 
 static void configure_cli11_cells_args(CLI::App& app, du_high_unit_cell_config& cell_params)
@@ -1407,6 +1767,12 @@ static void configure_cli11_test_ue_mode_args(CLI::App& app, du_high_unit_test_m
   add_option(app, "--nof_ues", test_params.nof_ues, "Number of test UE(s) to create.")
       ->capture_default_str()
       ->check(CLI::Range((uint16_t)1, (uint16_t)MAX_NOF_DU_UES));
+  add_option(app,
+             "--ue_creation_stagger_slots",
+             test_params.ue_creation_stagger_slots,
+             "Number of slots between consecutive test mode UE creations")
+      ->capture_default_str()
+      ->check(CLI::Range(0U, 10240U));
   add_option(app,
              "--auto_ack_indication_delay",
              test_params.auto_ack_indication_delay,
@@ -1505,103 +1871,27 @@ static void configure_cli11_srb_args(CLI::App& app, du_high_unit_srb_config& srb
   app.needs(rlc_subcmd);
 }
 
+static void configure_cli11_metrics_layers_args(CLI::App& app, du_high_unit_metrics_layer_config& metrics_params)
+{
+  add_option(app, "--enable_sched", metrics_params.enable_scheduler, "Enable DU scheduler metrics")
+      ->capture_default_str();
+  add_option(app, "--enable_rlc", metrics_params.enable_rlc, "Enable RLC metrics")->capture_default_str();
+  add_option(app, "--enable_mac", metrics_params.enable_mac, "Enable MAC metrics")->capture_default_str();
+}
+
 static void configure_cli11_metrics_args(CLI::App& app, du_high_unit_metrics_config& metrics_params)
 {
-  add_option(
-      app, "--rlc_report_period", metrics_params.rlc.report_period, "RLC metrics report period (in milliseconds)")
-      ->capture_default_str();
+  auto* periodicity_subcmd = add_subcommand(app, "periodicity", "Metrics periodicity configuration")->configurable();
+  add_option(*periodicity_subcmd,
+             "--du_report_period",
+             metrics_params.du_report_period,
+             "DU statistics report period in milliseconds")
+      ->capture_default_str()
+      ->check(CLI::Range(0U, static_cast<unsigned>(NOF_SUBFRAMES_PER_FRAME * NOF_SFNS * NOF_HYPER_SFNS)));
 
-  add_option(app, "--enable_json_metrics", metrics_params.enable_json_metrics, "Enable JSON metrics reporting")
-      ->always_capture_default();
-
-  add_option(
-      app, "--autostart_stdout_metrics", metrics_params.autostart_stdout_metrics, "Autostart stdout metrics reporting")
-      ->capture_default_str();
-
-  add_option(app,
-             "--sched_report_period",
-             metrics_params.sched_report_period,
-             "DU statistics report period in milliseconds. This metrics sets the console output period.")
-      ->capture_default_str();
+  auto* layers_subcmd = add_subcommand(app, "layers", "Layer basis metrics configuration")->configurable();
+  configure_cli11_metrics_layers_args(*layers_subcmd, metrics_params.layers_cfg);
 }
-
-static void configure_cli11_epoch_time(CLI::App& app, epoch_time_t& epoch_time)
-{
-  add_option(app, "--sfn", epoch_time.sfn, "SFN Part")->capture_default_str()->check(CLI::Range(0, 1023));
-  add_option(app, "--subframe_number", epoch_time.subframe_number, "Sub-frame number Part")
-      ->capture_default_str()
-      ->check(CLI::Range(0, 9));
-}
-
-static void configure_cli11_ephemeris_info_ecef(CLI::App& app, ecef_coordinates_t& ephemeris_info)
-{
-  add_option(app, "--pos_x", ephemeris_info.position_x, "X Position of the satellite")
-      ->capture_default_str()
-      ->check(CLI::Range(-67108864, 67108863));
-  add_option(app, "--pos_y", ephemeris_info.position_y, "Y Position of the satellite")
-      ->capture_default_str()
-      ->check(CLI::Range(-67108864, 67108863));
-  add_option(app, "--pos_z", ephemeris_info.position_z, "Z Position of the satellite")
-      ->capture_default_str()
-      ->check(CLI::Range(-67108864, 67108863));
-  add_option(app, "--vel_x", ephemeris_info.velocity_vx, "X Velocity of the satellite")
-      ->capture_default_str()
-      ->check(CLI::Range(-32768, 32767));
-  add_option(app, "--vel_y", ephemeris_info.velocity_vy, "Y Velocity of the satellite")
-      ->capture_default_str()
-      ->check(CLI::Range(-32768, 32767));
-  add_option(app, "--vel_z", ephemeris_info.velocity_vz, "Z Velocity of the satellite")
-      ->capture_default_str()
-      ->check(CLI::Range(-32768, 32767));
-}
-
-static void configure_cli11_ephemeris_info_orbital(CLI::App& app, orbital_coordinates_t& ephemeris_info)
-{
-  add_option(app, "--semi_major_axis", ephemeris_info.semi_major_axis, "Semi-major axis of the satellite")
-      ->capture_default_str()
-      ->check(CLI::Range(0, 1000000000));
-  add_option(app, "--eccentricity", ephemeris_info.eccentricity, "Eccentricity of the satellite")
-      ->capture_default_str();
-  add_option(app, "--periapsis", ephemeris_info.periapsis, "Periapsis of the satellite")->capture_default_str();
-  add_option(app, "--longitude", ephemeris_info.longitude, "Longitude of the satellites angle of ascending node")
-      ->capture_default_str();
-  add_option(app, "--inclination", ephemeris_info.inclination, "Inclination of the satellite")->capture_default_str();
-  add_option(app, "--mean_anomaly", ephemeris_info.mean_anomaly, "Mean anomaly of the satellite")
-      ->capture_default_str();
-}
-
-static void configure_cli11_ntn_args(CLI::App&                  app,
-                                     std::optional<ntn_config>& ntn,
-                                     epoch_time_t&              epoch_time,
-                                     orbital_coordinates_t&     orbital_coordinates,
-                                     ecef_coordinates_t&        ecef_coordinates)
-{
-  ntn_config& config = ntn.emplace();
-
-  add_option(app, "--cell_specific_koffset", config.cell_specific_koffset, "Cell-specific k-offset to be used for NTN.")
-      ->capture_default_str()
-      ->check(CLI::Range(0, 1023));
-
-  ta_common_t& ta = config.ta_info.emplace();
-  add_option(app, "--ta_common", ta.ta_common, "TA common offset");
-
-  // epoch time.
-  CLI::App* epoch_time_subcmd = add_subcommand(app, "epoch_time", "Epoch time for the NTN assistance information");
-  configure_cli11_epoch_time(*epoch_time_subcmd, epoch_time);
-
-  // ephemeris configuration.
-  CLI::App* ephem_subcmd_ecef =
-      add_subcommand(app, "ephemeris_info_ecef", "ephermeris information of the satellite in ecef coordinates");
-  configure_cli11_ephemeris_info_ecef(*ephem_subcmd_ecef, ecef_coordinates);
-
-  CLI::App* ephem_subcmd_orbital =
-      add_subcommand(app, "ephemeris_orbital", "ephermeris information of the satellite in orbital coordinates");
-  configure_cli11_ephemeris_info_orbital(*ephem_subcmd_orbital, orbital_coordinates);
-}
-
-static epoch_time_t          epoch_time;
-static ecef_coordinates_t    ecef_coordinates;
-static orbital_coordinates_t orbital_coordinates;
 
 static void configure_cli11_rlc_um_args(CLI::App& app, du_high_unit_rlc_um_config& rlc_um_params)
 {
@@ -1633,6 +1923,9 @@ static void configure_cli11_rlc_args(CLI::App& app, du_high_unit_rlc_config& rlc
 static void configure_cli11_f1u_du_args(CLI::App& app, du_high_unit_f1u_du_config& f1u_du_params)
 {
   add_option(app, "--backoff_timer", f1u_du_params.t_notify, "F1-U backoff timer (ms)")->capture_default_str();
+  add_option(app, "--ul_buffer_timeout", f1u_du_params.ul_buffer_timeout, "F1-U handover buffering timeout (ms)")
+      ->capture_default_str();
+  add_option(app, "--ul_buffer_size", f1u_du_params.ul_buffer_size, "F1-U handover buffer size")->capture_default_str();
 }
 
 static void configure_cli11_qos_args(CLI::App& app, du_high_unit_qos_config& qos_params)
@@ -1662,16 +1955,20 @@ void srsran::configure_cli11_with_du_high_config_schema(CLI::App& app, du_high_p
       ->check(CLI::Range(22, 32));
   add_option(app, "--gnb_du_id", parsed_cfg.config.gnb_du_id, "gNB-DU Id")
       ->capture_default_str()
-      ->check(CLI::Range(static_cast<uint64_t>(0U), static_cast<uint64_t>(pow(2, 36) - 1)));
+      ->check(CLI::Range(static_cast<uint64_t>(0U), static_cast<uint64_t>((uint64_t(1) << 36) - 1)));
 
   // Loggers section.
-  configure_cli11_with_metrics_logger_appconfig_schema(app, parsed_cfg.config.loggers.metrics_level);
   CLI::App* log_subcmd = add_subcommand(app, "log", "Logging configuration")->configurable();
   configure_cli11_log_args(*log_subcmd, parsed_cfg.config.loggers);
+
+  // Trace section.
+  CLI::App* trace_subcmd = add_subcommand(app, "trace", "General tracer configuration")->configurable();
+  configure_cli11_trace_args(*trace_subcmd, parsed_cfg.config.tracer);
 
   // Metrics section.
   CLI::App* metrics_subcmd = add_subcommand(app, "metrics", "Metrics configuration")->configurable();
   configure_cli11_metrics_args(*metrics_subcmd, parsed_cfg.config.metrics);
+  app_helpers::configure_cli11_with_metrics_appconfig_schema(app, parsed_cfg.config.metrics.common_metrics_cfg);
 
   // PCAP section.
   CLI::App* pcap_subcmd = add_subcommand(app, "pcap", "PCAP configuration")->configurable();
@@ -1700,16 +1997,34 @@ void srsran::configure_cli11_with_du_high_config_schema(CLI::App& app, du_high_p
   configure_cli11_expert_execution_args(*expert_subcmd, parsed_cfg.config.expert_execution_cfg);
 
   // NTN section.
-  CLI::App* ntn_subcmd = add_subcommand(app, "ntn", "NTN parameters")->configurable();
-  configure_cli11_ntn_args(*ntn_subcmd, parsed_cfg.config.ntn_cfg, epoch_time, orbital_coordinates, ecef_coordinates);
+  static ntn_config ntn_cfg;
+  CLI::App*         ntn_subcmd = add_subcommand(app, "ntn", "Default NTN configuration")->configurable();
+  configure_cli11_ntn_args(*ntn_subcmd, ntn_cfg);
+  ntn_subcmd->parse_complete_callback([&]() {
+    CLI::App* ntn_sub_cmd = app.get_subcommand("ntn");
+    if (ntn_sub_cmd->count() != 0) {
+      parsed_cfg.common_cell_cfg.ntn_cfg.emplace(ntn_cfg);
+      for (auto& cell : parsed_cfg.config.cells_cfg) {
+        cell.cell.ntn_cfg.emplace(ntn_cfg);
+      }
+      // Run the callback again for the cells if the option callback is already run once.
+      if (app.get_option("--cells")->get_callback_run()) {
+        app.get_option("--cells")->run_callback();
+      }
+    } else {
+      for (auto& cell : parsed_cfg.config.cells_cfg) {
+        cell.cell.ntn_cfg.reset();
+      }
+      // As NTN configuration is optional, disable the command when it is not present in the configuration.
+      ntn_sub_cmd->disabled();
+    };
+  });
 
   // Cell section.
   add_option_cell(
       app,
       "--cells",
       [&parsed_cfg](const std::vector<std::string>& values) {
-        // Resize the number of cells that controls the CPU affinites.
-        parsed_cfg.config.expert_execution_cfg.cell_affinities.resize(values.size());
         // Prepare the cells from the common cell.
         parsed_cfg.config.cells_cfg.resize(values.size());
         for (auto& cell : parsed_cfg.config.cells_cfg) {
@@ -1722,6 +2037,7 @@ void srsran::configure_cli11_with_du_high_config_schema(CLI::App& app, du_high_p
           subapp.config_formatter(create_yaml_config_parser());
           subapp.allow_config_extras(CLI::config_extras_mode::capture);
           configure_cli11_cells_args(subapp, parsed_cfg.config.cells_cfg[i]);
+          configure_cli11_cell_ntn_args(subapp, parsed_cfg.config.cells_cfg[i].cell.ntn_cfg);
           std::istringstream ss(values[i]);
           subapp.parse_from_stream(ss);
         }
@@ -1767,35 +2083,15 @@ void srsran::configure_cli11_with_du_high_config_schema(CLI::App& app, du_high_p
   configure_cli11_test_mode_args(*test_mode_subcmd, parsed_cfg.config.test_mode_cfg);
 }
 
-static void manage_ntn_optional(CLI::App& app, du_high_unit_config& gnb_cfg)
-{
-  auto     ntn_app             = app.get_subcommand_ptr("ntn");
-  unsigned nof_epoch_entries   = ntn_app->get_subcommand("epoch_time")->count_all();
-  unsigned nof_ecef_entries    = ntn_app->get_subcommand("ephemeris_info_ecef")->count_all();
-  unsigned nof_orbital_entries = ntn_app->get_subcommand("ephemeris_orbital")->count_all();
-
-  if (nof_epoch_entries) {
-    gnb_cfg.ntn_cfg.value().epoch_time = epoch_time;
-  }
-
-  if (nof_ecef_entries) {
-    gnb_cfg.ntn_cfg.value().ephemeris_info = ecef_coordinates;
-  } else if (nof_orbital_entries) {
-    gnb_cfg.ntn_cfg.value().ephemeris_info = orbital_coordinates;
-  }
-  if (app.get_subcommand("ntn")->count_all() == 0) {
-    gnb_cfg.ntn_cfg.reset();
-    // As NTN configuration is optional, disable the command when it is not present in the configuration.
-    ntn_app->disabled();
-  }
-}
-
 // Derive the parameters set to "auto"-derived for a cell.
 static void derive_cell_auto_params(du_high_unit_base_cell_config& cell_cfg)
 {
   // If NR band is not set, derive a valid one from the DL-ARFCN.
   if (not cell_cfg.band.has_value()) {
     cell_cfg.band = band_helper::get_band_from_dl_arfcn(cell_cfg.dl_f_ref_arfcn);
+  }
+  if (not cell_cfg.scheduler_cfg.policy_cfg.has_value()) {
+    cell_cfg.scheduler_cfg.policy_cfg.emplace(time_qos_scheduler_config{});
   }
 
   // If in TDD mode, and pattern was not set, generate a pattern DDDDDDXUUU.
@@ -1813,9 +2109,11 @@ static void derive_cell_auto_params(du_high_unit_base_cell_config& cell_cfg)
   if (not cell_cfg.prach_cfg.prach_config_index.has_value()) {
     if (band_helper::get_duplex_mode(cell_cfg.band.value()) == duplex_mode::FDD) {
       cell_cfg.prach_cfg.prach_config_index = 16;
-    } else {
+    } else if (band_helper::get_freq_range(cell_cfg.band.value()) == frequency_range::FR1) {
       // Valid for TDD period of 5 ms. And, PRACH index 159 is well tested.
       cell_cfg.prach_cfg.prach_config_index = 159;
+    } else {
+      cell_cfg.prach_cfg.prach_config_index = 112;
     }
   }
 
@@ -1844,6 +2142,5 @@ static void derive_auto_params(du_high_unit_config& config)
 
 void srsran::autoderive_du_high_parameters_after_parsing(CLI::App& app, du_high_unit_config& unit_cfg)
 {
-  manage_ntn_optional(app, unit_cfg);
   derive_auto_params(unit_cfg);
 }

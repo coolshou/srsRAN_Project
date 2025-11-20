@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -213,11 +213,16 @@ TEST(asn1_bit_ref, pack_unpack_operators)
 
 TEST(asn1_octet_string_test, pack_unpack_operators)
 {
-  std::string        hexstr = "014477aaff";
+  std::string          hexstr = "014477aaff";
+  std::vector<uint8_t> bytes  = {0x01, 0x44, 0x77, 0xaa, 0xff};
+
   fixed_octstring<5> statstr;
   dyn_octstring      dynstr;
+  dyn_octstring      dynstr_from_bytes;
+
   statstr.from_string(hexstr);
   dynstr.from_string(hexstr);
+  dynstr_from_bytes.from_bytes(bytes);
 
   TESTASSERT(sizeof(statstr) == statstr.size());
   TESTASSERT(statstr.size() == 5);
@@ -227,6 +232,7 @@ TEST(asn1_octet_string_test, pack_unpack_operators)
   TESTASSERT(statstr.to_string() == hexstr);
   TESTASSERT(statstr.to_string() == dynstr.to_string());
   TESTASSERT(statstr.to_number() == dynstr.to_number());
+  TESTASSERT(statstr.to_number() == dynstr_from_bytes.to_number());
 
   // check endianess
   TESTASSERT(statstr.to_number() == 5443660543);
@@ -430,7 +436,7 @@ TEST(asn1_seq_of_test, pack_unpack_and_operators)
   }
 
   int      lb = 0, ub = 40;
-  uint32_t n_bits = ceil(log2(ub - lb + 1));
+  uint32_t n_bits = std::ceil(std::log2(ub - lb + 1));
 
   srsran::byte_buffer buffer;
   bit_ref             b{buffer};
@@ -447,7 +453,7 @@ TEST(asn1_seq_of_test, pack_unpack_and_operators)
   TESTASSERT(bseq.size() == 0);
   bseq.resize(fixed_list_size);
   TESTASSERT(bseq.size() == fixed_list_size);
-  memcpy(&bseq[0], &fixed_list[0], fixed_list_size * sizeof(uint32_t));
+  std::memcpy(&bseq[0], &fixed_list[0], fixed_list_size * sizeof(uint32_t));
   b = {buffer};
   pack_dyn_seq_of(b, bseq, 0, 33, integer_packer<uint32_t>(lb, ub, false));
   TESTASSERT(b.distance() == (int)((fixed_list_size + 1) * n_bits)); // unaligned
@@ -457,7 +463,7 @@ TEST(asn1_seq_of_test, pack_unpack_and_operators)
   b2 = {buffer};
   unpack_dyn_seq_of(bseq2, b2, 0, 33, integer_packer<uint32_t>(lb, ub, false));
   TESTASSERT(bseq2 == bseq);
-  TESTASSERT(std::equal(&bseq2[0], &bseq2[fixed_list_size], &fixed_list[0]));
+  TESTASSERT(std::equal(bseq2.begin(), bseq2.end(), &fixed_list[0]));
 
   {
     bounded_array<uint32_t, 33> bseq3;
@@ -509,13 +515,13 @@ TEST(asn1_copy_ptr_test, memory_safety)
   copy_ptr<TestType> cptr(s);
   copy_ptr<TestType> cptr2;
 
-  memcpy(&(*cptr)[0], buffer, N);
+  std::memcpy(&(*cptr)[0], buffer, N);
 
   TESTASSERT(cptr2.get() == NULL);
-  TESTASSERT(memcmp(&(*s)[0], buffer, s->size()) == 0);
+  TESTASSERT(std::memcmp(&(*s)[0], buffer, s->size()) == 0);
   TESTASSERT(*cptr == *s);
   TESTASSERT(cptr.get() == s);
-  TESTASSERT(memcmp(&(*cptr)[0], buffer, cptr->size()) == 0);
+  TESTASSERT(std::memcmp(&(*cptr)[0], buffer, cptr->size()) == 0);
   TESTASSERT(cptr2.get() == NULL);
   TESTASSERT(cptr.get() != NULL);
 
@@ -524,7 +530,7 @@ TEST(asn1_copy_ptr_test, memory_safety)
     TESTASSERT(cptr3 == cptr);
     TESTASSERT(*cptr3 == *s);
     TESTASSERT(cptr3.get() != cptr.get()); // different addresses
-    TESTASSERT(memcmp(&(*cptr3)[0], buffer, cptr3->size()) == 0);
+    TESTASSERT(std::memcmp(&(*cptr3)[0], buffer, cptr3->size()) == 0);
     // call dtor
   }
   TESTASSERT(*cptr == *s);
@@ -555,7 +561,7 @@ public:
     value = v;
     return *this;
   }
-              operator uint8_t() { return (uint8_t)value; }
+  operator uint8_t() { return (uint8_t)value; }
   std::string to_string() const
   {
     switch (value) {
@@ -602,7 +608,7 @@ TEST(asn1_enumerated, pack_unpack)
   srsran::byte_buffer buffer;
   bit_ref             bref(buffer);
   TESTASSERT(pack_enum(bref, e) == SRSASN_SUCCESS);
-  TESTASSERT(bref.distance() == (int)(floor(log2(e.nof_types)) + 1));
+  TESTASSERT(bref.distance() == (int)(std::floor(std::log2(e.nof_types)) + 1));
 
   cbit_ref bref2(buffer);
   TESTASSERT(unpack_enum(e2, bref2) == SRSASN_SUCCESS);
@@ -640,7 +646,7 @@ public:
     value = v;
     return *this;
   }
-              operator uint8_t() { return (uint8_t)value; }
+  operator uint8_t() { return (uint8_t)value; }
   std::string to_string() const
   {
     switch (value) {
@@ -663,7 +669,7 @@ TEST(asn1_enumerated, bool_to_enum_test)
   TESTASSERT(enum_to_bool(e2));
   e2 = EnumBoolTest::options::nulltype;
   TESTASSERT(!enum_to_bool(e2));
-};
+}
 
 void test_json_writer()
 {
@@ -764,7 +770,7 @@ TEST(asn1_real_test, real_positive_number_pack_unpack)
     for (size_t j = 3; j < out_bytes.size(); ++j) {
       N = (N << 8) | out_bytes[j];
     }
-    float val = static_cast<float>(1.0 * S * N * pow(2, E));
+    float val = static_cast<float>(1.0 * S * N * std::pow(2, E));
     TESTASSERT(real_number.value == val);
 
     real_s   real_number2;
@@ -802,7 +808,7 @@ TEST(asn1_real_test, real_negative_number_pack_unpack)
     for (size_t j = 3; j < out_bytes.size(); ++j) {
       N = (N << 8) | out_bytes[j];
     }
-    float val = static_cast<float>(1.0 * S * N * pow(2, E));
+    float val = static_cast<float>(1.0 * S * N * std::pow(2, E));
     TESTASSERT(real_number.value == val);
 
     real_s   real_number2;

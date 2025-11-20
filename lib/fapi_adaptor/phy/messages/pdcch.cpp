@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -45,14 +45,19 @@ static void fill_dci(pdcch_processor::pdu_t&            proc_pdu,
   dci.cce_index         = fapi_dci.cce_index;
   dci.aggregation_level = fapi_dci.aggregation_level;
 
-  dci.dmrs_power_offset_dB = fapi_dci.power_control_offset_ss_profile_nr;
-  dci.data_power_offset_dB = dci.dmrs_power_offset_dB;
+  if (const auto* profile_nr = std::get_if<fapi::dl_dci_pdu::power_profile_nr>(&fapi_dci.power_config)) {
+    dci.dmrs_power_offset_dB = profile_nr->power_control_offset_ss;
+    dci.data_power_offset_dB = dci.dmrs_power_offset_dB;
+  } else if (const auto* profile_sss = std::get_if<fapi::dl_dci_pdu::power_profile_sss>(&fapi_dci.power_config)) {
+    dci.dmrs_power_offset_dB = profile_sss->dmrs_power_offset_db;
+    dci.data_power_offset_dB = profile_sss->data_power_offset_db;
+  } else {
+    report_error("PDCCH PDU power values are not configured");
+  }
 
   // Unpack the payload.
   dci.payload.resize(fapi_dci.payload.size());
-  for (unsigned j = 0, je = fapi_dci.payload.size(); j != je; ++j) {
-    dci.payload[j] = fapi_dci.payload.test(j);
-  }
+  fapi_dci.payload.to_unpacked_bits(span<uint8_t>{dci.payload.data(), dci.payload.size()});
 
   srsran_assert(fapi_dci.precoding_and_beamforming.prgs.size() == 1U,
                 "Unsupported number of PRGs={}",

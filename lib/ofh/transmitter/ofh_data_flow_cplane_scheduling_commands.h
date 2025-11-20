@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,13 +22,17 @@
 
 #pragma once
 
+#include "ofh_data_flow_cuplane_encoding_metrics_collector.h"
 #include "srsran/ofh/serdes/ofh_message_properties.h"
+#include "srsran/ofh/transmitter/ofh_transmitter_data_flow_metrics.h"
 #include "srsran/ran/prach/prach_subcarrier_spacing.h"
 #include "srsran/ran/resource_allocation/ofdm_symbol_range.h"
 #include "srsran/ran/slot_point.h"
 
 namespace srsran {
 namespace ofh {
+
+class operation_controller;
 
 /// Open Fronthaul Control-Plane PRACH context parameters.
 struct data_flow_cplane_scheduling_prach_context {
@@ -75,11 +79,17 @@ public:
   /// Default destructor.
   virtual ~data_flow_cplane_scheduling_commands() = default;
 
+  /// Returns the controller of this Open Fronthaul Control-Plane data flow.
+  virtual operation_controller& get_operation_controller() = 0;
+
   /// Enqueues Open Fronthaul section type 1 message with the given slot and eAxC.
   virtual void enqueue_section_type_1_message(const data_flow_cplane_type_1_context& context) = 0;
 
   /// Enqueues Open Fronthaul section type 3 PRACH message with the given parameters.
   virtual void enqueue_section_type_3_prach_message(const data_flow_cplane_scheduling_prach_context& context) = 0;
+
+  /// Returns the performance metrics collector of this data flow.
+  virtual data_flow_message_encoding_metrics_collector* get_metrics_collector() = 0;
 };
 
 } // namespace ofh

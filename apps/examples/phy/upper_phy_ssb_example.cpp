@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,13 +23,18 @@
 #include "upper_phy_ssb_example.h"
 #include "srsran/phy/support/prach_buffer.h"
 #include "srsran/phy/support/prach_buffer_context.h"
+#include "srsran/phy/support/re_pattern.h"
 #include "srsran/phy/support/resource_grid_mapper.h"
 #include "srsran/phy/support/resource_grid_reader.h"
 #include "srsran/phy/support/resource_grid_writer.h"
 #include "srsran/phy/support/shared_resource_grid.h"
 #include "srsran/phy/support/support_factories.h"
+#include "srsran/phy/upper/channel_coding/channel_coding_factories.h"
 #include "srsran/phy/upper/channel_processors/channel_processor_factories.h"
-#include "srsran/phy/upper/channel_processors/ssb_processor.h"
+#include "srsran/phy/upper/channel_processors/ssb/factories.h"
+#include "srsran/phy/upper/channel_processors/ssb/ssb_processor.h"
+#include "srsran/phy/upper/sequence_generators/sequence_generator_factories.h"
+#include "srsran/phy/upper/upper_phy_timing_context.h"
 #include "srsran/ran/precoding/precoding_codebooks.h"
 #include "srsran/srsvec/bit.h"
 #include <condition_variable>
@@ -138,7 +143,7 @@ public:
       rx_symb_context.slot   = context.slot;
 
       // Try to allocate a resource grid.
-      shared_resource_grid rg = ul_rg_pool->allocate_resource_grid(rx_symb_context);
+      shared_resource_grid rg = ul_rg_pool->allocate_resource_grid(context.slot);
 
       // If the resource grid allocation fails, it aborts the slot request.
       if (rg) {
@@ -167,13 +172,8 @@ public:
       rx_symb_req_notifier->on_prach_capture_request(prach_context, *prach_buf);
     }
 
-    // Prepare resource grid context.
-    resource_grid_context rg_context;
-    rg_context.sector = 0;
-    rg_context.slot   = context.slot;
-
     // Get a resource grid from the pool.
-    shared_resource_grid rg = dl_rg_pool->allocate_resource_grid(rg_context);
+    shared_resource_grid rg = dl_rg_pool->allocate_resource_grid(context.slot);
 
     // Abort slot processing if the grid is not valid.
     if (!rg) {
@@ -213,7 +213,7 @@ public:
         pdu.subcarrier_offset = ssb_config.subcarrier_offset;
         pdu.offset_to_pointA  = ssb_config.offset_pointA;
         pdu.pattern_case      = ssb_config.pattern_case;
-        pdu.bch_payload       = {};
+        pdu.mib_payload       = {};
         pdu.ports             = {0};
 
         ssb->process(rg.get().get_writer(), pdu);
@@ -249,6 +249,9 @@ public:
       mapper->map(rg.get_writer(), data_symbols, grid_allocation, precoding_config);
     }
 
+    resource_grid_context rg_context;
+    rg_context.sector = 0;
+    rg_context.slot   = context.slot;
     gateway->send(rg_context, std::move(rg));
 
     // Raise TTI boundary and notify.
@@ -304,7 +307,7 @@ std::unique_ptr<upper_phy_ssb_example> srsran::upper_phy_ssb_example::create(con
   std::shared_ptr<crc_calculator_factory> crc_calc_factory = create_crc_calculator_factory_sw("lut");
   ASSERT_FACTORY(crc_calc_factory);
 
-  std::shared_ptr<channel_modulation_factory> modulator_factory = create_channel_modulation_sw_factory();
+  std::shared_ptr<modulation_mapper_factory> modulator_factory = create_modulation_mapper_factory();
   ASSERT_FACTORY(modulator_factory);
 
   std::shared_ptr<pseudo_random_generator_factory> prg_factory = create_pseudo_random_generator_sw_factory();
@@ -386,8 +389,8 @@ std::unique_ptr<upper_phy_ssb_example> srsran::upper_phy_ssb_example::create(con
   }
 
   // Create modulation mapper for random data.
-  std::shared_ptr<channel_modulation_factory> data_modulator_factory = create_channel_modulation_sw_factory();
-  std::unique_ptr<modulation_mapper>          data_modulator = data_modulator_factory->create_modulation_mapper();
+  std::shared_ptr<modulation_mapper_factory> data_modulator_factory = create_modulation_mapper_factory();
+  std::unique_ptr<modulation_mapper>         data_modulator         = data_modulator_factory->create();
 
   // Create resource grid mapper.
   std::unique_ptr<resource_grid_mapper> mapper = rg_mapper_factory->create();

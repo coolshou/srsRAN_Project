@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "srsran/adt/ring_buffer.h"
 #include "srsran/f1u/du/f1u_bearer.h"
 #include "srsran/f1u/du/f1u_bearer_logger.h"
 #include "srsran/f1u/du/f1u_config.h"
@@ -56,6 +57,7 @@ public:
   f1u_rx_pdu_handler&      get_rx_pdu_handler() override { return *this; }
 
   void handle_sdu(byte_buffer_chain sdu) override;
+  void flush_ul_buffer() override;
   void handle_transmit_notification(uint32_t highest_pdcp_sn, uint32_t desired_buf_size) override;
   void handle_delivery_notification(uint32_t highest_pdcp_sn) override;
   void handle_retransmit_notification(uint32_t highest_pdcp_sn) override;
@@ -72,6 +74,10 @@ private:
   const f1u_config              cfg;
   const up_transport_layer_info dl_tnl_info;
 
+  /// Buffering
+  bool                               buffering;
+  ring_buffer<nru_ul_message, false> ul_buffer;
+
   f1u_rx_sdu_notifier& rx_sdu_notifier;
   f1u_tx_pdu_notifier& tx_pdu_notifier;
 
@@ -84,6 +90,9 @@ private:
   /// layers. The purpose of this timer is to avoid excessive uplink notifications for every PDCP SN that is notified by
   /// lower layers.
   unique_timer ul_notif_timer;
+
+  /// Time used to limit the handover buffering while waiting for the DU to notify that the handover is finished.
+  unique_timer ul_buffer_timer;
 
   /// Holds the most recent information of the available space in the RLC SDU queue
   std::atomic<uint32_t> desired_buffer_size_for_data_radio_bearer;
@@ -100,18 +109,49 @@ private:
   /// Holds the latest information of the available space in the RLC SDU queue that was reported to the upper layers
   /// (i.e. torward CU-UP)
   uint32_t notif_desired_buffer_size_for_data_radio_bearer;
+  /// Holds the last highest transmitted PDCP SN that was reported to upper layers (i.e. towards CU-UP)
+  uint32_t notif_highest_transmitted_pdcp_sn = unset_pdcp_sn;
+  /// Holds the last highest delivered PDCP SN that was reported to upper layers (i.e. towards CU-UP)
+  uint32_t notif_highest_delivered_pdcp_sn = unset_pdcp_sn;
   /// Holds the last highest retransmitted PDCP SN that was reported to upper layers (i.e. towards CU-UP)
   uint32_t notif_highest_retransmitted_pdcp_sn = unset_pdcp_sn;
   /// Holds the last highest delivered retransmitted PDCP SN that was reported to upper layers (i.e. towards CU-UP)
   uint32_t notif_highest_delivered_retransmitted_pdcp_sn = unset_pdcp_sn;
 
+  /// \brief Write desired buffer size of DRB into DSSS.
+  /// \param status The DSSS to write the desired value into.
+  /// \return False if the same value was written as last time this function was called; True on fresh value.
   bool fill_desired_buffer_size_of_data_radio_bearer(nru_dl_data_delivery_status& status);
+
+  /// \brief Write highest transmitted PDCP SN into DSSS.
+  /// \param status The DSSS to write the desired value into.
+  /// \return False if the same value was written as last time this function was called; True on fresh value.
   bool fill_highest_transmitted_pdcp_sn(nru_dl_data_delivery_status& status);
+
+  /// \brief Write highest delivered PDCP SN into DSSS.
+  /// \param status The DSSS to write the desired value into.
+  /// \return False if the same value was written as last time this function was called; True on fresh value.
   bool fill_highest_delivered_pdcp_sn(nru_dl_data_delivery_status& status);
+
+  /// \brief Write highest retransmitted PDCP SN into DSSS.
+  /// \param status The DSSS to write the desired value into.
+  /// \return False if the same value was written as last time this function was called; True on fresh value.
   bool fill_highest_retransmitted_pdcp_sn(nru_dl_data_delivery_status& status);
+
+  /// \brief Write highest delivered retransmitted PDCP SN into DSSS.
+  /// \param status The DSSS to write the desired value into.
+  /// \return False if the same value was written as last time this function was called; True on fresh value.
   bool fill_highest_delivered_retransmitted_pdcp_sn(nru_dl_data_delivery_status& status);
-  void fill_data_delivery_status(nru_ul_message& msg);
-  bool send_data_delivery_status();
+
+  /// \brief Write DSSS into NR-U UL message.
+  /// \param msg NR-U UL message in which the DSSS shall be filled.
+  /// \return False if DSSS holds the same values as last time this function was called; True on fresh value(s).
+  bool fill_data_delivery_status(nru_ul_message& msg);
+
+  /// \brief Send a DSSS via dedicated NR-U UL message (no piggy-back) either if forced or contains fresh values.
+  /// \param force Force sending DSSS even if no fresh values are included (i.e. nothing changed since last call).
+  /// \return True if DSSS was sent, False otherwise.
+  bool send_data_delivery_status(bool force);
 
   void handle_pdu_impl(nru_dl_message msg);
 

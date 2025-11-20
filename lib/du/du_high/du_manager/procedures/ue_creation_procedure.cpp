@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -91,7 +91,7 @@ void ue_creation_procedure::operator()(coro_context<async_task<void>>& ctx)
 
   // > Start Initial UL RRC Message Transfer by signalling MAC to notify CCCH to upper layers.
   if (not req.ul_ccch_msg.empty()) {
-    if (not du_params.mac.ue_cfg.handle_ul_ccch_msg(ue_ctx->ue_index, req.ul_ccch_msg.copy())) {
+    if (not du_params.mac.mgr.get_ue_configurator().handle_ul_ccch_msg(ue_ctx->ue_index, req.ul_ccch_msg.copy())) {
       proc_logger.log_proc_failure("Failed to notify CCCH message to upper layers");
       CORO_AWAIT(clear_ue());
       CORO_EARLY_RETURN();
@@ -102,17 +102,23 @@ void ue_creation_procedure::operator()(coro_context<async_task<void>>& ctx)
   CORO_RETURN();
 }
 
-expected<du_ue*, std::string> ue_creation_procedure::create_du_ue_context()
+expected<du_ue*, std::string> ue_creation_procedure::create_du_ue_context() const
 {
+  // Fetch the DU cell configuration of the primary cell UE is connected to.
+  // TODO: Use cell manager
+  const auto& cell_cfg = du_params.ran.cells[req.pcell_index];
+  if (not cell_cfg.enabled) {
+    return make_unexpected("UE created in inactive cell");
+  }
+
   // Create a DU UE resource manager, which will be responsible for managing bearer and PUCCH resources.
-  auto alloc_result = du_res_alloc.create_ue_resource_configurator(req.ue_index, req.pcell_index);
+  auto alloc_result =
+      du_res_alloc.create_ue_resource_configurator(req.ue_index, req.pcell_index, req.tc_rnti != rnti_t::INVALID_RNTI);
   if (not alloc_result.has_value()) {
     // The UE resource manager could not create a new UE entry.
     return make_unexpected(alloc_result.error());
   }
 
-  // Fetch the DU cell configuration of the primary cell UE is connected to.
-  const auto& cell_cfg = du_params.ran.cells[req.pcell_index];
   // Create the DU UE context.
   return ue_mng.add_ue(du_ue_context(req.ue_index, req.pcell_index, req.tc_rnti, cell_cfg.nr_cgi),
                        std::move(alloc_result.value()));
@@ -122,19 +128,25 @@ async_task<void> ue_creation_procedure::clear_ue()
 {
   return launch_async([this](coro_context<async_task<void>>& ctx) {
     CORO_BEGIN(ctx);
+
+    if (ue_ctx == nullptr) {
+      // No UE context to clear.
+      CORO_EARLY_RETURN();
+    }
+
+    CORO_AWAIT(ue_ctx->handle_activity_stop_request(true));
+
     if (f1ap_resp.result) {
       du_params.f1ap.ue_mng.handle_ue_deletion_request(req.ue_index);
     }
 
     if (mac_resp.allocated_crnti != rnti_t::INVALID_RNTI) {
-      CORO_AWAIT(du_params.mac.ue_cfg.handle_ue_delete_request(
+      CORO_AWAIT(du_params.mac.mgr.get_ue_configurator().handle_ue_delete_request(
           mac_ue_delete_request{req.pcell_index, req.ue_index, mac_resp.allocated_crnti}));
     }
 
-    if (ue_ctx != nullptr) {
-      // Clear UE from DU Manager UE repository.
-      ue_mng.remove_ue(ue_ctx->ue_index);
-    }
+    // Clear UE from DU Manager UE repository.
+    ue_mng.remove_ue(ue_ctx->ue_index);
 
     CORO_RETURN();
   });
@@ -223,12 +235,15 @@ async_task<mac_ue_create_response> ue_creation_procedure::create_mac_ue()
   }
   mac_ue_create_msg.ul_ccch_msg     = not req.ul_ccch_msg.empty() ? &req.ul_ccch_msg : nullptr;
   mac_ue_create_msg.ul_ccch_slot_rx = req.slot_rx;
+  if (ue_ctx->resources->cfra.has_value()) {
+    mac_ue_create_msg.cfra_preamble_index = ue_ctx->resources->cfra->preamble_id;
+  }
 
   // Create Scheduler UE Config Request that will be embedded in the mac UE creation request.
   mac_ue_create_msg.sched_cfg = create_scheduler_ue_config_request(*ue_ctx, *ue_ctx->resources);
 
   // Request MAC to create new UE.
-  return du_params.mac.ue_cfg.handle_ue_create_request(mac_ue_create_msg);
+  return du_params.mac.mgr.get_ue_configurator().handle_ue_create_request(mac_ue_create_msg);
 }
 
 f1ap_ue_creation_response ue_creation_procedure::create_f1ap_ue()

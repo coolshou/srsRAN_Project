@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,9 +21,9 @@
  */
 
 #include "srsran/du/du_high/du_high_executor_mapper.h"
-#include "srsran/support/executors/executor_tracer.h"
+#include "srsran/adt/mpmc_queue.h"
+#include "srsran/support/executors/executor_decoration_factory.h"
 #include "srsran/support/executors/strand_executor.h"
-#include "srsran/support/executors/sync_task_executor.h"
 
 using namespace srsran;
 using namespace srs_du;
@@ -33,24 +33,37 @@ namespace {
 /// Helper class to decorate executors with extra functionalities.
 struct executor_decorator {
   template <typename Exec>
-  task_executor& decorate(Exec&& exec, bool is_sync, const std::string& trace_name = "")
+  task_executor& decorate(Exec&&                             exec,
+                          bool                               is_sync,
+                          bool                               tracing_enabled,
+                          std::optional<unsigned>            throttle_thres,
+                          executor_metrics_channel_registry* metric_channel_registry,
+                          const std::string&                 exec_name = "")
   {
-    if (not is_sync and trace_name.empty()) {
+    if (not is_sync and not tracing_enabled and not metric_channel_registry and not throttle_thres) {
+      // No decoration needed, return the original executor.
       return exec;
     }
-    if (is_sync and not trace_name.empty()) {
-      decorators.push_back(make_sync_executor(make_trace_executor(trace_name, exec, tracer)));
-    } else if (is_sync) {
-      decorators.push_back(make_sync_executor(exec));
-    } else {
-      decorators.push_back(make_trace_executor_ptr(trace_name, exec, tracer));
+
+    execution_decoration_config cfg;
+    if (is_sync) {
+      cfg.sync = execution_decoration_config::sync_option{};
     }
+    if (throttle_thres.has_value()) {
+      cfg.throttle = execution_decoration_config::throttle_option{*throttle_thres};
+    }
+    if (metric_channel_registry != nullptr) {
+      cfg.metrics.emplace(exec_name, *metric_channel_registry, tracing_enabled);
+    } else if (tracing_enabled) {
+      cfg.trace = execution_decoration_config::trace_option{exec_name};
+    }
+    decorators.push_back(decorate_executor(std::forward<Exec>(exec), cfg));
+
     return *decorators.back();
   }
 
 private:
   std::vector<std::unique_ptr<task_executor>> decorators;
-  file_event_tracer<true>                     tracer;
 };
 
 /// Cell executor mapper that uses dedicated serialized workers, one per cell.
@@ -59,27 +72,45 @@ class dedicated_cell_worker_executor_mapper final : public du_high_cell_executor
 public:
   dedicated_cell_worker_executor_mapper(const du_high_executor_config::dedicated_cell_worker_list& cell_workers,
                                         bool                                                       rt_mode_enabled,
-                                        bool                                                       trace_enabled)
+                                        bool                                                       trace_enabled,
+                                        executor_metrics_channel_registry* metric_channel_registry)
   {
     bool is_sync = not rt_mode_enabled;
     cell_execs.reserve(cell_workers.size());
     for (const auto& cell_worker : cell_workers) {
-      std::string slot_exec_name = trace_enabled ? fmt::format("slot_ind_exec#{}", cell_execs.size()) : "";
-      std::string cell_exec_name = trace_enabled ? fmt::format("cell_exec#{}", cell_execs.size()) : "";
-      cell_execs.push_back(du_high_executor_config::dedicated_cell_worker{
-          decorator.decorate(cell_worker.high_prio_executor, is_sync, slot_exec_name),
-          decorator.decorate(cell_worker.low_prio_executor, is_sync, cell_exec_name)});
+      std::string slot_exec_name =
+          trace_enabled or metric_channel_registry ? fmt::format("slot_ind_exec#{}", cell_execs.size()) : "";
+      std::string cell_exec_name =
+          trace_enabled or metric_channel_registry ? fmt::format("cell_exec#{}", cell_execs.size()) : "";
+      cell_execs.push_back(
+          du_high_executor_config::dedicated_cell_worker{&decorator.decorate(*cell_worker.high_prio_executor,
+                                                                             is_sync,
+                                                                             trace_enabled,
+                                                                             std::nullopt,
+                                                                             metric_channel_registry,
+                                                                             slot_exec_name),
+                                                         &decorator.decorate(*cell_worker.low_prio_executor,
+                                                                             is_sync,
+                                                                             trace_enabled,
+                                                                             std::nullopt,
+                                                                             metric_channel_registry,
+                                                                             cell_exec_name)});
     }
   }
 
-  task_executor& executor(du_cell_index_t cell_index) override
+  task_executor& mac_cell_executor(du_cell_index_t cell_index) override
   {
-    return cell_execs[cell_index % cell_execs.size()].low_prio_executor;
+    return *cell_execs[cell_index % cell_execs.size()].low_prio_executor;
+  }
+
+  task_executor& rlc_lower_executor(du_cell_index_t cell_index) override
+  {
+    return *cell_execs[cell_index % cell_execs.size()].low_prio_executor;
   }
 
   task_executor& slot_ind_executor(du_cell_index_t cell_index) override
   {
-    return cell_execs[cell_index % cell_execs.size()].high_prio_executor;
+    return *cell_execs[cell_index % cell_execs.size()].high_prio_executor;
   }
 
 private:
@@ -93,7 +124,8 @@ class strand_cell_worker_executor_mapper final : public du_high_cell_executor_ma
 public:
   strand_cell_worker_executor_mapper(const du_high_executor_config::strand_based_worker_pool& cfg,
                                      bool                                                     rt_mode_enabled,
-                                     bool                                                     trace_enabled)
+                                     bool                                                     trace_enabled,
+                                     executor_metrics_channel_registry*                       metric_channel_registry)
   {
     srsran_assert(cfg.nof_cells > 0, "Invalid number of cells");
     concurrent_queue_params slot_qparams{concurrent_queue_policy::lockfree_spsc, 4};
@@ -102,20 +134,31 @@ public:
 
     cell_strands.resize(cfg.nof_cells);
     for (unsigned i = 0, e = cfg.nof_cells; i != e; ++i) {
-      cell_strands[i].strand = std::make_unique<cell_strand_type>(
-          cfg.pool_executor, std::array<concurrent_queue_params, 2>{slot_qparams, other_qparams});
+      cell_strands[i].strand =
+          std::make_unique<cell_strand_type>(cfg.pool_executors[i % cfg.pool_executors.size()],
+                                             std::array<concurrent_queue_params, 2>{slot_qparams, other_qparams});
       auto execs = cell_strands[i].strand->get_executors();
 
-      std::string exec_name         = trace_enabled ? fmt::format("slot_ind_exec#{}", i) : "";
-      cell_strands[i].slot_ind_exec = &decorator.decorate(execs[0], is_sync, exec_name);
-      exec_name                     = trace_enabled ? fmt::format("cell_exec#{}", i) : "";
-      cell_strands[i].cell_exec     = &decorator.decorate(execs[1], is_sync, exec_name);
+      std::string exec_name = trace_enabled or metric_channel_registry ? fmt::format("slot_ind_exec#{}", i) : "";
+      cell_strands[i].slot_ind_exec =
+          &decorator.decorate(execs[0], is_sync, trace_enabled, std::nullopt, metric_channel_registry, exec_name);
+      exec_name = trace_enabled or metric_channel_registry ? fmt::format("mac_cell_exec#{}", i) : "";
+      cell_strands[i].mac_cell_exec =
+          &decorator.decorate(execs[1], is_sync, trace_enabled, std::nullopt, metric_channel_registry, exec_name);
+      exec_name = trace_enabled or metric_channel_registry ? fmt::format("rlc_lower_exec#{}", i) : "";
+      cell_strands[i].rlc_lower_exec =
+          &decorator.decorate(execs[1], is_sync, trace_enabled, std::nullopt, metric_channel_registry, exec_name);
     }
   }
 
-  task_executor& executor(du_cell_index_t cell_index) override
+  task_executor& mac_cell_executor(du_cell_index_t cell_index) override
   {
-    return *cell_strands[cell_index % cell_strands.size()].cell_exec;
+    return *cell_strands[cell_index % cell_strands.size()].mac_cell_exec;
+  }
+
+  task_executor& rlc_lower_executor(du_cell_index_t cell_index) override
+  {
+    return *cell_strands[cell_index % cell_strands.size()].rlc_lower_exec;
   }
 
   task_executor& slot_ind_executor(du_cell_index_t cell_index) override
@@ -124,28 +167,32 @@ public:
   }
 
 private:
-  using cell_strand_type = priority_task_strand<task_executor*>;
+  using cell_strand_type = priority_task_strand<task_executor*, force_dispatch_strand_lock<enqueue_priority::max>>;
   struct strand_context {
-    std::unique_ptr<priority_task_strand<task_executor*>> strand;
-    task_executor*                                        slot_ind_exec;
-    task_executor*                                        cell_exec;
+    std::unique_ptr<cell_strand_type> strand;
+    task_executor*                    slot_ind_exec;
+    task_executor*                    mac_cell_exec;
+    task_executor*                    rlc_lower_exec;
   };
 
   std::vector<strand_context> cell_strands;
   executor_decorator          decorator;
 };
 
-std::unique_ptr<du_high_cell_executor_mapper> create_du_high_cell_executor_mapper(const du_high_executor_config& config)
+static std::unique_ptr<du_high_cell_executor_mapper>
+create_du_high_cell_executor_mapper(const du_high_executor_config& config)
 {
   std::unique_ptr<du_high_cell_executor_mapper> cell_mapper;
-  if (auto* ded_workers = std::get_if<du_high_executor_config::dedicated_cell_worker_list>(&config.cell_executors)) {
+  if (const auto* ded_workers =
+          std::get_if<du_high_executor_config::dedicated_cell_worker_list>(&config.cell_executors)) {
     cell_mapper = std::make_unique<dedicated_cell_worker_executor_mapper>(
-        *ded_workers, config.is_rt_mode_enabled, config.trace_exec_tasks);
+        *ded_workers, config.is_rt_mode_enabled, config.trace_exec_tasks, config.exec_metrics_channel_registry);
   } else {
     cell_mapper = std::make_unique<strand_cell_worker_executor_mapper>(
         std::get<du_high_executor_config::strand_based_worker_pool>(config.cell_executors),
         config.is_rt_mode_enabled,
-        config.trace_exec_tasks);
+        config.trace_exec_tasks,
+        config.exec_metrics_channel_registry);
   }
   return cell_mapper;
 }
@@ -171,7 +218,11 @@ protected:
     strands.reserve(initial_capacity);
   }
 
-  void add_strand(task_executor& pool_exec, unsigned ctrl_queue_size, unsigned pdu_queue_size, bool trace_enabled)
+  void add_strand(task_executor&                     pool_exec,
+                  unsigned                           ctrl_queue_size,
+                  unsigned                           pdu_queue_size,
+                  bool                               trace_enabled,
+                  executor_metrics_channel_registry* metrics_channel_registry)
   {
     auto& strand_ctxt  = strands.emplace_back();
     strand_ctxt.strand = std::make_unique<strand_type>(
@@ -185,12 +236,27 @@ protected:
     strand_ctxt.ul_exec   = &execs[1];
     strand_ctxt.dl_exec   = &execs[2];
 
-    if (trace_enabled) {
+    if (trace_enabled or metrics_channel_registry) {
       // If tracing is enabled, decorate the executors.
       unsigned idx          = strands.size() - 1;
-      strand_ctxt.ctrl_exec = &decorator.decorate(*strand_ctxt.ctrl_exec, false, fmt::format("ue_ctrl_exec#{}", idx));
-      strand_ctxt.ul_exec   = &decorator.decorate(*strand_ctxt.ul_exec, false, fmt::format("ue_ul_exec#{}", idx));
-      strand_ctxt.dl_exec   = &decorator.decorate(*strand_ctxt.dl_exec, false, fmt::format("ue_dl_exec#{}", idx));
+      strand_ctxt.ctrl_exec = &decorator.decorate(*strand_ctxt.ctrl_exec,
+                                                  false,
+                                                  trace_enabled,
+                                                  std::nullopt,
+                                                  metrics_channel_registry,
+                                                  fmt::format("ue_ctrl_exec#{}", idx));
+      strand_ctxt.ul_exec   = &decorator.decorate(*strand_ctxt.ul_exec,
+                                                false,
+                                                trace_enabled,
+                                                std::nullopt,
+                                                metrics_channel_registry,
+                                                fmt::format("ue_ul_exec#{}", idx));
+      strand_ctxt.dl_exec   = &decorator.decorate(*strand_ctxt.dl_exec,
+                                                false,
+                                                trace_enabled,
+                                                std::nullopt,
+                                                metrics_channel_registry,
+                                                fmt::format("ue_dl_exec#{}", idx));
     }
   }
 
@@ -202,15 +268,16 @@ protected:
 class index_based_ue_executor_mapper final : public common_ue_executor_mapper
 {
 public:
-  index_based_ue_executor_mapper(task_executor& pool_executor,
-                                 unsigned       max_strands,
-                                 unsigned       ctrl_queue_size,
-                                 unsigned       pdu_queue_size,
-                                 bool           trace_enabled) :
+  index_based_ue_executor_mapper(task_executor&                     pool_executor,
+                                 unsigned                           max_strands,
+                                 unsigned                           ctrl_queue_size,
+                                 unsigned                           pdu_queue_size,
+                                 bool                               trace_enabled,
+                                 executor_metrics_channel_registry* metric_channel_registry) :
     common_ue_executor_mapper(max_strands)
   {
     for (unsigned i = 0; i != max_strands; ++i) {
-      add_strand(pool_executor, ctrl_queue_size, pdu_queue_size, trace_enabled);
+      add_strand(pool_executor, ctrl_queue_size, pdu_queue_size, trace_enabled, metric_channel_registry);
     }
   }
 
@@ -242,20 +309,22 @@ public:
 class pcell_ue_executor_mapper final : public common_ue_executor_mapper
 {
 public:
-  explicit pcell_ue_executor_mapper(task_executor& pool_executor,
-                                    unsigned       max_strands_,
-                                    unsigned       ctrl_queue_size_,
-                                    unsigned       pdu_queue_size_,
-                                    bool           trace_enabled_) :
+  explicit pcell_ue_executor_mapper(task_executor&                     pool_executor,
+                                    unsigned                           max_strands_,
+                                    unsigned                           ctrl_queue_size_,
+                                    unsigned                           pdu_queue_size_,
+                                    bool                               trace_enabled_,
+                                    executor_metrics_channel_registry* metric_channel_registry) :
     common_ue_executor_mapper(max_strands_),
     pool_exec(pool_executor),
     max_strands(max_strands_),
     ctrl_queue_size(ctrl_queue_size_),
     pdu_queue_size(pdu_queue_size_),
-    trace_enabled(trace_enabled_)
+    trace_enabled(trace_enabled_),
+    metrics_channel_registry(metric_channel_registry)
   {
     // Create base strand.
-    add_strand(pool_executor, ctrl_queue_size, pdu_queue_size, trace_enabled);
+    add_strand(pool_executor, ctrl_queue_size, pdu_queue_size, trace_enabled, metrics_channel_registry);
 
     // Initialize UE executor lookup.
     for (unsigned i = 0; i != MAX_NOF_DU_UES; ++i) {
@@ -265,10 +334,10 @@ public:
 
   void rebind_executors(du_ue_index_t ue_index, du_cell_index_t pcell_index) override
   {
-    srsran_sanity_check(is_du_ue_index_valid(ue_index), "Invalid ue id={}", ue_index);
+    srsran_sanity_check(is_du_ue_index_valid(ue_index), "Invalid ue id={}", fmt::underlying(ue_index));
     ue_idx_to_exec_index[ue_index] = pcell_index % max_strands;
     while (strands.size() <= ue_idx_to_exec_index[ue_index]) {
-      add_strand(pool_exec, ctrl_queue_size, pdu_queue_size, trace_enabled);
+      add_strand(pool_exec, ctrl_queue_size, pdu_queue_size, trace_enabled, metrics_channel_registry);
     }
   }
 
@@ -291,17 +360,19 @@ public:
   }
 
 private:
-  task_executor& pool_exec;
-  const unsigned max_strands;
-  const unsigned ctrl_queue_size;
-  const unsigned pdu_queue_size;
-  const bool     trace_enabled;
+  task_executor&                     pool_exec;
+  const unsigned                     max_strands;
+  const unsigned                     ctrl_queue_size;
+  const unsigned                     pdu_queue_size;
+  const bool                         trace_enabled;
+  executor_metrics_channel_registry* metrics_channel_registry;
 
   /// Map of ue indexes to executors. The last position is used when the UE has no ue_index yet assigned.
   std::array<unsigned, MAX_NOF_DU_UES> ue_idx_to_exec_index;
 };
 
-std::unique_ptr<du_high_ue_executor_mapper> create_du_high_ue_executor_mapper(const du_high_executor_config& config)
+static std::unique_ptr<du_high_ue_executor_mapper>
+create_du_high_ue_executor_mapper(const du_high_executor_config& config)
 {
   std::unique_ptr<du_high_ue_executor_mapper> ue_mapper;
   if (config.ue_executors.policy == du_high_executor_config::ue_executor_config::map_policy::per_cell) {
@@ -309,13 +380,15 @@ std::unique_ptr<du_high_ue_executor_mapper> create_du_high_ue_executor_mapper(co
                                                            config.ue_executors.max_nof_strands,
                                                            config.ue_executors.ctrl_queue_size,
                                                            config.ue_executors.pdu_queue_size,
-                                                           config.trace_exec_tasks);
+                                                           config.trace_exec_tasks,
+                                                           config.exec_metrics_channel_registry);
   } else {
     ue_mapper = std::make_unique<index_based_ue_executor_mapper>(*config.ue_executors.pool_executor,
                                                                  config.ue_executors.max_nof_strands,
                                                                  config.ue_executors.ctrl_queue_size,
                                                                  config.ue_executors.pdu_queue_size,
-                                                                 config.trace_exec_tasks);
+                                                                 config.trace_exec_tasks,
+                                                                 config.exec_metrics_channel_registry);
   }
   return ue_mapper;
 }
@@ -330,27 +403,31 @@ std::unique_ptr<du_high_ue_executor_mapper> create_du_high_ue_executor_mapper(co
 /// the lower layers from running faster than this strand.
 class ctrl_executor_mapper
 {
-  using ctrl_strand_type = priority_task_strand<task_executor*>;
+  using ctrl_strand_type = task_strand<task_executor*, concurrent_queue_policy::lockfree_mpmc>;
 
 public:
   ctrl_executor_mapper(const du_high_executor_config::control_executor_config& cfg,
-                       bool                                                    rt_mode_enabled,
-                       bool                                                    trace_enabled) :
-    strand(cfg.pool_executor,
-           std::array<concurrent_queue_params, 2>{
-               concurrent_queue_params{concurrent_queue_policy::lockfree_spsc, cfg.task_queue_size},
-               concurrent_queue_params{concurrent_queue_policy::lockfree_mpmc, cfg.task_queue_size}}),
-    timer_exec(
-        decorator.decorate(strand.get_executors()[0], not rt_mode_enabled, trace_enabled ? "du_timer_exec" : "")),
-    ctrl_exec(decorator.decorate(strand.get_executors()[1], false, trace_enabled ? "du_ctrl_exec" : "")),
-    e2_exec(decorator.decorate(strand.get_executors()[1], false, trace_enabled ? "du_e2_exec" : ""))
+                       bool                                                    trace_enabled,
+                       executor_metrics_channel_registry*                      metrics_channel_registry) :
+    strand(cfg.pool_executor, cfg.task_queue_size),
+    ctrl_exec(decorator.decorate(strand,
+                                 false,
+                                 trace_enabled,
+                                 std::nullopt,
+                                 metrics_channel_registry,
+                                 trace_enabled or metrics_channel_registry ? "du_ctrl_exec" : "")),
+    e2_exec(decorator.decorate(strand,
+                               false,
+                               trace_enabled,
+                               std::nullopt,
+                               metrics_channel_registry,
+                               trace_enabled or metrics_channel_registry ? "du_e2_exec" : ""))
   {
   }
 
   ctrl_strand_type   strand;
   executor_decorator decorator;
 
-  task_executor& timer_exec;
   task_executor& ctrl_exec;
   task_executor& e2_exec;
 };
@@ -359,25 +436,31 @@ public:
 
 class du_high_executor_mapper_impl final : public du_high_executor_mapper
 {
+  using tick_strand_type = task_strand<task_executor*, concurrent_queue_policy::lockfree_mpmc>;
+
 public:
-  explicit du_high_executor_mapper_impl(std::unique_ptr<du_high_cell_executor_mapper>           cell_mapper_,
-                                        std::unique_ptr<du_high_ue_executor_mapper>             ue_mapper_,
-                                        const du_high_executor_config::control_executor_config& ctrl_cfg,
-                                        bool                                                    rt_mode_enabled,
-                                        bool                                                    trace_enabled) :
-    cell_mapper_ptr(std::move(cell_mapper_)),
-    ue_mapper_ptr(std::move(ue_mapper_)),
-    ctrl_mapper(ctrl_cfg, rt_mode_enabled, trace_enabled)
+  explicit du_high_executor_mapper_impl(const du_high_executor_config& config) :
+    raw_non_rt_hi_prio_exec(*config.ctrl_executors.pool_executor),
+    raw_low_prio_exec(*config.ue_executors.f1u_reader_executor),
+    cell_mapper_ptr(create_du_high_cell_executor_mapper(config)),
+    ue_mapper_ptr(create_du_high_ue_executor_mapper(config)),
+    ctrl_mapper(config.ctrl_executors, config.trace_exec_tasks, config.exec_metrics_channel_registry)
   {
   }
 
   du_high_cell_executor_mapper& cell_mapper() override { return *cell_mapper_ptr; }
   du_high_ue_executor_mapper&   ue_mapper() override { return *ue_mapper_ptr; }
   task_executor&                du_control_executor() override { return ctrl_mapper.ctrl_exec; }
-  task_executor&                du_timer_executor() override { return ctrl_mapper.timer_exec; }
   task_executor&                du_e2_executor() override { return ctrl_mapper.e2_exec; }
+  task_executor&                f1c_rx_executor() override { return raw_non_rt_hi_prio_exec; }
+  task_executor&                e2_rx_executor() override { return raw_non_rt_hi_prio_exec; }
+  task_executor&                f1u_rx_executor() override { return raw_low_prio_exec; }
 
 private:
+  /// Raw control-plane executor.
+  task_executor& raw_non_rt_hi_prio_exec;
+  task_executor& raw_low_prio_exec;
+
   std::unique_ptr<du_high_cell_executor_mapper> cell_mapper_ptr;
   std::unique_ptr<du_high_ue_executor_mapper>   ue_mapper_ptr;
   ctrl_executor_mapper                          ctrl_mapper;
@@ -388,9 +471,5 @@ private:
 std::unique_ptr<du_high_executor_mapper>
 srsran::srs_du::create_du_high_executor_mapper(const du_high_executor_config& config)
 {
-  return std::make_unique<du_high_executor_mapper_impl>(create_du_high_cell_executor_mapper(config),
-                                                        create_du_high_ue_executor_mapper(config),
-                                                        config.ctrl_executors,
-                                                        config.is_rt_mode_enabled,
-                                                        config.trace_exec_tasks);
+  return std::make_unique<du_high_executor_mapper_impl>(config);
 }

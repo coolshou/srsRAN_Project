@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,10 +22,10 @@
 
 #pragma once
 
+#include "apps/helpers/metrics/metrics_config.h"
 #include "apps/services/worker_manager/os_sched_affinity_manager.h"
 #include <optional>
 #include <string>
-#include <vector>
 
 namespace srsran {
 
@@ -41,6 +41,8 @@ struct du_low_unit_expert_upper_phy_config {
   unsigned pusch_decoder_max_iterations = 6;
   /// Set to true to enable the PUSCH LDPC decoder early stop.
   bool pusch_decoder_early_stop = true;
+  /// Set to true for forcing the LDPC decoder to decode even if the number of soft bits is insufficient.
+  bool pusch_decoder_force_decoding = false;
   /// \brief Selects a PUSCH SINR calculation method.
   ///
   /// Available methods:
@@ -48,16 +50,50 @@ struct du_low_unit_expert_upper_phy_config {
   /// -\c post_equalization: SINR is calculated using the post-equalization noise variances of the equalized RE.
   /// -\c evm: SINR is obtained from the EVM of the PUSCH symbols.
   std::string pusch_sinr_calc_method = "post_equalization";
+  /// \brief PUSCH channel estimator frequency-domain smoothing strategy.
+  ///
+  /// Use one of these options:
+  /// - \c filter: applies a low pass filter to the channel estimates, or
+  /// - \c mean: averages the channel estimates, or
+  /// - \c none: it does not apply any smoothing strategy.
+  std::string pusch_channel_estimator_fd_strategy = "filter";
+  /// \brief PUSCH channel estimator time-domain interpolation strategy.
+  ///
+  /// Use one of these options:
+  /// - \c average: averages the DM-RS in time domain, or
+  /// - \c interpolate: performs linear interpolation between the OFDM symbols containing DM-RS.
+  ///
+  /// The \c average strategy is more robust against noise and interference while \c interpolate is more robust for
+  /// fast fading channels.
+  std::string pusch_channel_estimator_td_strategy = "average";
+  /// PUSCH channel estimator CFO compensation.
+  bool pusch_channel_estimator_cfo_compensation = true;
+  /// \brief PUSCH channel equalizer algorithm.
+  ///
+  /// Use one of these options:
+  /// - \c zf: use zero-forcing algorithm, or
+  /// - \c mmse: use minimum mean square error algorithm.
+  std::string pusch_channel_equalizer_algorithm = "zf";
   /// \brief Request headroom size in slots.
   ///
   /// The request headroom size is the number of delayed slots that the upper physical layer will accept, ie, if the
   /// current slot is M, the upper phy will consider the slot M - nof_slots_request_headroom as valid and process it.
   unsigned nof_slots_request_headroom = 0U;
+  /// \brief Allows resource grid requests on empty uplink slots.
+  ///
+  /// An uplink slot is considered empty when it does not contain PUCCH/PUSCH/SRS PDUs.
+  bool allow_request_on_empty_uplink_slot = false;
+  /// Enables the PHY tap plugin if present.
+  bool enable_phy_tap = false;
+  /// PHY tap plugin arguments.
+  std::string phy_tap_arguments = "";
 };
 
 /// DU low logging functionalities.
 struct du_low_unit_logger_config {
+  /// Upper physical layer log level.
   srslog::basic_levels phy_level = srslog::basic_levels::warning;
+  /// Hardware Abstraction Layer log level.
   srslog::basic_levels hal_level = srslog::basic_levels::warning;
   /// Set to true to log broadcasting messages and all PRACH opportunities.
   bool broadcast_enabled = false;
@@ -71,12 +107,10 @@ struct du_low_unit_logger_config {
   bool phy_rx_symbols_prach = false;
 };
 
-/// CPU affinities configuration for the cell.
-struct du_low_unit_cpu_affinities_cell_config {
-  /// L1 uplink CPU affinity mask.
-  os_sched_affinity_config l1_ul_cpu_cfg = {sched_affinity_mask_types::l1_ul, {}, sched_affinity_mask_policy::mask};
-  /// L1 downlink workers CPU affinity mask.
-  os_sched_affinity_config l1_dl_cpu_cfg = {sched_affinity_mask_types::l1_dl, {}, sched_affinity_mask_policy::mask};
+/// DU low tracing functionalities.
+struct du_low_unit_tracer_config {
+  /// \brief Whether to enable tracing of the physical layer executors.
+  bool executor_tracing_enable = false;
 };
 
 /// Expert threads configuration of the gNB app.
@@ -85,55 +119,60 @@ struct du_low_unit_expert_threads_config {
   {
     unsigned nof_threads = cpu_architecture_info::get().get_host_nof_available_cpus();
 
-    if (nof_threads < 4) {
-      nof_ul_threads            = 1;
-      nof_pusch_decoder_threads = 0;
-      nof_dl_threads            = 2;
+    max_pucch_concurrency = 0;
+    if (nof_threads <= 4) {
+      max_pusch_and_srs_concurrency = 1;
     } else if (nof_threads < 8) {
-      nof_ul_threads            = 1;
-      nof_pusch_decoder_threads = 1;
-      nof_dl_threads            = 4;
+      max_pusch_and_srs_concurrency = 2;
     } else if (nof_threads < 16) {
-      nof_ul_threads            = 1;
-      nof_pusch_decoder_threads = 1;
-      nof_dl_threads            = 4;
+      max_pusch_and_srs_concurrency = 2;
     } else {
-      nof_ul_threads            = 2;
-      nof_pusch_decoder_threads = 2;
-      nof_dl_threads            = 6;
+      max_pusch_and_srs_concurrency = 4;
     }
   }
 
+  /// Codeblock batch length for ensuring synchronous processing within the flexible PDSCH processor implementation.
+  static constexpr unsigned synchronous_cb_batch_length = std::numeric_limits<unsigned>::max();
+  /// Codeblock default batch length.
+  static constexpr unsigned default_cb_batch_length = 4;
+
   /// \brief PDSCH processor type.
   ///
-  /// Use of there options:
-  /// - \c automatic: selects \c lite implementation if \c nof_pdsch_threads is one, otherwise \c concurrent, or
+  /// Use of one of these options:
+  /// - \c auto: selects \c flexible implementation, or
   /// - \c generic: for using unoptimized PDSCH processing, or
-  /// - \c concurrent: for using a processor that processes code blocks in parallel, or
-  /// - \c lite: for using a memory optimized processor.
+  /// - \c flexible: for using a memory optimized processor if the number of codeblocks is smaller than \c
+  /// pdsch_cb_batch_length, or a performance-optimized implementation that processes code blocks in parallel otherwise.
   std::string pdsch_processor_type = "auto";
-  /// \brief Number of threads for concurrent PUSCH decoding.
+  /// \brief PDSCH codeblock-batch length per thread (flexible PDSCH processor only).
   ///
-  /// If the number of PUSCH decoder threads is greater than zero, the PUSCH decoder will enqueue received soft bits and
-  /// process them asynchronously. Otherwise, PUSCH decoding will be performed synchronously.
+  /// Set it to \c pdsch_cb_batch_length_sync for guaranteeing synchronous processing with the most memory-optimized
+  /// processor.
+  unsigned pdsch_cb_batch_length = default_cb_batch_length;
+  /// \brief Maximum concurrency level for PUCCH.
   ///
-  /// In non-real-time operations (e.g., when using ZeroMQ), setting this parameter to a non-zero value can potentially
-  /// introduce delays in uplink HARQ feedback.
-  unsigned nof_pusch_decoder_threads = 0;
-  /// Number of threads for processing PUSCH and PUCCH.
-  unsigned nof_ul_threads = 1;
-  /// Number of threads for processing PDSCH, PDCCH, NZP CSI-RS and SSB. It is set to 1 by default.
-  unsigned nof_dl_threads = 1;
+  /// Maximum number of threads that can concurrently process Physical Uplink Control Channel (PUCCH). Set to zero for
+  /// no limitation.
+  unsigned max_pucch_concurrency = 0;
+  /// \brief Maximum joint concurrency level for PUSCH and SRS.
+  ///
+  /// Maximum number of threads that can concurrently process Physical Uplink Shared Channel (PUSCH) and Sounding
+  /// Reference Signals (SRS). Set to zero for no limitation.
+  unsigned max_pusch_and_srs_concurrency = 1;
+  /// \brief Maximum concurrency level for PDSCH processing.
+  ///
+  /// Maximum number of threads that can concurrently process Physical Downlink Shared Channel (PDSCH). Set to zero for
+  /// no limitation.
+  ///
+  /// This parameter is necessary when hardware acceleration is used to limit the number of threads accessing the
+  /// physical resources.
+  unsigned max_pdsch_concurrency = 0;
 };
 
 /// Expert configuration of the gNB app.
 struct du_low_unit_expert_execution_config {
   /// Expert thread configuration of the gNB app.
   du_low_unit_expert_threads_config threads;
-  /// \brief CPU affinities per cell of the gNB app.
-  ///
-  /// \note Add one cell by default.
-  std::vector<du_low_unit_cpu_affinities_cell_config> cell_affinities = {{}};
 };
 
 /// Hardware-accelerated PDSCH encoder configuration of the DU low.
@@ -148,7 +187,7 @@ struct hwacc_pdsch_appconfig {
   /// Set to the maximum supported size by default.
   std::optional<unsigned> max_buffer_size;
   /// \brief Type of hardware queue usage (dedicated = true [default], shared = false). In case of a shared usage, the
-  /// accelerated function needs to reseve a hardware-queue for each operation.
+  /// accelerated function needs to reserve a hardware-queue for each operation.
   bool dedicated_queue = true;
 };
 
@@ -156,14 +195,14 @@ struct hwacc_pdsch_appconfig {
 struct hwacc_pusch_appconfig {
   /// \brief Number of hardware-accelerated PUSCH decoding functions.
   unsigned nof_hwacc;
-  /// \brief Defines if the soft-buffer is implemented in the accelerator (true [default]) or not (false).
-  bool ext_softbuffer = true;
   /// \brief Size of the HARQ context repository.
   ///
   /// Set to the maximum number of CBs supported by the gNB config by default.
   std::optional<unsigned> harq_context_size;
+  /// \brief Force using the host memory to implement the HARQ buffer (disabled by default).
+  bool force_local_harq = false;
   /// \brief Type of hardware queue usage (dedicated = true [default], shared = false). In case of a shared usage, the
-  /// accelerated function needs to reseve a hardware-queue for each operation.
+  /// accelerated function needs to reserve a hardware-queue for each operation.
   bool dedicated_queue = true;
 };
 
@@ -193,22 +232,32 @@ struct bbdev_appconfig {
   std::optional<unsigned> nof_mbuf;
 };
 
-// HAL configuration of the DU low.
+/// HAL configuration of the DU low.
 struct du_low_unit_hal_config {
   /// BBDEV-based hardware-accelerator arguments.
   std::optional<bbdev_appconfig> bbdev_hwacc;
+};
+
+/// Metrics configuration of the DU low.
+struct du_low_unit_metrics_config {
+  app_helpers::metrics_config common_metrics_cfg;
+  bool                        enable_du_low = false;
 };
 
 /// DU low configuration.
 struct du_low_unit_config {
   /// Loggers.
   du_low_unit_logger_config loggers;
+  /// Tracers.
+  du_low_unit_tracer_config tracer;
   /// Expert physical layer configuration.
   du_low_unit_expert_upper_phy_config expert_phy_cfg;
   /// Expert execution parameters for the DU low.
   du_low_unit_expert_execution_config expert_execution_cfg;
   /// HAL configuration.
   std::optional<du_low_unit_hal_config> hal_config;
+  /// Metrics configuration.
+  du_low_unit_metrics_config metrics_cfg;
 };
 
 } // namespace srsran

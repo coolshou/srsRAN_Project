@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,21 +22,23 @@
 
 #pragma once
 
-#include "apps/services/application_command.h"
-#include "apps/services/stdin_command_dispatcher_utils.h"
+#include "apps/services/cmdline/cmdline_command_dispatcher_utils.h"
+#include "apps/services/cmdline/stdout_metrics_command.h"
+#include "split_helpers/metrics/flexible_o_du_metrics_consumers.h"
 #include "srsran/adt/expected.h"
 #include "srsran/adt/to_array.h"
 #include "srsran/ru/ru_controller.h"
+#include "srsran/srslog/srslog.h"
 
 namespace srsran {
 
 /// Application command to change the transmission gain.
-class tx_gain_app_command : public app_services::application_command
+class tx_gain_app_command : public app_services::cmdline_command
 {
-  ru_controller& controller;
+  ru_gain_controller& controller;
 
 public:
-  explicit tx_gain_app_command(ru_controller& controller_) : controller(controller_) {}
+  explicit tx_gain_app_command(ru_gain_controller& controller_) : controller(controller_) {}
 
   // See interface for documentation.
   std::string_view get_name() const override { return "tx_gain"; }
@@ -73,12 +75,12 @@ public:
 };
 
 /// Application command to change the reception gain.
-class rx_gain_app_command : public app_services::application_command
+class rx_gain_app_command : public app_services::cmdline_command
 {
-  ru_controller& controller;
+  ru_gain_controller& controller;
 
 public:
-  explicit rx_gain_app_command(ru_controller& controller_) : controller(controller_) {}
+  explicit rx_gain_app_command(ru_gain_controller& controller_) : controller(controller_) {}
 
   // See interface for documentation.
   std::string_view get_name() const override { return "rx_gain"; }
@@ -114,26 +116,8 @@ public:
   }
 };
 
-/// Application command to change display the Radio Unit metrics.
-class ru_metrics_app_command : public app_services::application_command
-{
-  ru_controller& controller;
-
-public:
-  explicit ru_metrics_app_command(ru_controller& controller_) : controller(controller_) {}
-
-  // See interface for documentation.
-  std::string_view get_name() const override { return "ru_metrics"; }
-
-  // See interface for documentation.
-  std::string_view get_description() const override { return ":                           prints RU metrics once"; }
-
-  // See interface for documentation.
-  void execute(span<const std::string> args) override { controller.print_metrics(); }
-};
-
 /// Application command to change the DU log level.
-class change_log_level_app_command : public app_services::application_command
+class change_log_level_app_command : public app_services::cmdline_command
 {
   /// List of possible log channels that can be dynamically changed.
   static constexpr auto dynamic_log_channels = to_array<std::string_view>({"PHY"});
@@ -197,6 +181,124 @@ public:
     srslog::basic_logger& channel = srslog::fetch_basic_logger(channel_str);
     channel.set_level(level.value());
   }
+};
+
+/// Application command to set the carrier frequency offset.
+class cfo_app_command : public app_services::cmdline_command
+{
+  ru_cfo_controller& controller;
+
+public:
+  explicit cfo_app_command(ru_cfo_controller& controller_) : controller(controller_) {}
+
+  // See interface for documentation.
+  std::string_view get_name() const override { return "cfo"; }
+
+  // See interface for documentation.
+  std::string_view get_description() const override { return " <sector_id> <cfo>:                set CFO"; }
+
+  // See interface for documentation.
+  void execute(span<const std::string> args) override
+  {
+    if (args.size() != 2) {
+      fmt::print("Invalid CFO command structure. Usage: cfo <sector_id> <cfo_Hz>\n");
+      return;
+    }
+
+    expected<unsigned, std::string> sector_id = app_services::parse_int<unsigned>(args.front());
+    if (not sector_id.has_value()) {
+      fmt::print("Invalid sector identifier.\n");
+      return;
+    }
+    expected<double, std::string> cfo = app_services::parse_double(args.back());
+    if (not cfo.has_value()) {
+      fmt::print("Invalid CFO value.\n");
+      return;
+    }
+
+    cfo_compensation_request cfo_reqs;
+    cfo_reqs.cfo_hz = cfo.value();
+    if (!controller.set_tx_cfo(sector_id.value(), cfo_reqs)) {
+      fmt::print("Setting TX CFO was not successful. The radio may not support this feature.\n");
+      return;
+    }
+
+    if (!controller.set_rx_cfo(sector_id.value(), cfo_reqs)) {
+      fmt::print("Setting RX CFO was not successful. The radio may not support this feature.\n");
+      return;
+    }
+
+    fmt::print("CFO set to {}Hz for sector {}.\n", cfo.value(), sector_id.value());
+  }
+};
+
+/// Application command to set the transmit time offset.
+class tx_time_offset_app_command : public app_services::cmdline_command
+{
+  ru_tx_time_offset_controller& controller;
+
+public:
+  explicit tx_time_offset_app_command(ru_tx_time_offset_controller& controller_) : controller(controller_) {}
+
+  // See interface for documentation.
+  std::string_view get_name() const override { return "tx_time_offset"; }
+
+  // See interface for documentation.
+  std::string_view get_description() const override
+  {
+    return " <sector_id> <tx_time_offset>:     set transmit time offset in microseconds";
+  }
+
+  // See interface for documentation.
+  void execute(span<const std::string> args) override
+  {
+    if (args.size() != 2) {
+      fmt::print("Invalid transmit time offset command structure. Usage: tx_time_offset <sector_id> <Time offset in "
+                 "microseconds>\n");
+      return;
+    }
+
+    expected<unsigned, std::string> sector_id = app_services::parse_int<unsigned>(args.front());
+    if (not sector_id.has_value()) {
+      fmt::print("Invalid sector identifier.\n");
+      return;
+    }
+    expected<double, std::string> tx_time_offset_us = app_services::parse_double(args.back());
+    if (not tx_time_offset_us.has_value()) {
+      fmt::print("Invalid transmit time offset format.\n");
+      return;
+    }
+
+    phy_time_unit tx_time_offset = phy_time_unit::from_seconds(*tx_time_offset_us * 1e-6);
+    if (!controller.set_tx_time_offset(sector_id.value(), tx_time_offset)) {
+      fmt::print("Setting TX time offset was not successful. The radio may not support this feature.\n");
+      return;
+    }
+
+    fmt::print(
+        "Transmit time offset set to {:.3f} us for sector {}.\n", tx_time_offset.to_seconds() * 1e6, sector_id.value());
+  }
+};
+
+/// STDOUT metrics subcommand to print RU metrics.
+class ru_metrics_subcommand_stdout : public app_services::toggle_stdout_metrics_app_command::metrics_subcommand
+{
+  ru_metrics_consumer_stdout& printer;
+
+public:
+  explicit ru_metrics_subcommand_stdout(ru_metrics_consumer_stdout& printer_) : printer(printer_) {}
+
+  // See interface for documentation.
+  std::string_view get_name() const override { return "ru"; }
+
+  // See interface for documentation.
+  void print_header() override { printer.print_header(); }
+
+  // See interface for documentation.
+  void enable() override { printer.enable(); }
+
+  // See interface for documentation.
+  void disable() override { printer.disable(); }
 };
 
 } // namespace srsran

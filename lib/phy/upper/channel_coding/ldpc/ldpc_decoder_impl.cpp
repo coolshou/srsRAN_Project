@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -32,8 +32,8 @@ using namespace srsran::ldpc;
 
 void ldpc_decoder_impl::init(const configuration& cfg)
 {
-  uint8_t  pos   = get_lifting_size_position(cfg.block_conf.tb_common.lifting_size);
-  unsigned skip  = (cfg.block_conf.tb_common.base_graph == ldpc_base_graph_type::BG2) ? NOF_LIFTING_SIZES : 0;
+  uint8_t  pos   = get_lifting_size_position(cfg.lifting_size);
+  unsigned skip  = (cfg.base_graph == ldpc_base_graph_type::BG2) ? NOF_LIFTING_SIZES : 0;
   current_graph  = &graph_array[skip + pos];
   bg_N_full      = current_graph->get_nof_BG_var_nodes_full();
   bg_N_short     = current_graph->get_nof_BG_var_nodes_short();
@@ -41,18 +41,15 @@ void ldpc_decoder_impl::init(const configuration& cfg)
   bg_K           = current_graph->get_nof_BG_info_nodes();
   bg_N_high_rate = bg_K + 4;
   srsran_assert(bg_K == bg_N_full - bg_M, "Invalid bg_K value '{}'", bg_K);
-  lifting_size = static_cast<uint16_t>(cfg.block_conf.tb_common.lifting_size);
+  lifting_size = static_cast<uint16_t>(cfg.lifting_size);
 
-  max_iterations = cfg.algorithm_conf.max_iterations;
+  max_iterations = cfg.max_iterations;
   srsran_assert(max_iterations > 0, "Max iterations must be different to 0");
 
-  scaling_factor = cfg.algorithm_conf.scaling_factor;
-  srsran_assert((scaling_factor > 0) && (scaling_factor < 1), "Scaling factor must be between 0 and 1 exclusively");
-
-  unsigned nof_crc_bits = cfg.block_conf.cb_specific.nof_crc_bits;
+  unsigned nof_crc_bits = cfg.nof_crc_bits;
   srsran_assert((nof_crc_bits == 16) || (nof_crc_bits == 24), "Invalid number of CRC bits.");
 
-  nof_significant_bits = bg_K * lifting_size - cfg.block_conf.cb_specific.nof_filler_bits;
+  nof_significant_bits = bg_K * lifting_size - cfg.nof_filler_bits;
 
   specific_init();
 }
@@ -85,8 +82,14 @@ std::optional<unsigned> ldpc_decoder_impl::decode(bit_buffer&                   
   // Find the last soft bit in the buffer and trim the output.
   const log_likelihood_ratio* last =
       std::find_if(input.rbegin(), input.rend(), [](const log_likelihood_ratio& in) { return in != 0; }).base();
-  if (last == input.begin()) {
-    // If all input LLRs are zero, we won't be able to decode: set all bits to one (so that the CRC will fail).
+
+  // Determine input length.
+  unsigned input_size = std::distance(input.begin(), last);
+
+  // The input meaningful number of bits must contain the message length number of bits to successfully decode the
+  // codeblock.
+  if ((input_size < message_length) && force_decoding) {
+    // If the codeblock CRC check is external, set all bits to one (so that the CRC will fail).
     if (crc == nullptr) {
       output.one();
     }
@@ -96,9 +99,7 @@ std::optional<unsigned> ldpc_decoder_impl::decode(bit_buffer&                   
   // Ensure check-to-variable messages are not initialized.
   std::fill(is_check_to_var_initialized.begin(), is_check_to_var_initialized.end(), false);
 
-  unsigned input_size = static_cast<unsigned>(last - input.begin());
-
-  load_soft_bits(input);
+  load_soft_bits(input, input_size);
 
   // The minimum codeblock length is message_length + four times the lifting size
   // (that is, the length of the high-rate region).
@@ -146,7 +147,7 @@ std::optional<unsigned> ldpc_decoder_impl::decode(bit_buffer&                   
   return {};
 }
 
-void ldpc_decoder_impl::load_soft_bits(span<const log_likelihood_ratio> llrs)
+void ldpc_decoder_impl::load_soft_bits(span<const log_likelihood_ratio> llrs, unsigned nof_llr)
 {
   // Compute the number of data nodes fully occupied by the llrs (the + 2 is due to the shortened nodes at the beginning
   // of the codeblock).
@@ -161,10 +162,16 @@ void ldpc_decoder_impl::load_soft_bits(span<const log_likelihood_ratio> llrs)
   for (unsigned i_node = 2 * node_size_byte, max_node = nof_full_nodes * node_size_byte; i_node != max_node;
        i_node += node_size_byte) {
     // Copy input LLR in the soft bits.
-    clamp(soft_bits_view.first(lifting_size), llr_view.first(lifting_size), soft_bits_clamp_low, soft_bits_clamp_high);
+    if (nof_llr != 0) {
+      clamp(
+          soft_bits_view.first(lifting_size), llr_view.first(lifting_size), soft_bits_clamp_low, soft_bits_clamp_high);
+    } else {
+      srsvec::zero(soft_bits_view.first(lifting_size));
+    }
 
     // Advance input LLR.
     llr_view = llr_view.last(llr_view.size() - lifting_size);
+    nof_llr  = (nof_llr >= lifting_size) ? (nof_llr - lifting_size) : 0;
 
     // Zero node tail soft bits.
     srsvec::zero(soft_bits_view.subspan(lifting_size, node_size_byte - lifting_size));
@@ -319,4 +326,25 @@ void ldpc_decoder_impl::update_check_to_variable_messages(unsigned check_node)
                               var_node);
   }
   is_check_to_var_initialized[check_node] = true;
+}
+
+bool ldpc_decoder_impl::get_hard_bits(bit_buffer& out) const
+{
+  if (lifting_size == node_size_byte) {
+    span<const log_likelihood_ratio> llrs = span<const log_likelihood_ratio>(soft_bits).first(out.size());
+    return hard_decision(out, llrs);
+  }
+
+  // Perform hard-decision of the LLRs from the soft_bits array directly into the output without any padding.
+  bool valid = true;
+  for (unsigned i_node = 0; i_node != bg_K; ++i_node) {
+    // View over the LLR.
+    span<const log_likelihood_ratio> current_soft =
+        span<const log_likelihood_ratio>(soft_bits).subspan(node_size_byte * i_node, lifting_size);
+
+    // Perform hard decision of the node.
+    valid &= hard_decision(out, current_soft, lifting_size * i_node);
+  }
+
+  return valid;
 }

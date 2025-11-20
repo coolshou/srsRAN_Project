@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -290,7 +290,7 @@ TEST_P(paging_sched_tester, successfully_paging_multiple_ues)
 
   std::map<five_g_s_tmsi, unsigned> fiveg_s_tmsi_to_paging_attempts_lookup;
 
-  static const unsigned nof_ues = 5;
+  static constexpr unsigned nof_ues = 5;
 
   // Notify scheduler of paging message.
   for (unsigned ue_num = 0; ue_num < nof_ues; ue_num++) {

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,8 +21,12 @@
  */
 
 #include "test_du_high_worker_manager.h"
+#include "srsran/adt/byte_buffer.h"
+#include "srsran/support/executors/inline_task_executor.h"
 #include "srsran/support/executors/priority_task_worker.h"
+#include "srsran/support/executors/strand_executor.h"
 #include "srsran/support/executors/task_worker_pool.h"
+#include "srsran/support/timers.h"
 
 using namespace srsran;
 using namespace srs_du;
@@ -89,16 +93,19 @@ public:
     srs_du::du_high_executor_config exec_cfg;
     auto& cells = exec_cfg.cell_executors.emplace<srs_du::du_high_executor_config::dedicated_cell_worker_list>();
     for (unsigned i = 0; i != slot_execs.size(); ++i) {
-      cells.push_back(srs_du::du_high_executor_config::dedicated_cell_worker{slot_execs[i], cell_execs[i]});
+      cells.push_back(srs_du::du_high_executor_config::dedicated_cell_worker{&slot_execs[i], &cell_execs[i]});
     }
     exec_cfg.ue_executors   = {srs_du::du_high_executor_config::ue_executor_config::map_policy::per_cell,
                                cfg.nof_cell_workers,
                                task_worker_queue_size,
                                task_worker_queue_size,
+                               &low_prio_exec,
                                &low_prio_exec};
     exec_cfg.ctrl_executors = {task_worker_queue_size, &high_prio_exec};
 
     exec_mapper = srs_du::create_du_high_executor_mapper(exec_cfg);
+
+    timer_strand = make_task_strand_ptr<concurrent_queue_policy::lockfree_mpmc>(high_prio_exec, task_worker_queue_size);
   }
 
   void stop() override
@@ -111,16 +118,42 @@ public:
 
   du_high_executor_mapper& get_exec_mapper() override { return *exec_mapper; }
 
+  task_executor& timer_executor() override { return *timer_strand; }
+
+  void wait_pending_tasks() override { worker_pool.wait_pending_tasks(); }
+
 private:
-  // instantiated workers.
+  // Instantiated workers.
   priority_task_worker_pool                          worker_pool;
   priority_task_worker_pool_executor                 high_prio_exec{enqueue_priority::max, worker_pool};
   priority_task_worker_pool_executor                 low_prio_exec{enqueue_priority::max - 1, worker_pool};
   std::vector<std::unique_ptr<priority_task_worker>> cell_workers;
   std::vector<priority_task_worker_executor>         slot_execs;
   std::vector<priority_task_worker_executor>         cell_execs;
+  std::unique_ptr<task_executor>                     timer_strand;
 
   std::unique_ptr<du_high_executor_mapper> exec_mapper;
+};
+
+class preinitialize_tls_resources : public unique_thread::observer
+{
+public:
+  preinitialize_tls_resources(timer_manager& timers_) : timers(timers_) {}
+
+  void on_thread_creation() override
+  {
+    // Pre-initialize thread-local resources to avoid doing it in the critical path.
+    init_byte_buffer_segment_pool_tls();
+    // Pre-initialize timer queues to avoid doing it in the critical path.
+    inline_task_executor dummy_executor;
+    auto                 dummy_timer = timers.create_unique_timer(dummy_executor);
+    dummy_timer.stop();
+  }
+
+  void on_thread_destruction() override {}
+
+private:
+  timer_manager& timers;
 };
 
 } // namespace
@@ -128,5 +161,7 @@ private:
 std::unique_ptr<test_helpers::du_high_worker_manager>
 srsran::test_helpers::create_multi_threaded_du_high_executor_mapper(const du_high_worker_config& cfg)
 {
+  unique_thread::add_observer(std::make_unique<preinitialize_tls_resources>(cfg.timers));
+
   return std::make_unique<multithreaded_du_high_executor_mapper>(cfg);
 }

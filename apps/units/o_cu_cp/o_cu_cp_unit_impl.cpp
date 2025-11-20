@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -38,7 +38,7 @@ srs_cu_cp::cu_cp& o_cu_cp_unit_impl::get_cu_cp()
   return o_cu->get_cu_cp();
 }
 
-srs_cu_cp::cu_cp_power_controller& o_cu_cp_unit_impl::get_power_controller()
+srs_cu_cp::cu_cp_operation_controller& o_cu_cp_unit_impl::get_operation_controller()
 {
-  return o_cu->get_power_controller();
+  return o_cu->get_operation_controller();
 }

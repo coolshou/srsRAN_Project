@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,10 +24,10 @@
 #include "../adapters/du_high_adapter_factories.h"
 #include "mac_test_mode_helpers.h"
 #include "srsran/adt/ring_buffer.h"
+#include "srsran/mac/mac_cell_timing_context.h"
 #include "srsran/mac/mac_factory.h"
-#include "srsran/ran/csi_report/csi_report_on_pucch_helpers.h"
 #include "srsran/scheduler/harq_id.h"
-#include "srsran/scheduler/resource_grid_util.h"
+#include "srsran/scheduler/result/sched_result.h"
 #include <functional>
 #include <utility>
 
@@ -58,57 +58,19 @@ public:
     return 0;
   }
 
-  unsigned on_buffer_state_update() override { return TEST_UE_DL_BUFFER_STATE_UPDATE_SIZE; }
+  rlc_buffer_state on_buffer_state_update() override
+  {
+    rlc_buffer_state bs = {};
+    bs.pending_bytes    = TEST_UE_DL_BUFFER_STATE_UPDATE_SIZE;
+    // TODO: set bs.hol_toa
+    return bs;
+  }
 
 private:
   byte_buffer tx_sdu;
 };
 
-size_t get_ring_size(const mac_cell_creation_request& cell_cfg)
-{
-  // Note: The history ring size has to be a multiple of the TDD frame size in slots.
-  // Number of slots managed by this container.
-  return get_allocator_ring_size_gt_min(get_max_slot_ul_alloc_delay(cell_cfg.sched_req.ntn_cs_koffset));
-}
-
 } // namespace
-
-test_ue_info_manager::test_ue_info_manager(rnti_t rnti_start_, uint16_t nof_ues_, uint16_t nof_cells_) :
-  rnti_start(rnti_start_), nof_ues(nof_ues_), nof_cells(nof_cells_), pending_tasks(128)
-{
-}
-
-void test_ue_info_manager::add_ue(rnti_t rnti, du_ue_index_t ue_idx, const sched_ue_config_request& sched_ue_cfg_req)
-{
-  // Dispatch creation of UE to du_cell thread.
-  while (not pending_tasks.try_push([this, rnti, ue_idx, sched_ue_cfg_req]() {
-    rnti_to_ue_info_lookup[rnti] =
-        test_ue_info{.ue_idx = ue_idx, .sched_ue_cfg_req = sched_ue_cfg_req, .msg4_rx_flag = false};
-  })) {
-    srslog::fetch_basic_logger("MAC").warning("Failed to add test mode UE. Retrying...");
-  }
-}
-
-void test_ue_info_manager::remove_ue(rnti_t rnti)
-{
-  while (not pending_tasks.try_push([this, rnti]() {
-    if (rnti_to_ue_info_lookup.count(rnti) > 0) {
-      rnti_to_ue_info_lookup.erase(rnti);
-    }
-  })) {
-    srslog::fetch_basic_logger("MAC").warning("Failed to remove test mode UE. Retrying...");
-  }
-}
-
-void test_ue_info_manager::process_pending_tasks()
-{
-  unique_task task;
-  while (pending_tasks.try_pop(task)) {
-    task();
-  }
-}
-
-// ----
 
 mac_test_mode_cell_adapter::mac_test_mode_cell_adapter(
     const srs_du::du_test_mode_config::test_mode_ue_config& test_ue_cfg_,
@@ -118,7 +80,9 @@ mac_test_mode_cell_adapter::mac_test_mode_cell_adapter(
     mac_cell_slot_handler&                                  slot_handler_,
     mac_cell_result_notifier&                               result_notifier_,
     std::function<void(rnti_t)>                             dl_bs_notifier_,
-    test_ue_info_manager&                                   ue_info_mgr_) :
+    mac_test_mode_event_handler&                            event_handler_,
+    mac_test_mode_ue_repository&                            ue_info_mgr_) :
+  cell_index(cell_cfg.cell_index),
   test_ue_cfg(test_ue_cfg_),
   adapted(adapted_),
   pdu_handler(pdu_handler_),
@@ -126,25 +90,25 @@ mac_test_mode_cell_adapter::mac_test_mode_cell_adapter(
   result_notifier(result_notifier_),
   dl_bs_notifier(std::move(dl_bs_notifier_)),
   logger(srslog::fetch_basic_logger("MAC")),
-  sched_decision_history(get_ring_size(cell_cfg)),
+  history(cell_cfg),
+  event_handler(event_handler_),
   ue_info_mgr(ue_info_mgr_)
 {
 }
 
-void mac_test_mode_cell_adapter::handle_slot_indication(slot_point sl_tx)
+void mac_test_mode_cell_adapter::handle_slot_indication(const mac_cell_timing_context& context)
 {
   if (test_ue_cfg.auto_ack_indication_delay.has_value()) {
     // auto-generation of CRC/UCI indication is enabled.
-    slot_point                   sl_rx = sl_tx - test_ue_cfg.auto_ack_indication_delay.value();
-    const slot_decision_history& entry = sched_decision_history[get_ring_idx(sl_rx)];
-    std::unique_lock<std::mutex> lock(entry.mutex);
-    if (entry.slot == sl_rx) {
+    slot_point sl_rx = context.sl_tx - test_ue_cfg.auto_ack_indication_delay.value();
+    const auto entry = history.read(sl_rx);
+    if (entry != nullptr) {
       // Handle auto-generation of pending CRC indications.
-      if (not entry.puschs.empty()) {
+      if (not entry->puschs.empty()) {
         mac_crc_indication_message crc_ind{};
         crc_ind.sl_rx = sl_rx;
 
-        for (const ul_sched_info& pusch : entry.puschs) {
+        for (const ul_sched_info& pusch : entry->puschs) {
           auto& crc_pdu   = crc_ind.crcs.emplace_back();
           crc_pdu.rnti    = pusch.pusch_cfg.rnti;
           crc_pdu.harq_id = pusch.pusch_cfg.harq_id;
@@ -154,13 +118,8 @@ void mac_test_mode_cell_adapter::handle_slot_indication(slot_point sl_tx)
           crc_pdu.ul_sinr_dB = 100;
         }
 
-        // Unlock before forward CRC indication
-        lock.unlock();
-
         // Forward CRC to the real MAC.
         forward_crc_ind_to_mac(crc_ind);
-
-        lock.lock();
       }
 
       // Handle auto-generation of pending UCI indications.
@@ -168,19 +127,16 @@ void mac_test_mode_cell_adapter::handle_slot_indication(slot_point sl_tx)
       uci_ind.sl_rx = sl_rx;
 
       // > Handle pending PUCCHs.
-      for (const pucch_info& pucch : entry.pucchs) {
+      for (const pucch_info& pucch : entry->pucchs) {
         uci_ind.ucis.emplace_back(create_uci_pdu(pucch, test_ue_cfg));
       }
 
       // > Handle pending PUSCHs.
-      for (const ul_sched_info& pusch : entry.puschs) {
+      for (const ul_sched_info& pusch : entry->puschs) {
         if (pusch.uci.has_value()) {
           uci_ind.ucis.emplace_back(create_uci_pdu(pusch, test_ue_cfg));
         }
       }
-
-      // Unlock before forward UCI indication
-      lock.unlock();
 
       // Forward UCI indication to real MAC.
       forward_uci_ind_to_mac(uci_ind);
@@ -191,26 +147,26 @@ void mac_test_mode_cell_adapter::handle_slot_indication(slot_point sl_tx)
     }
   }
 
-  slot_handler.handle_slot_indication(sl_tx);
+  slot_handler.handle_slot_indication(context);
 }
 
 void mac_test_mode_cell_adapter::handle_error_indication(slot_point sl_tx, error_event event)
 {
+  slot_handler.handle_error_indication(sl_tx, event);
+
   if (event.pusch_and_pucch_discarded) {
-    slot_decision_history&      entry = sched_decision_history[get_ring_idx(sl_tx)];
-    std::lock_guard<std::mutex> lock(entry.mutex);
-    if (entry.slot == sl_tx) {
-      // Delete expected UCI and CRC indications that resulted from the scheduler decisions for this slot.
-      entry.puschs.clear();
-      entry.pucchs.clear();
-    } else {
+    // Dispatch clearing of the history to the slot ind executor.
+    if (not event_handler.schedule(cell_index, [this, sl_tx]() { history.clear(sl_tx); })) {
       logger.warning("TEST_MODE: Failed to handle error indication for slot={}. Cause: Overflow of the test mode "
                      "internal storage detected",
                      sl_tx);
     }
   }
+}
 
-  slot_handler.handle_error_indication(sl_tx, event);
+void mac_test_mode_cell_adapter::handle_stop_indication()
+{
+  slot_handler.handle_stop_indication();
 }
 
 void mac_test_mode_cell_adapter::handle_crc(const mac_crc_indication_message& msg)
@@ -219,16 +175,15 @@ void mac_test_mode_cell_adapter::handle_crc(const mac_crc_indication_message& ms
 
   if (not test_ue_cfg.auto_ack_indication_delay.has_value()) {
     // Acquire history.
-    const slot_decision_history& entry = sched_decision_history[get_ring_idx(msg.sl_rx)];
-    std::lock_guard<std::mutex>  lock(entry.mutex);
-    if (entry.slot == msg.sl_rx) {
+    const auto entry = history.read(msg.sl_rx);
+    if (entry != nullptr) {
       // Forward CRC to MAC, but remove the UCI for the test mode UE.
       for (mac_crc_pdu& crc : msg_copy.crcs) {
-        if (ue_info_mgr.is_test_ue(crc.rnti)) {
+        if (ue_info_mgr.is_cell_test_ue(cell_index, crc.rnti)) {
           // test mode UE case.
 
           // Find respective PUSCH PDU that was previously scheduled.
-          bool found = std::any_of(entry.puschs.begin(), entry.puschs.end(), [&](const ul_sched_info& pusch) {
+          bool found = std::any_of(entry->puschs.begin(), entry->puschs.end(), [&](const ul_sched_info& pusch) {
             return pusch.pusch_cfg.rnti == crc.rnti and pusch.pusch_cfg.harq_id == crc.harq_id;
           });
           if (not found) {
@@ -252,10 +207,11 @@ void mac_test_mode_cell_adapter::handle_crc(const mac_crc_indication_message& ms
     }
   } else {
     // In case of auto-ACK mode, test mode UEs are removed from CRC.
-    msg_copy.crcs.erase(std::remove_if(msg_copy.crcs.begin(),
-                                       msg_copy.crcs.end(),
-                                       [this](const auto& crc) { return ue_info_mgr.is_test_ue(crc.rnti); }),
-                        msg_copy.crcs.end());
+    msg_copy.crcs.erase(
+        std::remove_if(msg_copy.crcs.begin(),
+                       msg_copy.crcs.end(),
+                       [this](const auto& crc) { return ue_info_mgr.is_cell_test_ue(cell_index, crc.rnti); }),
+        msg_copy.crcs.end());
   }
 
   // Forward resulting CRC indication to real MAC.
@@ -286,11 +242,11 @@ void mac_test_mode_cell_adapter::forward_crc_ind_to_mac(const mac_crc_indication
   }
 
   for (const mac_crc_pdu& pdu : crc_msg.crcs) {
-    if (not ue_info_mgr.is_test_ue(pdu.rnti)) {
+    if (not ue_info_mgr.is_cell_test_ue(cell_index, pdu.rnti)) {
       continue;
     }
 
-    auto rx_pdu = create_test_pdu_with_bsr(crc_msg.sl_rx, pdu.rnti, to_harq_id(pdu.harq_id));
+    auto rx_pdu = create_test_pdu_with_bsr(cell_index, crc_msg.sl_rx, pdu.rnti, to_harq_id(pdu.harq_id));
     if (not rx_pdu.has_value()) {
       logger.warning("TEST_MODE c-rnti={}: Unable to create test PDU with BSR", pdu.rnti);
       continue;
@@ -305,15 +261,14 @@ void mac_test_mode_cell_adapter::handle_uci(const mac_uci_indication_message& ms
   mac_uci_indication_message msg_copy{msg};
 
   if (not test_ue_cfg.auto_ack_indication_delay.has_value()) {
-    const slot_decision_history& entry = sched_decision_history[get_ring_idx(msg.sl_rx)];
-    std::unique_lock<std::mutex> lock(entry.mutex);
-    if (entry.slot == msg_copy.sl_rx) {
+    const auto entry = history.read(msg.sl_rx);
+    if (entry != nullptr) {
       // Forward UCI to MAC, but alter the UCI for the test mode UE.
       for (mac_uci_pdu& test_uci : msg_copy.ucis) {
-        if (ue_info_mgr.is_test_ue(test_uci.rnti)) {
+        if (ue_info_mgr.is_cell_test_ue(cell_index, test_uci.rnti)) {
           bool entry_found = false;
           if (std::holds_alternative<mac_uci_pdu::pusch_type>(test_uci.pdu)) {
-            for (const ul_sched_info& pusch : entry.puschs) {
+            for (const ul_sched_info& pusch : entry->puschs) {
               if (pusch.pusch_cfg.rnti == test_uci.rnti and pusch.uci.has_value()) {
                 test_uci    = create_uci_pdu(pusch, test_ue_cfg);
                 entry_found = true;
@@ -321,7 +276,7 @@ void mac_test_mode_cell_adapter::handle_uci(const mac_uci_indication_message& ms
             }
           } else {
             // PUCCH case.
-            for (const pucch_info& pucch : entry.pucchs) {
+            for (const pucch_info& pucch : entry->pucchs) {
               if (pucch_info_and_uci_ind_match(pucch, test_uci)) {
                 // Intercept the UCI indication and force HARQ-ACK=ACK and UCI.
                 test_uci    = create_uci_pdu(pucch, test_ue_cfg);
@@ -347,10 +302,11 @@ void mac_test_mode_cell_adapter::handle_uci(const mac_uci_indication_message& ms
     }
   } else {
     // In case of auto-ACK mode, test mode UEs are removed from UCI.
-    msg_copy.ucis.erase(std::remove_if(msg_copy.ucis.begin(),
-                                       msg_copy.ucis.end(),
-                                       [this](const auto& u) { return ue_info_mgr.is_test_ue(u.rnti); }),
-                        msg_copy.ucis.end());
+    msg_copy.ucis.erase(
+        std::remove_if(msg_copy.ucis.begin(),
+                       msg_copy.ucis.end(),
+                       [this](const auto& u) { return ue_info_mgr.is_cell_test_ue(cell_index, u.rnti); }),
+        msg_copy.ucis.end());
   }
 
   // Forward UCI indication to real MAC.
@@ -366,9 +322,45 @@ void mac_test_mode_cell_adapter::handle_srs(const mac_srs_indication_message& ms
 void mac_test_mode_cell_adapter::on_new_downlink_scheduler_results(const mac_dl_sched_result& dl_res)
 {
   if (last_slot_ind != dl_res.slot) {
-    // Process any pending tasks for the test mode UE manager asynchronously.
-    ue_info_mgr.process_pending_tasks();
+    // Process any pending tasks for the test mode asynchronously.
+    event_handler.process_pending_tasks(cell_index);
     last_slot_ind = dl_res.slot;
+  }
+
+  for (auto& grant : dl_res.dl_res->ue_grants) {
+    rnti_t crnti = grant.pdsch_cfg.rnti;
+    if (not ue_info_mgr.is_cell_test_ue(cell_index, crnti) or ue_info_mgr.is_msg4_rxed(crnti)) {
+      // UE is not test mode or it has already received Msg4.
+      continue;
+    }
+
+    // In case of SRB PDU received, we assume that the Msg4 is received. At this point, we update the test UE with
+    // positive DL buffer states and BSR.
+    auto& lchs = grant.tb_list[0].lc_chs_to_sched;
+    if (std::any_of(
+            lchs.begin(), lchs.end(), [](const auto& lc) { return lc.lcid.is_sdu() and is_srb(lc.lcid.to_lcid()); })) {
+      if (test_ue_cfg.pdsch_active) {
+        // Update DL buffer state automatically.
+        dl_bs_notifier(crnti);
+      }
+
+      if (test_ue_cfg.pusch_active) {
+        auto rx_pdu = create_test_pdu_with_bsr(cell_index, dl_res.slot, crnti, to_harq_id(0));
+        if (not rx_pdu.has_value()) {
+          logger.warning("TEST_MODE c-rnti={}: Unable to create test PDU with BSR", crnti);
+          continue;
+        }
+        // In case of PUSCH test mode is enabled, push a BSR to trigger the first PUSCH.
+        pdu_handler.handle_rx_data_indication(std::move(rx_pdu.value()));
+      }
+
+      // Mark Msg4 received for the UE.
+      ue_info_mgr.msg4_rxed(crnti, true);
+
+      // Push an UL PDU that will serve as rrcSetupComplete and get the UE out of fallback mode.
+      auto rx_pdu = create_test_pdu_with_rrc_setup_complete(cell_index, dl_res.slot, crnti, to_harq_id(0));
+      pdu_handler.handle_rx_data_indication(std::move(rx_pdu.value()));
+    }
   }
 
   // Dispatch result to lower layers.
@@ -379,66 +371,69 @@ void mac_test_mode_cell_adapter::on_new_downlink_scheduler_results(const mac_dl_
 void mac_test_mode_cell_adapter::on_new_uplink_scheduler_results(const mac_ul_sched_result& ul_res)
 {
   if (last_slot_ind != ul_res.slot) {
-    // Process any pending tasks for the test mode UE manager asynchronously.
-    ue_info_mgr.process_pending_tasks();
+    // Process any pending tasks for the test mode asynchronously.
+    event_handler.process_pending_tasks(cell_index);
     last_slot_ind = ul_res.slot;
   }
 
+  // Update history.
   {
-    slot_decision_history&       entry = sched_decision_history[get_ring_idx(ul_res.slot)];
-    std::unique_lock<std::mutex> lock(entry.mutex);
-    entry.slot = ul_res.slot;
-
-    // Resets the history for this ring element.
-    entry.pucchs.clear();
-    entry.puschs.clear();
-
-    // Fill the ring element with the scheduler decisions.
-    for (const pucch_info& pucch : ul_res.ul_res->pucchs) {
-      if (ue_info_mgr.is_test_ue(pucch.crnti)) {
-        entry.pucchs.push_back(pucch);
-      }
-    }
-    for (const ul_sched_info& pusch : ul_res.ul_res->puschs) {
-      if (ue_info_mgr.is_test_ue(pusch.pusch_cfg.rnti)) {
-        entry.puschs.push_back(pusch);
-      }
-    }
-  }
-
-  if (ul_res.ul_res != nullptr and not ul_res.ul_res->pucchs.empty()) {
-    for (const pucch_info& pucch : ul_res.ul_res->pucchs) {
-      if (not ue_info_mgr.is_test_ue(pucch.crnti) or ue_info_mgr.is_msg4_rxed(pucch.crnti)) {
-        // UE is not test mode or it has already received Msg4.
-        continue;
-      }
-      if ((pucch.format == pucch_format::FORMAT_1 and pucch.format_1.harq_ack_nof_bits > 0) or
-          (pucch.format == pucch_format::FORMAT_0 and pucch.format_0.harq_ack_nof_bits > 0)) {
-        // In case of PUCCH F1 with HARQ-ACK bits, we assume that the Msg4 is received. At this point, we
-        // update the test UE with positive DL buffer states and BSR.
-        if (test_ue_cfg.pdsch_active) {
-          // Update DL buffer state automatically.
-          dl_bs_notifier(pucch.crnti);
+    auto entry = history.write(ul_res.slot);
+    if (entry != nullptr) {
+      // Fill the ring element with the scheduler decisions.
+      for (const pucch_info& pucch : ul_res.ul_res->pucchs) {
+        if (ue_info_mgr.is_cell_test_ue(cell_index, pucch.crnti)) {
+          entry->pucchs.push_back(pucch);
         }
-
-        if (test_ue_cfg.pusch_active) {
-          auto rx_pdu = create_test_pdu_with_bsr(ul_res.slot, pucch.crnti, to_harq_id(0));
-          if (not rx_pdu.has_value()) {
-            logger.warning("TEST_MODE c-rnti={}: Unable to create test PDU with BSR", pucch.crnti);
-            continue;
-          }
-          // In case of PUSCH test mode is enabled, push a BSR to trigger the first PUSCH.
-          pdu_handler.handle_rx_data_indication(std::move(rx_pdu.value()));
-        }
-
-        // Mark Msg4 received for the UE.
-        ue_info_mgr.msg4_rxed(pucch.crnti, true);
       }
+      for (const ul_sched_info& pusch : ul_res.ul_res->puschs) {
+        if (ue_info_mgr.is_cell_test_ue(cell_index, pusch.pusch_cfg.rnti)) {
+          entry->puschs.push_back(pusch);
+        }
+      }
+    } else {
+      logger.warning("TEST_MODE: Unable to write UL results for slot={}. Cause: Overflow detected in test mode "
+                     "internal storage",
+                     ul_res.slot);
     }
   }
 
   // Forward results to PHY.
   result_notifier.on_new_uplink_scheduler_results(ul_res);
+}
+
+void mac_test_mode_cell_adapter::on_cell_results_completion(slot_point slot)
+{
+  // Forward results to lower layers.
+  result_notifier.on_cell_results_completion(slot);
+
+  // Check if more test mode UEs need to be created.
+  // Note: The UE creation should only start after last_slot_ind is valid, i.e., after we have the guarantee that
+  // the cell is active.
+  if (nof_test_ues_created < test_ue_cfg.nof_ues and last_slot_ind.valid() and
+      slot.count() % test_ue_cfg.ue_creation_stagger_slots == 0) {
+    auto ulcch_buf = byte_buffer::create({0x34, 0x1e, 0x4f, 0xc0, 0x4f, 0xa6, 0x06, 0x3f, 0x00, 0x00, 0x00});
+    if (not ulcch_buf.has_value()) {
+      logger.warning("TEST_MODE: Postponing creation of test mode ue={}. Cause: Unable to allocate byte_buffer for "
+                     "UL-CCCH message",
+                     nof_test_ues_created);
+    }
+
+    const rnti_t test_ue_rnti =
+        to_rnti(to_value(test_ue_cfg.rnti) + (cell_index * test_ue_cfg.nof_ues) + nof_test_ues_created);
+
+    // Inject UL-CCCH message that will trigger the test mode UE creation.
+    pdu_handler.handle_rx_data_indication(
+        mac_rx_data_indication{slot, cell_index, {mac_rx_pdu{test_ue_rnti, 0, 0, ulcch_buf.value().copy()}}});
+
+    // UL-CCCH message injected. Update counter.
+    logger.info("TEST_MODE: Starting UE with rnti={} creation on cell={}. There still {}/{} left to be created.",
+                test_ue_rnti,
+                fmt::underlying(cell_index),
+                test_ue_cfg.nof_ues - (nof_test_ues_created + 1),
+                test_ue_cfg.nof_ues);
+    nof_test_ues_created++;
+  }
 }
 
 // ----
@@ -479,7 +474,8 @@ mac_test_mode_adapter::mac_test_mode_adapter(const srs_du::du_test_mode_config::
                                              mac_result_notifier&                                    phy_notifier_,
                                              unsigned                                                nof_cells) :
   test_ue(test_ue_cfg_),
-  ue_info_mgr(test_ue.rnti, test_ue.nof_ues, nof_cells),
+  event_handler(nof_cells),
+  ue_info_mgr(event_handler, test_ue.rnti, test_ue.nof_ues, nof_cells),
   phy_notifier(std::make_unique<phy_test_mode_adapter>(phy_notifier_))
 {
 }
@@ -491,10 +487,10 @@ void mac_test_mode_adapter::connect(std::unique_ptr<mac_interface> mac_ptr)
   mac_adapted = std::move(mac_ptr);
 }
 
-void mac_test_mode_adapter::add_cell(const mac_cell_creation_request& cell_cfg)
+mac_cell_controller& mac_test_mode_adapter::add_cell(const mac_cell_creation_request& cell_cfg)
 {
   // Create cell in real MAC.
-  mac_adapted->get_cell_manager().add_cell(cell_cfg);
+  mac_cell_controller& cell = mac_adapted->get_cell_manager().add_cell(cell_cfg);
 
   // Create the cell in the MAC test mode.
   auto func_dl_bs_push = [this](rnti_t rnti) {
@@ -509,6 +505,7 @@ void mac_test_mode_adapter::add_cell(const mac_cell_creation_request& cell_cfg)
                                                    mac_adapted->get_slot_handler(cell_cfg.cell_index),
                                                    phy_notifier->adapted_phy.get_cell(cell_cfg.cell_index),
                                                    func_dl_bs_push,
+                                                   event_handler,
                                                    ue_info_mgr);
 
   if (cell_info_handler.size() <= cell_cfg.cell_index) {
@@ -517,6 +514,8 @@ void mac_test_mode_adapter::add_cell(const mac_cell_creation_request& cell_cfg)
   cell_info_handler[cell_cfg.cell_index] = std::move(new_cell);
 
   phy_notifier->connect(cell_cfg.cell_index, *cell_info_handler[cell_cfg.cell_index]);
+
+  return cell;
 }
 
 void mac_test_mode_adapter::remove_cell(du_cell_index_t cell_index)
@@ -533,6 +532,11 @@ void mac_test_mode_adapter::remove_cell(du_cell_index_t cell_index)
 mac_cell_controller& mac_test_mode_adapter::get_cell_controller(du_cell_index_t cell_index)
 {
   return mac_adapted->get_cell_manager().get_cell_controller(cell_index);
+}
+
+mac_cell_time_mapper& mac_test_mode_adapter::get_time_mapper(du_cell_index_t cell_index)
+{
+  return mac_adapted->get_cell_manager().get_time_mapper(cell_index);
 }
 
 mac_cell_control_information_handler& mac_test_mode_adapter::get_control_info_handler(du_cell_index_t cell_index)
@@ -572,7 +576,7 @@ async_task<mac_ue_create_response> mac_test_mode_adapter::handle_ue_create_reque
   if (ue_info_mgr.is_test_ue(cfg.crnti)) {
     // It is the test UE.
     mac_ue_create_request cfg_copy = cfg;
-    cfg_copy.initial_fallback      = false;
+    cfg_copy.initial_fallback      = true;
 
     // Save UE index and configuration of test mode UE.
     ue_info_mgr.add_ue(cfg.crnti, cfg_copy.ue_index, cfg_copy.sched_cfg);
@@ -637,8 +641,8 @@ std::unique_ptr<mac_interface> srsran::srs_du::create_du_high_mac(const mac_conf
                                               mac_testmode->get_phy_notifier(),
                                               mac_cfg.mac_cfg,
                                               mac_cfg.pcap,
-                                              mac_cfg.sched_cfg,
-                                              mac_cfg.metric_notifier,
-                                              mac_cfg.timers}));
+                                              mac_cfg.timers,
+                                              mac_cfg.metrics,
+                                              mac_cfg.sched_cfg}));
   return mac_testmode;
 }

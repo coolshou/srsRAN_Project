@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -48,7 +48,7 @@ using namespace srsran;
 ///
 /// \param[in] peak_center_correlation Odd number of samples containing a peak maximum in the center.
 /// \return The fractional sample estimation where the maximum is located if the result is valid.
-float fractional_sample_delay(span<const float> peak_center_correlation)
+static float fractional_sample_delay(span<const float> peak_center_correlation)
 {
   // Calculation coefficients for solving the equations.
   static constexpr std::array<float, 5> num_weights_5 = {{-0.400000, -0.200000, 0.000000, 0.200000, 0.400000}};
@@ -111,10 +111,10 @@ time_alignment_estimator_dft_impl::time_alignment_estimator_dft_impl(
   }
 }
 
-time_alignment_measurement time_alignment_estimator_dft_impl::estimate(const re_buffer_reader<cf_t>&   symbols,
-                                                                       bounded_bitset<max_nof_symbols> mask,
-                                                                       subcarrier_spacing              scs,
-                                                                       double                          max_ta)
+time_alignment_measurement time_alignment_estimator_dft_impl::estimate(const re_buffer_reader<cf_t>&          symbols,
+                                                                       const bounded_bitset<max_nof_symbols>& mask,
+                                                                       subcarrier_spacing                     scs,
+                                                                       double                                 max_ta)
 {
   srsran_assert(mask.count() == symbols.get_slice(0).size(),
                 "The number of complex symbols per port {} does not match the mask size {}.",
@@ -157,13 +157,13 @@ time_alignment_measurement time_alignment_estimator_dft_impl::estimate(const re_
   }
 
   // Estimate the time alignment from the correlation.
-  return estimate_ta_correlation(correlation, scs, max_ta);
+  return estimate_ta_correlation(correlation, /* stride = */ 1, scs, max_ta);
 }
 
-time_alignment_measurement time_alignment_estimator_dft_impl::estimate(span<const cf_t>                symbols,
-                                                                       bounded_bitset<max_nof_symbols> mask,
-                                                                       subcarrier_spacing              scs,
-                                                                       double                          max_ta)
+time_alignment_measurement time_alignment_estimator_dft_impl::estimate(span<const cf_t>                       symbols,
+                                                                       const bounded_bitset<max_nof_symbols>& mask,
+                                                                       subcarrier_spacing                     scs,
+                                                                       double                                 max_ta)
 {
   modular_re_buffer_reader<cf_t, 1> symbols_view(1, symbols.size());
   symbols_view.set_slice(0, symbols);
@@ -177,13 +177,13 @@ time_alignment_measurement time_alignment_estimator_dft_impl::estimate(const re_
                                                                        double                        max_ta)
 {
   unsigned       nof_symbols = symbols.get_nof_re();
-  dft_processor& idft        = get_idft(nof_symbols * stride);
+  dft_processor& idft        = get_idft(nof_symbols);
 
   // Get IDFT input buffer.
   span<cf_t> channel_observed_freq = idft.get_input();
 
   // Zero input buffer.
-  srsvec::zero(channel_observed_freq);
+  srsvec::zero(channel_observed_freq.last(channel_observed_freq.size() - nof_symbols));
 
   // Prepare correlation temporary buffer.
   span<float> correlation = span<float>(idft_abs2).first(idft.get_size());
@@ -194,9 +194,7 @@ time_alignment_measurement time_alignment_estimator_dft_impl::estimate(const re_
     span<const cf_t> symbols_in = symbols.get_slice(i_in);
 
     // Write the symbols in their corresponding positions.
-    for (unsigned i_symbol = 0; i_symbol != nof_symbols; ++i_symbol) {
-      channel_observed_freq[stride * i_symbol] = symbols_in[i_symbol];
-    }
+    srsvec::copy(channel_observed_freq.first(nof_symbols), symbols_in);
 
     // Perform correlation in frequency domain.
     span<const cf_t> channel_observed_time = idft.run();
@@ -211,7 +209,7 @@ time_alignment_measurement time_alignment_estimator_dft_impl::estimate(const re_
   }
 
   // Estimate the time alignment from the correlation.
-  return estimate_ta_correlation(correlation, scs, max_ta);
+  return estimate_ta_correlation(correlation, stride, scs, max_ta);
 }
 
 time_alignment_measurement time_alignment_estimator_dft_impl::estimate(span<const cf_t>   symbols,
@@ -245,6 +243,7 @@ dft_processor& time_alignment_estimator_dft_impl::get_idft(unsigned nof_required
 }
 
 time_alignment_measurement time_alignment_estimator_dft_impl::estimate_ta_correlation(span<const float>  correlation,
+                                                                                      unsigned           stride,
                                                                                       subcarrier_spacing scs,
                                                                                       double             max_ta)
 {
@@ -253,7 +252,7 @@ time_alignment_measurement time_alignment_estimator_dft_impl::estimate_ta_correl
       phy_time_unit::from_units_of_kappa(144) / pow2(to_numerology_value(scs) + 1);
 
   // Deduce sampling rate.
-  double sampling_rate_Hz = correlation.size() * scs_to_khz(scs) * 1000;
+  double sampling_rate_Hz = correlation.size() * scs_to_khz(scs) * 1000 * stride;
 
   // Maximum number of samples limited by half cyclic prefix.
   unsigned max_ta_samples = std::floor(half_cyclic_prefix_duration.to_seconds() * sampling_rate_Hz);

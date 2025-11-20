@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -70,6 +70,11 @@ static __always_inline __m512i ZERO_epi8()
 
 /// Maximum number of AVX512 vectors needed to represent a BG node.
 static constexpr unsigned MAX_NODE_SIZE_AVX512 = divide_ceil(ldpc::MAX_LIFTING_SIZE, AVX512_SIZE_BYTE);
+
+ldpc_decoder_avx512::ldpc_decoder_avx512(bool cfg_force_decoding) :
+  ldpc_decoder_impl(cfg_force_decoding), help_check_to_var(MAX_NODE_SIZE_AVX512 * AVX512_SIZE_BYTE)
+{
+}
 
 void ldpc_decoder_avx512::specific_init()
 {
@@ -190,9 +195,7 @@ void ldpc_decoder_avx512::compute_check_to_var_msgs(span<log_likelihood_ratio> t
   mm512::avx512_const_span min_var_to_check_index_avx512(min_var_to_check_index, node_size_avx512);
   mm512::avx512_const_span sign_prod_var_to_check_avx512(sign_prod_var_to_check, node_size_avx512);
   mm512::avx512_const_span rotated_node_avx512(rotated_node, node_size_avx512);
-
-  std::array<log_likelihood_ratio, MAX_NODE_SIZE_AVX512 * AVX512_SIZE_BYTE> help_check_to_var;
-  mm512::avx512_span help_check_to_var_avx512(help_check_to_var, node_size_avx512);
+  mm512::avx512_span       help_check_to_var_avx512(help_check_to_var, node_size_avx512);
 
   __m512i this_var_index_epi8 = _mm512_set1_epi8(static_cast<int8_t>(var_node));
   for (unsigned i_block = 0; i_block != node_size_avx512; ++i_block) {
@@ -264,35 +267,4 @@ void ldpc_decoder_avx512::compute_soft_bits(span<log_likelihood_ratio>       thi
     soft_epi8        = _mm512_mask_blend_epi8(mask_epi8, soft_epi8, LLR_NEG_INFINITY_epi8());
     this_soft_bits_avx512.set_at(i_block, soft_epi8);
   }
-};
-
-bool ldpc_decoder_avx512::get_hard_bits(bit_buffer& out)
-{
-  // Buffer to hold the soft bits.
-  std::array<log_likelihood_ratio, MAX_LIFTING_SIZE * MAX_BG_K> temp_llr;
-  span<log_likelihood_ratio>                                    llr_write_buffer(temp_llr);
-
-  unsigned                 max_node_lifted = bg_K * node_size_avx512;
-  mm512::avx512_const_span soft_bits_avx512(soft_bits, max_node_lifted);
-
-  // Copy the LLRs from the soft_bits AVX array into temp_llr without any padding. Recall that temp_llr is aligned to
-  // the size of the AVX registers. This makes it possible to call the hard decision function only once, improving
-  // efficiency.
-  for (unsigned i_node_lifted = 0; i_node_lifted != max_node_lifted; i_node_lifted += node_size_avx512) {
-    // View over the LLR.
-    span<const log_likelihood_ratio> current_soft(
-        reinterpret_cast<const log_likelihood_ratio*>(soft_bits_avx512.data_at(i_node_lifted, 0)), lifting_size);
-
-    // Append LLRs to the buffer.
-    srsvec::copy(llr_write_buffer.first(lifting_size), current_soft);
-
-    // Advance buffer.
-    llr_write_buffer = llr_write_buffer.last(llr_write_buffer.size() - lifting_size);
-  }
-
-  // View over the appended LLR.
-  span<const log_likelihood_ratio> llr_read_buffer(temp_llr.begin(), llr_write_buffer.begin());
-
-  // Convert to hard bits.
-  return hard_decision(out, llr_read_buffer);
 }

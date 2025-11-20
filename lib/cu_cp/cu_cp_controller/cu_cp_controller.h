@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -28,6 +28,7 @@
 #include "cu_up_connection_manager.h"
 #include "du_connection_manager.h"
 #include "node_connection_notifier.h"
+#include "srsran/cu_cp/common_task_scheduler.h"
 #include "srsran/cu_cp/cu_cp_configuration.h"
 
 namespace srsran {
@@ -47,21 +48,25 @@ class ue_manager;
 class cu_cp_controller : public cu_cp_ue_admission_controller
 {
 public:
-  cu_cp_controller(const cu_cp_configuration&  config_,
-                   common_task_scheduler&      common_task_sched_,
-                   ngap_repository&            ngaps_,
-                   cu_up_processor_repository& cu_ups_,
-                   du_processor_repository&    dus_,
-                   task_executor&              ctrl_exec);
+  cu_cp_controller(const cu_cp_configuration&      config_,
+                   cu_cp_amf_reconnection_handler& cu_cp_notifier,
+                   common_task_scheduler&          common_task_sched_,
+                   ngap_repository&                ngaps_,
+                   cu_up_processor_repository&     cu_ups_,
+                   du_processor_repository&        dus_,
+                   task_executor&                  ctrl_exec);
 
   void stop();
 
   amf_connection_manager& amf_connection_handler() { return amf_mng; }
 
-  bool handle_du_setup_request(du_index_t du_idx, const du_setup_request& req);
+  bool handle_du_setup_request(du_index_t du_idx, const std::set<plmn_identity>& plmn_ids);
 
-  /// \brief Determines whether the CU-CP should accept a new UE connection for a given PLMN.
-  bool request_ue_setup(plmn_identity plmn) const override;
+  /// \brief Determines whether the CU-CP should accept new UE connections.
+  bool request_ue_setup() const override;
+
+  /// \brief Determines whether the CU-CP should accept a new UE connection based on its PLMN.
+  bool is_supported_plmn(const plmn_identity& plmn) const;
 
   cu_cp_f1c_handler& get_f1c_handler() { return du_mng; }
   cu_cp_e1_handler&  get_e1_handler() { return cu_up_mng; }

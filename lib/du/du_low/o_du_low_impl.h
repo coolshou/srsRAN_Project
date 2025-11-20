@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,43 +22,45 @@
 
 #pragma once
 
+#include "o_du_low_metrics_collector_impl.h"
 #include "srsran/du/du_low/du_low.h"
 #include "srsran/du/du_low/o_du_low.h"
+#include "srsran/du/du_operation_controller.h"
 #include "srsran/fapi_adaptor/phy/phy_fapi_adaptor.h"
 #include <memory>
-#include <vector>
 
 namespace srsran {
 namespace srs_du {
 
-class o_du_low_impl final : public o_du_low
+class o_du_low_impl final : public o_du_low, public du_operation_controller
 {
 public:
-  o_du_low_impl(std::unique_ptr<du_low>                                      du_lo_,
-                std::vector<std::unique_ptr<fapi_adaptor::phy_fapi_adaptor>> fapi_adaptors_);
+  o_du_low_impl(std::unique_ptr<du_low>                         du_lo_,
+                std::unique_ptr<fapi_adaptor::phy_fapi_adaptor> fapi_adaptor_,
+                unsigned                                        nof_cells);
 
   // See interface for documentation.
   du_low& get_du_low() override;
 
   // See interface for documentation.
-  fapi::slot_message_gateway& get_slot_message_gateway(unsigned cell_id) override;
+  du_operation_controller& get_operation_controller() override { return *this; }
 
   // See interface for documentation.
-  fapi::slot_last_message_notifier& get_slot_last_message_notifier(unsigned cell_id) override;
+  fapi_adaptor::phy_fapi_adaptor& get_phy_fapi_adaptor() override;
 
   // See interface for documentation.
-  void set_slot_time_message_notifier(unsigned cell_id, fapi::slot_time_message_notifier& fapi_time_notifier) override;
+  o_du_low_metrics_collector_impl* get_metrics_collector() override;
 
   // See interface for documentation.
-  void set_slot_error_message_notifier(unsigned                           cell_id,
-                                       fapi::slot_error_message_notifier& fapi_error_notifier) override;
+  void start() override;
 
   // See interface for documentation.
-  void set_slot_data_message_notifier(unsigned cell_id, fapi::slot_data_message_notifier& fapi_data_notifier) override;
+  void stop() override;
 
 private:
-  std::unique_ptr<du_low>                                      du_lo;
-  std::vector<std::unique_ptr<fapi_adaptor::phy_fapi_adaptor>> fapi_adaptors;
+  std::unique_ptr<du_low>                         du_lo;
+  std::unique_ptr<fapi_adaptor::phy_fapi_adaptor> fapi_adaptor;
+  o_du_low_metrics_collector_impl                 metrics_collector;
 };
 
 } // namespace srs_du

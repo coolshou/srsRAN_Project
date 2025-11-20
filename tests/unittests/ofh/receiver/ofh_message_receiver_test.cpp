@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,11 +21,14 @@
  */
 
 #include "../../../../lib/ofh/receiver/ofh_closed_rx_window_handler.h"
-#include "../../../../lib/ofh/receiver/ofh_message_receiver.h"
+#include "../../../../lib/ofh/receiver/ofh_data_flow_uplane_decoding_metrics_collector.h"
+#include "../../../../lib/ofh/receiver/ofh_message_receiver_impl.h"
 #include "../../../../lib/ofh/receiver/ofh_rx_window_checker.h"
 #include "../../../../lib/ofh/receiver/ofh_sequence_id_checker_dummy_impl.h"
 #include "../../support/task_executor_test_doubles.h"
 #include "../compression/ofh_iq_decompressor_test_doubles.h"
+#include "srsran/ofh/ethernet/ethernet_controller.h"
+#include "srsran/ofh/ethernet/ethernet_receiver_metrics_collector.h"
 #include "srsran/ofh/ethernet/ethernet_unique_buffer.h"
 #include "srsran/ofh/ofh_factories.h"
 #include "srsran/phy/support/shared_resource_grid.h"
@@ -41,7 +44,9 @@ namespace {
 class dummy_uplane_rx_symbol_notifier : public uplane_rx_symbol_notifier
 {
 public:
-  void on_new_uplink_symbol(const uplane_rx_symbol_context& context, shared_resource_grid grid) override {}
+  void on_new_uplink_symbol(const uplane_rx_symbol_context& context, shared_resource_grid grid, bool is_valid) override
+  {
+  }
   void on_new_prach_window_data(const prach_buffer_context& context, const prach_buffer& buffer) override {}
 };
 
@@ -51,7 +56,7 @@ class dummy_eth_rx_buffer : public ether::rx_buffer
 public:
   explicit dummy_eth_rx_buffer(std::vector<uint8_t>&& init_values) { buffer = init_values; }
 
-  span<const uint8_t> data() const override { return buffer; };
+  span<const uint8_t> data() const override { return buffer; }
 
 private:
   std::vector<uint8_t> buffer;
@@ -59,11 +64,15 @@ private:
 /// Data flow User-Plane uplink PRACH spy.
 class data_flow_uplane_uplink_prach_spy : public data_flow_uplane_uplink_prach
 {
-  bool decode_function_called = false;
+  bool                                         decode_function_called = false;
+  data_flow_message_decoding_metrics_collector metrics_collector{false};
 
 public:
   // See interface for documentation.
   void decode_type1_message(unsigned eaxc, span<const uint8_t> msg) override { decode_function_called = true; }
+
+  // See interface for documentation.
+  data_flow_message_decoding_metrics_collector& get_metrics_collector() override { return metrics_collector; }
 
   /// Returns true if the decode_type1_message function has been called, otherwise false.
   bool has_decode_function_been_called() const { return decode_function_called; }
@@ -72,11 +81,15 @@ public:
 /// Data flow User-Plane uplink PRACH spy.
 class data_flow_uplane_uplink_data_spy : public data_flow_uplane_uplink_data
 {
-  bool decode_function_called = false;
+  bool                                         decode_function_called = false;
+  data_flow_message_decoding_metrics_collector metrics_collector{false};
 
 public:
   // See interface for documentation.
   void decode_type1_message(unsigned eaxc, span<const uint8_t> msg) override { decode_function_called = true; }
+
+  // See interface for documentation.
+  data_flow_message_decoding_metrics_collector& get_metrics_collector() override { return metrics_collector; }
 
   /// Returns true if the decode_type1_message function has been called, otherwise false.
   bool has_decode_function_been_called() const { return decode_function_called; }
@@ -130,11 +143,19 @@ public:
 };
 
 /// Dummy Ethernet receiver class.
-class dummy_eth_receiver : public ether::receiver
+class dummy_eth_receiver : public ether::receiver, public ether::receiver_operation_controller
 {
+  // See interface for documentation.
   void start(ether::frame_notifier& notifier) override {}
 
+  // See interface for documentation.
   void stop() override {}
+
+  // See interface for documentation.
+  ether::receiver_operation_controller& get_operation_controller() override { return *this; }
+
+  // See interface for documentation.
+  ether::receiver_metrics_collector* get_metrics_collector() override { return nullptr; }
 };
 
 } // namespace
@@ -167,20 +188,21 @@ public:
                            std::make_shared<prach_context_repository>(20),
                            std::make_shared<uplink_context_repository>(20),
                            std::make_shared<dummy_uplane_rx_symbol_notifier>()}),
-    window_checker(srslog::fetch_basic_logger("TEST"), {}, {}),
+    window_checker(false, {}),
     ul_handler(generate_config(), generate_dependencies())
   {
-    window_checker.on_new_symbol({{1, 0}, 0, 14});
+    window_checker.on_new_symbol({{{1, 0}, 0, 14}, {}});
   }
 
   message_receiver_config generate_config()
   {
     message_receiver_config config;
-    config.nof_symbols = 14;
-    config.scs         = subcarrier_spacing::kHz30;
-    config.vlan_params = vlan_params;
-    config.ul_eaxc     = ul_eaxc;
-    config.prach_eaxc  = ul_prach_eaxc;
+    config.nof_symbols                   = 14;
+    config.scs                           = subcarrier_spacing::kHz30;
+    config.vlan_params                   = vlan_params;
+    config.ul_eaxc                       = ul_eaxc;
+    config.prach_eaxc                    = ul_prach_eaxc;
+    config.enable_log_warnings_for_lates = true;
 
     return config;
   }
@@ -190,6 +212,7 @@ public:
     message_receiver_dependencies dependencies;
     dependencies.logger         = &srslog::fetch_basic_logger("TEST");
     dependencies.window_checker = &window_checker;
+    dependencies.window_handler = &closed_window_handler;
 
     {
       auto temp                    = std::make_unique<data_flow_uplane_uplink_prach_spy>();

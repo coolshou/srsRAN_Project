@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -417,7 +417,7 @@ public:
 
   static_bit_buffer(static_bit_buffer& other) = delete;
 
-  static_bit_buffer(static_bit_buffer&& other) : bit_buffer(buffer, other.size()){};
+  static_bit_buffer(static_bit_buffer&& other) : bit_buffer(buffer, other.size()) {}
 
   /// Resizes the bit buffer.
   void resize(unsigned new_size)
@@ -474,7 +474,7 @@ struct formatter<srsran::bit_buffer> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::bit_buffer& s, FormatContext& ctx)
+  auto format(const srsran::bit_buffer& s, FormatContext& ctx) const
   {
     if (mode == hexadecimal) {
       return s.template to_hex_string<decltype(std::declval<FormatContext>().out())>(ctx.out());

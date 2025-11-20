@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -28,7 +28,6 @@
 #include "srsran/support/format/fmt_to_c_str.h"
 #include "srsran/support/format/prefixed_logger.h"
 #include "fmt/format.h"
-#include <string.h>
 
 namespace srsran {
 namespace srs_cu_cp {
@@ -41,11 +40,11 @@ public:
                      amf_ue_id_t amf_ue_id = amf_ue_id_t::invalid)
   {
     fmt::memory_buffer buffer;
-    fmt::format_to(buffer,
+    fmt::format_to(std::back_inserter(buffer),
                    "ue={}{}{}: ",
                    ue_index,
-                   ran_ue_id != ran_ue_id_t::invalid ? fmt::format(" ran_ue={}", ran_ue_id) : "",
-                   amf_ue_id != amf_ue_id_t::invalid ? fmt::format(" amf_ue={}", amf_ue_id) : "");
+                   ran_ue_id != ran_ue_id_t::invalid ? fmt::format(" ran_ue={}", fmt::underlying(ran_ue_id)) : "",
+                   amf_ue_id != amf_ue_id_t::invalid ? fmt::format(" amf_ue={}", fmt::underlying(amf_ue_id)) : "");
     prefix = srsran::to_c_str(buffer);
   }
   const char* to_c_str() const { return prefix.c_str(); }
@@ -71,8 +70,7 @@ struct formatter<srsran::srs_cu_cp::ngap_ue_log_prefix> {
   }
 
   template <typename FormatContext>
-  auto format(srsran::srs_cu_cp::ngap_ue_log_prefix o, FormatContext& ctx)
-
+  auto format(srsran::srs_cu_cp::ngap_ue_log_prefix o, FormatContext& ctx) const
   {
     return format_to(ctx.out(), "{}", o.to_c_str());
   }

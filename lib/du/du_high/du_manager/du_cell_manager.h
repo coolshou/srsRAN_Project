@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,10 +23,37 @@
 #pragma once
 
 #include "srsran/du/du_high/du_manager/du_manager_params.h"
+#include "srsran/mac/cell_configuration.h"
 #include "srsran/ran/du_types.h"
 
 namespace srsran {
 namespace srs_du {
+
+struct du_cell_param_config_request;
+
+/// Current DU cell context.
+struct du_cell_context {
+  enum class state_t { active, inactive, deactivating };
+
+  /// Current configuration.
+  du_cell_config cfg;
+  /// Encoded System Information being currently sent by the DU cell.
+  mac_cell_sys_info_config si_cfg;
+  /// Current cell state.
+  state_t state;
+};
+
+/// Result of the reconfiguration of a DU cell.
+struct du_cell_reconfig_result {
+  /// Cell configured.
+  du_cell_index_t cell_index;
+  /// Whether the CU needs to be notified of the gNB-DU cell configuration update.
+  bool cu_notif_required;
+  /// Whether the Scheduler needs to be notified about an update in the SI scheduling.
+  bool sched_notif_required;
+  /// Request for the MAC to change the slice configuration of the cell.
+  std::optional<du_cell_slice_reconfig_request> slice_reconf_req;
+};
 
 class du_cell_manager
 {
@@ -37,47 +64,69 @@ public:
 
   bool has_cell(du_cell_index_t cell_index) const { return cell_index < cells.size(); }
 
+  /// Determine whether cell is activated.
   bool is_cell_active(du_cell_index_t cell_index) const
   {
     assert_cell_exists(cell_index);
-    return cells[cell_index]->active;
+    return cells[cell_index]->state == du_cell_context::state_t::active;
   }
 
-  void set_cell_state(du_cell_index_t cell_index, bool active)
-  {
-    assert_cell_exists(cell_index);
-    cells[cell_index]->active = active;
-  }
+  du_cell_index_t get_cell_index(nr_cell_global_id_t nr_cgi) const;
+
+  du_cell_index_t get_cell_index(pci_t pci) const;
+
+  void add_cell(const du_cell_config& cfg);
 
   const du_cell_config& get_cell_cfg(du_cell_index_t cell_index) const
   {
     assert_cell_exists(cell_index);
     return cells[cell_index]->cfg;
   }
-
-  async_task<void> start(du_cell_index_t cell_index);
-
-  async_task<void> stop(du_cell_index_t cell_index);
-
-  async_task<void> stop();
-
-private:
-  struct cell_t {
-    bool           active = false;
-    du_cell_config cfg;
-  };
-
-  void assert_cell_exists(du_cell_index_t cell_index) const
+  du_cell_config& get_cell_cfg(du_cell_index_t cell_index)
   {
-    srsran_assert(has_cell(cell_index), "cell_index={} does not exist", cell_index);
+    assert_cell_exists(cell_index);
+    return cells[cell_index]->cfg;
   }
 
-  void add_cell(const du_cell_config& cfg);
+  /// Stop accepting new UE creations in the given cell.
+  void stop_accepting_ues(du_cell_index_t cell_index) const
+  {
+    cells[cell_index]->state = du_cell_context::state_t::deactivating;
+  }
+
+  /// Handle request to update a cell configuration.
+  /// \return true if a change was detected and applied.
+  expected<du_cell_reconfig_result> handle_cell_reconf_request(const du_cell_param_config_request& req) const;
+
+  /// Retrieve current cell system information configuration.
+  const mac_cell_sys_info_config& get_sys_info(du_cell_index_t cell_index) const
+  {
+    assert_cell_exists(cell_index);
+    return cells[cell_index]->si_cfg;
+  }
+
+  /// Start a specific cell in the DU.
+  async_task<bool> start(du_cell_index_t cell_index) const;
+
+  /// Stop a specific cell in the DU.
+  async_task<void> stop(du_cell_index_t cell_index) const;
+
+  /// Stop all cells in the DU.
+  async_task<void> stop_all() const;
+
+  /// Remove all cell configurations.
+  void remove_all_cells();
+
+private:
+  void assert_cell_exists(du_cell_index_t cell_index) const
+  {
+    srsran_assert(has_cell(cell_index), "cell_index={} does not exist", fmt::underlying(cell_index));
+  }
 
   const du_manager_params& cfg;
   srslog::basic_logger&    logger;
 
-  std::vector<std::unique_ptr<cell_t>> cells;
+  std::vector<std::unique_ptr<du_cell_context>> cells;
 };
 
 } // namespace srs_du

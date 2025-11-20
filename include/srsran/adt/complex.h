@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -99,16 +99,13 @@ inline cf_t to_cf(ci16_t value)
 
 /// Checks if T is compatible with a complex floating point.
 template <typename T>
-struct is_complex : std::false_type {
-};
+struct is_complex : std::false_type {};
 
 template <typename T>
-struct is_complex<std::complex<T>> : std::true_type {
-};
+struct is_complex<std::complex<T>> : std::true_type {};
 
 template <typename T>
-struct is_complex<const std::complex<T>> : std::true_type {
-};
+struct is_complex<const std::complex<T>> : std::true_type {};
 
 } // namespace srsran
 
@@ -157,7 +154,7 @@ struct formatter_template {
   }
 
   template <typename FormatContext>
-  auto format(ComplexType value, FormatContext& ctx)
+  auto format(ComplexType value, FormatContext& ctx) const
   {
     const string_view format_str = string_view(format_buffer.data(), format_buffer.size());
     return format_to(ctx.out(), format_str, value.real(), value.imag());
@@ -165,14 +162,11 @@ struct formatter_template {
 };
 
 template <>
-struct formatter<srsran::cf_t> : public formatter_template<srsran::cf_t> {
-};
+struct formatter<srsran::cf_t> : public formatter_template<srsran::cf_t> {};
 template <>
-struct formatter<srsran::ci8_t> : public formatter_template<srsran::ci8_t> {
-};
+struct formatter<srsran::ci8_t> : public formatter_template<srsran::ci8_t> {};
 template <>
-struct formatter<srsran::ci16_t> : public formatter_template<srsran::ci16_t> {
-};
+struct formatter<srsran::ci16_t> : public formatter_template<srsran::ci16_t> {};
 
 /// FMT formatter of cbf16_t type.
 template <>
@@ -186,7 +180,7 @@ struct formatter<srsran::cbf16_t> {
   }
 
   template <typename FormatContext>
-  auto format(srsran::cbf16_t value, FormatContext& ctx)
+  auto format(srsran::cbf16_t value, FormatContext& ctx) const
   {
     return cf_formatter.format(srsran::to_cf(value), ctx);
   }

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -81,7 +81,7 @@ public:
 
       // Stop if no device is found.
       if (devices.empty()) {
-        printf("Error: no radio devices found.\n");
+        fmt::println("Error: no radio devices found.");
         return false;
       }
 
@@ -353,7 +353,7 @@ public:
       return stream;
     }
 
-    printf("Error: failed to create receive stream %d. %s.", description.id, stream->get_error_message().c_str());
+    fmt::println("Error: failed to create receive stream {}. {}.", description.id, stream->get_error_message().c_str());
     return nullptr;
   }
   bool set_tx_gain(unsigned ch, double gain)
@@ -396,24 +396,24 @@ public:
   }
   bool set_tx_freq(uint32_t ch, const radio_configuration::lo_frequency& config)
   {
-    logger.debug("Setting channel {} Tx frequency to {} MHz.", ch, to_MHz(config.center_frequency_hz));
+    logger.debug("Setting channel {} Tx frequency to {} MHz.", ch, to_MHz(config.center_frequency_Hz));
 
     return safe_execution([this, ch, &config]() {
       uhd::freq_range_t range = usrp->get_tx_freq_range(ch);
 
-      if (!radio_uhd_device_validate_freq_range(range, config.center_frequency_hz)) {
+      if (!radio_uhd_device_validate_freq_range(range, config.center_frequency_Hz)) {
         on_error("Tx RF frequency {} MHz is out-of-range. Range is {}.",
-                 to_MHz(config.center_frequency_hz),
+                 to_MHz(config.center_frequency_Hz),
                  range.to_pp_string());
         return;
       }
 
       // Create tune request.
-      uhd::tune_request_t tune_request(config.center_frequency_hz);
+      uhd::tune_request_t tune_request(config.center_frequency_Hz);
 
       // If the LO frequency is defined, force a LO frequency and set the DSP frequency to auto.
-      if (std::isnormal(config.lo_frequency_hz)) {
-        tune_request.rf_freq         = config.lo_frequency_hz;
+      if (std::isnormal(config.lo_frequency_Hz)) {
+        tune_request.rf_freq         = config.lo_frequency_Hz;
         tune_request.rf_freq_policy  = uhd::tune_request_t::POLICY_MANUAL;
         tune_request.dsp_freq_policy = uhd::tune_request_t::POLICY_AUTO;
       }
@@ -423,24 +423,24 @@ public:
   }
   bool set_rx_freq(uint32_t ch, const radio_configuration::lo_frequency& config)
   {
-    logger.debug("Setting channel {} Rx frequency to {} MHz.", ch, to_MHz(config.center_frequency_hz));
+    logger.debug("Setting channel {} Rx frequency to {} MHz.", ch, to_MHz(config.center_frequency_Hz));
 
     return safe_execution([this, ch, &config]() {
       uhd::freq_range_t range = usrp->get_rx_freq_range(ch);
 
-      if (!radio_uhd_device_validate_freq_range(range, config.center_frequency_hz)) {
+      if (!radio_uhd_device_validate_freq_range(range, config.center_frequency_Hz)) {
         on_error("Rx RF frequency {} MHz is out-of-range. Range is {}.",
-                 to_MHz(config.center_frequency_hz),
+                 to_MHz(config.center_frequency_Hz),
                  range.to_pp_string());
         return;
       }
 
       // Create tune request.
-      uhd::tune_request_t tune_request(config.center_frequency_hz);
+      uhd::tune_request_t tune_request(config.center_frequency_Hz);
 
       // If the LO frequency is defined, force a LO frequency and set the DSP frequency to auto.
-      if (std::isnormal(config.lo_frequency_hz)) {
-        tune_request.rf_freq         = config.lo_frequency_hz;
+      if (std::isnormal(config.lo_frequency_Hz)) {
+        tune_request.rf_freq         = config.lo_frequency_Hz;
         tune_request.rf_freq_policy  = uhd::tune_request_t::POLICY_MANUAL;
         tune_request.dsp_freq_policy = uhd::tune_request_t::POLICY_AUTO;
       }

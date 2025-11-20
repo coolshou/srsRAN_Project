@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -19,6 +19,7 @@
 #
 
 add_library(srsran_instrumentation
+        traces/critical_traces.cpp
         traces/du_traces.cpp
         traces/ru_traces.cpp
         traces/up_traces.cpp

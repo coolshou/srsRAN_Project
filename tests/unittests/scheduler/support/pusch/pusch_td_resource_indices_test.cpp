@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,6 +27,7 @@
 #include "srsran/ran/tdd/tdd_ul_dl_config_formatters.h"
 #include "srsran/scheduler/config/cell_config_builder_params.h"
 #include "srsran/support/format/custom_formattable.h"
+#include "fmt/std.h"
 #include <gtest/gtest.h>
 #include <ostream>
 

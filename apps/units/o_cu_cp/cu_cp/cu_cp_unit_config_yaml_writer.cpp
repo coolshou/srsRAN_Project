@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,6 +21,7 @@
  */
 
 #include "cu_cp_unit_config_yaml_writer.h"
+#include "apps/helpers/metrics/metrics_config_yaml_writer.h"
 #include "cu_cp_unit_config.h"
 #include "srsran/adt/span.h"
 
@@ -72,11 +73,13 @@ static YAML::Node build_cu_cp_extra_amfs_item_section(const cu_cp_unit_amf_confi
   node["port"]                   = config.port;
   node["bind_addr"]              = config.bind_addr;
   node["bind_interface"]         = config.bind_interface;
-  node["sctp_rto_initial"]       = config.sctp_rto_initial;
-  node["sctp_rto_min"]           = config.sctp_rto_min;
-  node["sctp_rto_max"]           = config.sctp_rto_max;
+  node["sctp_rto_initial"]       = config.sctp_rto_initial_ms;
+  node["sctp_rto_min"]           = config.sctp_rto_min_ms;
+  node["sctp_rto_max"]           = config.sctp_rto_max_ms;
   node["sctp_init_max_attempts"] = config.sctp_init_max_attempts;
-  node["sctp_max_init_timeo"]    = config.sctp_max_init_timeo;
+  node["sctp_max_init_timeo"]    = config.sctp_max_init_timeo_ms;
+  node["sctp_hb_interval"]       = config.sctp_hb_interval_ms;
+  node["sctp_assoc_max_retx"]    = config.sctp_assoc_max_retx;
   node["sctp_nodelay"]           = config.sctp_nodelay;
 
   auto sta_node = node["supported_tracking_areas"];
@@ -102,8 +105,9 @@ static YAML::Node build_cu_cp_amf_section(const cu_cp_unit_amf_config& config)
 {
   YAML::Node node;
 
-  node["no_core"] = config.no_core;
-  node["amf"]     = build_cu_cp_extra_amfs_item_section(config.amf);
+  node["no_core"]                     = config.no_core;
+  node["amf_reconnection_retry_time"] = config.amf_reconnection_retry_time;
+  node["amf"]                         = build_cu_cp_extra_amfs_item_section(config.amf);
 
   return node;
 }
@@ -213,7 +217,7 @@ static YAML::Node build_cu_cp_rrc_section(const cu_cp_unit_rrc_config& config)
   YAML::Node node;
 
   node["force_reestablishment_fallback"] = config.force_reestablishment_fallback;
-  node["rrc_procedure_timeout_ms"]       = config.rrc_procedure_timeout_ms;
+  node["rrc_procedure_guard_time_ms"]    = config.rrc_procedure_guard_time_ms;
 
   return node;
 }
@@ -231,6 +235,15 @@ static YAML::Node build_cu_cp_security_section(const cu_cp_unit_security_config&
 }
 
 static YAML::Node build_cu_cp_f1ap_section(const cu_cp_unit_f1ap_config& config)
+{
+  YAML::Node node;
+
+  node["procedure_timeout"] = config.procedure_timeout;
+
+  return node;
+}
+
+static YAML::Node build_cu_cp_e1ap_section(const cu_cp_unit_e1ap_config& config)
 {
   YAML::Node node;
 
@@ -258,6 +271,7 @@ static YAML::Node build_cu_cp_section(const cu_cp_unit_config& config)
   node["rrc"]      = build_cu_cp_rrc_section(config.rrc_config);
   node["security"] = build_cu_cp_security_section(config.security_config);
   node["f1ap"]     = build_cu_cp_f1ap_section(config.f1ap_config);
+  node["e1ap"]     = build_cu_cp_e1ap_section(config.e1ap_config);
 
   return node;
 }
@@ -267,10 +281,13 @@ static void fill_cu_cp_log_section(YAML::Node node, const cu_cp_unit_logger_conf
   node["pdcp_level"]        = srslog::basic_level_to_string(config.pdcp_level);
   node["rrc_level"]         = srslog::basic_level_to_string(config.rrc_level);
   node["ngap_level"]        = srslog::basic_level_to_string(config.ngap_level);
+  node["nrppa_level"]       = srslog::basic_level_to_string(config.nrppa_level);
+  node["e1ap_level"]        = srslog::basic_level_to_string(config.e1ap_level);
   node["f1ap_level"]        = srslog::basic_level_to_string(config.f1ap_level);
   node["cu_level"]          = srslog::basic_level_to_string(config.cu_level);
   node["sec_level"]         = srslog::basic_level_to_string(config.sec_level);
   node["hex_max_size"]      = config.hex_max_size;
+  node["e1ap_json_enabled"] = config.e1ap_json_enabled;
   node["f1ap_json_enabled"] = config.f1ap_json_enabled;
 }
 
@@ -284,9 +301,19 @@ static void fill_cu_cp_pcap_section(YAML::Node node, const cu_cp_unit_pcap_confi
   node["e1ap_enable"]   = config.e1ap.enabled;
 }
 
+static void fill_cu_cp_metrics_layers_section(YAML::Node node, const cu_cp_unit_metrics_layer_config& config)
+{
+  node["enable_ngap"] = config.enable_ngap;
+  node["enable_pdcp"] = config.enable_pdcp;
+  node["enable_rrc"]  = config.enable_rrc;
+}
+
 static void fill_cu_cp_metrics_section(YAML::Node node, const cu_cp_unit_metrics_config& config)
 {
-  node["cu_cp_statistics_report_period"] = config.cu_cp_statistics_report_period;
+  auto perdiodicity_node                   = node["periodicity"];
+  perdiodicity_node["cu_cp_report_period"] = config.cu_cp_report_period;
+
+  fill_cu_cp_metrics_layers_section(node["layers"], config.layers_cfg);
 }
 
 static void fill_cu_cp_am_section(YAML::Node node, const cu_cp_unit_rlc_am_config& config)
@@ -404,7 +431,10 @@ void srsran::fill_cu_cp_config_in_yaml_schema(YAML::Node& node, const cu_cp_unit
   node["gnb_id"]            = config.gnb_id.id;
   node["gnb_id_bit_length"] = static_cast<unsigned>(config.gnb_id.bit_length);
   node["ran_node_name"]     = config.ran_node_name;
-  node["cu_cp"]             = build_cu_cp_section(config);
+
+  app_helpers::fill_metrics_appconfig_in_yaml_schema(node, config.metrics.common_metrics_cfg);
+
+  node["cu_cp"] = build_cu_cp_section(config);
   fill_cu_cp_log_section(node["log"], config.loggers);
   fill_cu_cp_pcap_section(node["pcap"], config.pcap_cfg);
   fill_cu_cp_metrics_section(node["metrics"], config.metrics);

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -182,7 +182,7 @@ TEST_P(fxt_nea3, ciphering_engine_nea3)
 std::string test_param_info_to_string(const ::testing::TestParamInfo<nea_test_set>& info)
 {
   fmt::memory_buffer buffer;
-  fmt::format_to(buffer, "{}", info.param.name);
+  fmt::format_to(std::back_inserter(buffer), "{}", info.param.name);
   return fmt::to_string(buffer);
 }
 
@@ -191,14 +191,29 @@ INSTANTIATE_TEST_SUITE_P(nea1,
                          ::testing::ValuesIn(nea1_test_set.begin(), nea1_test_set.end()),
                          test_param_info_to_string);
 
+INSTANTIATE_TEST_SUITE_P(nea1_extra,
+                         fxt_nea1,
+                         ::testing::ValuesIn(nea1_test_set_extra.begin(), nea1_test_set_extra.end()),
+                         test_param_info_to_string);
+
 INSTANTIATE_TEST_SUITE_P(nea2,
                          fxt_nea2,
                          ::testing::ValuesIn(nea2_test_set.begin(), nea2_test_set.end()),
                          test_param_info_to_string);
 
+INSTANTIATE_TEST_SUITE_P(nea2_extra,
+                         fxt_nea2,
+                         ::testing::ValuesIn(nea2_test_set_extra.begin(), nea2_test_set_extra.end()),
+                         test_param_info_to_string);
+
 INSTANTIATE_TEST_SUITE_P(nea3,
                          fxt_nea3,
                          ::testing::ValuesIn(nea3_test_set.begin(), nea3_test_set.end()),
+                         test_param_info_to_string);
+
+INSTANTIATE_TEST_SUITE_P(nea3_extra,
+                         fxt_nea3,
+                         ::testing::ValuesIn(nea3_test_set_extra.begin(), nea3_test_set_extra.end()),
                          test_param_info_to_string);
 
 int main(int argc, char** argv)

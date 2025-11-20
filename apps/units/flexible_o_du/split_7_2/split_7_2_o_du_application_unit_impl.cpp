@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -37,15 +37,20 @@ void split_7_2_o_du_application_unit_impl::on_loggers_registration()
   register_split_7_2_o_du_loggers(unit_cfg);
 }
 
+bool split_7_2_o_du_application_unit_impl::are_metrics_enabled() const
+{
+  return unit_cfg.odu_high_cfg.du_high_cfg.config.metrics.layers_cfg.are_metrics_enabled() ||
+         unit_cfg.du_low_cfg.metrics_cfg.enable_du_low || unit_cfg.ru_cfg.config.metrics_cfg.enable_ru_metrics;
+}
+
 void split_7_2_o_du_application_unit_impl::on_configuration_parameters_autoderivation(CLI::App& app)
 {
   autoderive_split_7_2_o_du_parameters_after_parsing(app, unit_cfg);
 }
 
-bool split_7_2_o_du_application_unit_impl::on_configuration_validation(
-    const os_sched_affinity_bitmask& available_cpus) const
+bool split_7_2_o_du_application_unit_impl::on_configuration_validation() const
 {
-  return validate_split_7_2_o_du_unit_config(unit_cfg, available_cpus);
+  return validate_split_7_2_o_du_unit_config(unit_cfg);
 }
 
 split_7_2_o_du_application_unit_impl::split_7_2_o_du_application_unit_impl(std::string_view app_name)
@@ -62,11 +67,9 @@ void split_7_2_o_du_application_unit_impl::on_parsing_configuration_registration
   configure_cli11_with_split_7_2_o_du_unit_config_schema(app, unit_cfg);
 }
 
-o_du_unit split_7_2_o_du_application_unit_impl::create_flexible_o_du_unit(const o_du_unit_dependencies& dependencies,
-                                                                          bool                          use_multicell)
+o_du_unit split_7_2_o_du_application_unit_impl::create_flexible_o_du_unit(const o_du_unit_dependencies& dependencies)
 {
-  return use_multicell ? multicell_split_7_2_du_factory(unit_cfg).create_flexible_o_du(dependencies)
-                       : split_7_2_o_du_factory(unit_cfg).create_flexible_o_du(dependencies);
+  return split_7_2_o_du_factory(unit_cfg).create_flexible_o_du(dependencies);
 }
 
 std::unique_ptr<flexible_o_du_application_unit> srsran::create_flexible_o_du_application_unit(std::string_view app_name)
@@ -81,11 +84,16 @@ void split_7_2_o_du_application_unit_impl::dump_config(YAML::Node& node) const
 
 void split_7_2_o_du_application_unit_impl::fill_worker_manager_config(worker_manager_config& config)
 {
-  // OFH always runs in non blocking mode.
-  bool     is_blocking_mode_enable = false;
-  unsigned nof_cells               = unit_cfg.odu_high_cfg.du_high_cfg.config.cells_cfg.size();
+  // OFH always runs in non-blocking mode.
+  bool is_blocking_mode_enable = false;
   fill_o_du_high_worker_manager_config(config, unit_cfg.odu_high_cfg, is_blocking_mode_enable);
-  fill_du_low_worker_manager_config(config, unit_cfg.du_low_cfg, is_blocking_mode_enable, nof_cells);
-  auto cells = generate_du_cell_config(unit_cfg.odu_high_cfg.du_high_cfg.config);
-  fill_ofh_worker_manager_config(config, unit_cfg.ru_cfg.config, cells);
+  std::vector<unsigned> nof_dl_antennas;
+  std::vector<unsigned> nof_ul_antennas;
+  for (const auto& cell : unit_cfg.odu_high_cfg.du_high_cfg.config.cells_cfg) {
+    nof_dl_antennas.push_back(cell.cell.nof_antennas_dl);
+    nof_ul_antennas.push_back(cell.cell.nof_antennas_ul);
+  }
+  fill_du_low_worker_manager_config(
+      config, unit_cfg.du_low_cfg, is_blocking_mode_enable, nof_dl_antennas, nof_ul_antennas);
+  fill_ofh_worker_manager_config(config, unit_cfg.ru_cfg.config);
 }

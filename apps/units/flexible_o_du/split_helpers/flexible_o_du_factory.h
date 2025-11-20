@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -28,6 +28,8 @@
 
 namespace srsran {
 
+class flexible_o_du_metrics_notifier;
+
 /// Flexible O-RAN DU factory interface.
 class flexible_o_du_factory
 {
@@ -35,7 +37,6 @@ class flexible_o_du_factory
 
 public:
   explicit flexible_o_du_factory(const flexible_o_du_unit_config& config_) : config(config_) {}
-
   virtual ~flexible_o_du_factory() = default;
 
   /// Creates a flexible O-RAN DU using the given dependencies and configuration.

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -31,6 +31,7 @@
 #include "srsran/phy/lower/processors/downlink/downlink_processor_baseband.h"
 #include "srsran/phy/lower/processors/uplink/uplink_processor_baseband.h"
 #include "srsran/phy/lower/sampling_rate.h"
+#include <future>
 
 namespace srsran {
 
@@ -45,6 +46,8 @@ public:
   struct configuration {
     /// Sampling rate.
     sampling_rate srate;
+    /// Subcarrier spacing.
+    subcarrier_spacing scs;
     /// \brief Receive task executor.
     ///
     /// Receives baseband samples from the \ref baseband_gateway_receiver, reserves baseband buffers and pushes
@@ -58,10 +61,6 @@ public:
     ///
     /// Notifies uplink-related time boundaries, runs the baseband demodulation and notifies availability of data.
     task_executor* ul_task_executor;
-    /// \brief Downlink task executor.
-    ///
-    /// Notifies downlink-related time boundaries and runs the baseband modulation.
-    task_executor* dl_task_executor;
     /// Baseband receiver gateway.
     baseband_gateway_receiver* receiver;
     /// Baseband transmitter gateway.
@@ -78,23 +77,21 @@ public:
     baseband_gateway_timestamp tx_time_offset;
     /// Maximum number of samples between the last received sample and the next sample to transmit time instants.
     baseband_gateway_timestamp rx_to_tx_max_delay;
-    /// Transmit buffers size.
-    unsigned tx_buffer_size;
-    /// Number of transmit buffers of size \c nof_tx_buffers.
-    unsigned nof_tx_buffers;
     /// Receive buffers size.
     unsigned rx_buffer_size;
     /// Number of receive buffers of size \c rx_buffer_size.
     unsigned nof_rx_buffers;
     /// System time-based throttling. See \ref lower_phy_configuration::system_time_throttling.
     float system_time_throttling;
+    /// Number of slots to execute before a complete stop after requesting to stop.
+    unsigned stop_nof_slots;
   };
 
   /// Constructs a baseband adaptor.
   explicit lower_phy_baseband_processor(const configuration& config);
 
   // See interface for documentation.
-  void start(baseband_gateway_timestamp init_time) override;
+  void start(baseband_gateway_timestamp init_time, baseband_gateway_timestamp sfn0_ref_time) override;
 
   // See interface for documentation.
   void stop() override;
@@ -104,43 +101,32 @@ private:
   class internal_fsm
   {
   public:
+    /// Initialize the internal FSM with the number of processing slots required to close the lower PHY.
+    internal_fsm(unsigned stop_count) : state_stopped(state_wait_stop + stop_count) {}
+
     /// Default destructor - It reports a fatal error if the state is \c running or \c wait_stop.
     ~internal_fsm()
     {
-      report_fatal_error_if_not((state != states::running) && (state != states::wait_stop), "Unexpected state.");
+      uint32_t current_state = state.load();
+      report_fatal_error_if_not((current_state == state_idle) || (current_state >= state_stopped), "Unexpected state.");
     }
 
     /// \brief Notifies the start of the processing.
     /// \remark A fatal error is reported if start() is called while the processor is not in \c idle state.
     void start()
     {
-      states previous_state = state.exchange(states::running);
-      report_fatal_error_if_not(previous_state == states::idle, "Unexpected state.");
-    }
-
-    /// \brief Notifies that the asynchronous execution has stopped.
-    ///
-    /// Changes the state to \c stopped and sends the corresponding notification.
-    /// \remark A fatal error is reported if notify_stop() is called while the processor is not in \c wait_stop.
-    void notify_stop()
-    {
-      states previous_state = state.exchange(states::stopped);
-      report_fatal_error_if_not(previous_state == states::wait_stop, "Unexpected state.");
+      uint32_t expected_state = state_idle;
+      bool     success        = state.compare_exchange_strong(expected_state, state_running);
+      report_fatal_error_if_not(
+          success, "The starting expected state is 0x{:08x} (idle) but found 0x{:08x}.", state_idle, expected_state);
     }
 
     /// \brief Requests all asynchronous processing to stop.
     /// \remark A fatal error is reported if request_stop() is called more than once.
     void request_stop()
     {
-      states previous_state = state.exchange(states::wait_stop);
-
-      report_fatal_error_if_not((previous_state == states::running) || (previous_state == states::idle),
-                                "Unexpected state.");
-
-      // Transition to stop state directly if idle.
-      if (previous_state == states::idle) {
-        state = states::stopped;
-      }
+      uint32_t previous_state = state.fetch_xor(state_wait_stop);
+      report_fatal_error_if_not((previous_state & state_wait_stop) == 0, "Stopping has been requested more than once.");
     }
 
     /// \brief Waits for all asynchronous processing to stop.
@@ -148,31 +134,42 @@ private:
     /// first request_stop().
     void wait_stop()
     {
-      report_fatal_error_if_not((state == states::wait_stop) || (state == states::stopped), "Unexpected state.");
+      report_fatal_error_if_not((state.load() & state_wait_stop) != 0, "Unexpected state.");
 
-      while (state == states::wait_stop) {
-        std::this_thread::sleep_for(std::chrono::microseconds(10));
-      }
+      // Wait for the state to transition to stop.
+      stop_control.get_future().wait();
     }
 
-    /// Returns true if the asynchronous execution is running.
-    bool is_running() const { return state == states::running; }
+    /// \brief Call on the event of processing.
+    /// \return \c true if the state is running, otherwise \c false.
+    bool on_process()
+    {
+      // Detect stop mask.
+      if ((state.load() & state_wait_stop) != 0) {
+        // Increment the process count before considering stopped.
+        uint32_t current_state = state.fetch_add(1) + 1;
+        if (current_state >= state_stopped) {
+          stop_control.set_value();
+          return false;
+        }
+      }
+      return true;
+    }
 
   private:
-    /// Possible states.
-    enum class states {
-      /// The asynchronous processing has not been started.
-      idle = 0,
-      /// The asynchronous processing has started and not notify_stop.
-      running,
-      /// A stop command has been issued - waiting for the asynchronous tasks to finish.
-      wait_stop,
-      /// The asynchronous processing started, ran and it is currently notify_stop.
-      stopped
-    };
+    /// State value in idle.
+    static constexpr uint32_t state_idle = 0x7fffffff;
+    /// State value while running.
+    static constexpr uint32_t state_running = 0x00000000;
+    /// State mask while the lower PHY is stopping.
+    static constexpr uint32_t state_wait_stop = 0x80000000;
+    /// Stopped state, depends on the maximum processing delay number of slots.
+    const uint32_t state_stopped;
 
     /// Actual state.
-    std::atomic<states> state{states::idle};
+    std::atomic<uint32_t> state{state_idle};
+    /// Promise for controlling the stop sequence.
+    std::promise<void> stop_control;
   };
 
   /// \brief Processes downlink baseband.
@@ -182,26 +179,41 @@ private:
   /// Processes uplink baseband.
   void ul_process();
 
+  /// \brief Subtracts the System Frame Number (SFN) Zero reference time to a given timestamp.
+  ///
+  /// To avoid an overflow in the substraction, a number of samples is added to the timestamp that results in the same
+  /// SFN and slot.
+  baseband_gateway_timestamp apply_timestamp_sfn0_ref(baseband_gateway_timestamp timestamp) const
+  {
+    // Add the time of a superframe which is 1024 frames to avoid overflow.
+    if (timestamp < start_time_sfn0) {
+      timestamp += divide_ceil(start_time_sfn0, nof_samples_per_super_frame) * nof_samples_per_super_frame;
+    }
+
+    return timestamp - start_time_sfn0;
+  }
+
   sampling_rate                                                              srate;
-  unsigned                                                                   tx_buffer_size;
+  uint64_t                                                                   nof_samples_per_super_frame;
   unsigned                                                                   rx_buffer_size;
-  std::chrono::nanoseconds                                                   cpu_throttling_time;
+  std::chrono::microseconds                                                  slot_duration;
+  float                                                                      system_time_throttling_ratio;
   task_executor&                                                             rx_executor;
   task_executor&                                                             tx_executor;
   task_executor&                                                             uplink_executor;
-  task_executor&                                                             downlink_executor;
   baseband_gateway_receiver&                                                 receiver;
   baseband_gateway_transmitter&                                              transmitter;
   uplink_processor_baseband&                                                 uplink_processor;
   downlink_processor_baseband&                                               downlink_processor;
   blocking_queue<std::unique_ptr<baseband_gateway_buffer_dynamic>>           rx_buffers;
-  blocking_queue<std::unique_ptr<baseband_gateway_buffer_dynamic>>           tx_buffers;
   baseband_gateway_timestamp                                                 tx_time_offset;
   baseband_gateway_timestamp                                                 rx_to_tx_max_delay;
+  baseband_gateway_timestamp                                                 start_time_sfn0;
   internal_fsm                                                               tx_state;
   internal_fsm                                                               rx_state;
   std::atomic<baseband_gateway_timestamp>                                    last_rx_timestamp;
   std::optional<std::chrono::time_point<std::chrono::high_resolution_clock>> last_tx_time;
+  unsigned                                                                   last_tx_buffer_size = 0;
 };
 
 } // namespace srsran

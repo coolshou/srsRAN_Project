@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,6 +27,9 @@
 #include "srsran/support/executors/unique_thread.h"
 
 namespace srsran {
+
+class timer_manager;
+
 namespace test_helpers {
 
 class du_high_worker_manager
@@ -37,12 +40,17 @@ public:
   virtual void stop() = 0;
 
   virtual srs_du::du_high_executor_mapper& get_exec_mapper() = 0;
+
+  virtual task_executor& timer_executor() = 0;
+
+  virtual void wait_pending_tasks() = 0;
 };
 
 struct du_high_worker_config {
   unsigned             nof_cell_workers   = 1;
   bool                 use_os_thread_prio = false;
   span<const unsigned> du_cell_cores;
+  timer_manager&       timers;
 };
 
 /// Create DU-high executor mapper.

@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -17,6 +17,9 @@
 # the LICENSE file in the top-level directory of this distribution
 # and at http://www.gnu.org/licenses/.
 #
+
+# Suppress "<ciso646> is deprecated in C++17" warnings caused by gtest when compiling with gcc 15.1.
+ADD_CXX_COMPILER_FLAG_IF_AVAILABLE(-Wno-deprecated HAVE_NO_DEPRECATED)
 
 # Add a custom empty target that will have all vector-based tests as dependencies.
 add_custom_target(all_vector_tests)
@@ -40,7 +43,6 @@ macro(ADD_TEST_VECTOR TARGET VECTOR_FILE TEST_ARGS)
                     POST_BUILD
                     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/test_data
                     COMMAND ${CMAKE_COMMAND} -E tar xf ${CMAKE_CURRENT_SOURCE_DIR}/${VECTOR_FILE}
-                    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${VECTOR_FILE}
                     VERBATIM)
         else (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${VECTOR_FILE})
             message(FATAL_ERROR "Vector file ${CMAKE_CURRENT_SOURCE_DIR}/${VECTOR_FILE} does not exist.")
@@ -57,6 +59,7 @@ add_subdirectory(apps)
 add_subdirectory(asn1)
 add_subdirectory(cu_cp)
 add_subdirectory(cu_up)
+add_subdirectory(du_high)
 add_subdirectory(du_manager)
 add_subdirectory(e1ap)
 add_subdirectory(e2)

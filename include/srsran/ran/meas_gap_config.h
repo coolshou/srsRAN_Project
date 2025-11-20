@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -52,16 +52,17 @@ struct meas_gap_config {
 /// Convert measurement gap length into a float in milliseconds.
 inline float meas_gap_length_to_msec(meas_gap_length len)
 {
-  constexpr static std::array<float, 6> vals{1.5, 3, 3.5, 4, 5.5, 6};
+  static constexpr std::array<float, 6> vals{1.5, 3, 3.5, 4, 5.5, 6};
   return vals[static_cast<unsigned>(len)];
 }
 
 /// Determines whether a slot is inside the measurement gap.
 inline bool is_inside_meas_gap(const meas_gap_config& gap, slot_point sl)
 {
-  unsigned period_slots = static_cast<uint8_t>(gap.mgrp) * sl.nof_slots_per_subframe();
-  unsigned length_slots = std::ceil(meas_gap_length_to_msec(gap.mgl) * sl.nof_slots_per_subframe());
-  unsigned slot_mod     = sl.to_uint() % period_slots;
+  const unsigned slot_per_sf  = sl.nof_slots_per_subframe();
+  unsigned       period_slots = static_cast<uint8_t>(gap.mgrp) * slot_per_sf;
+  unsigned       length_slots = std::ceil(meas_gap_length_to_msec(gap.mgl) * slot_per_sf);
+  unsigned       slot_mod     = (sl - gap.offset * slot_per_sf).to_uint() % period_slots;
   return slot_mod <= length_slots;
 }
 

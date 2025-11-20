@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -52,7 +52,7 @@ if (USE_PHY_TESTVECTORS)
     add_test_vector(pdsch_encoder_test pdsch_encoder_test_data.tar.gz "")
 
     add_executable(pdsch_modulator_test pdsch_modulator_test.cpp)
-    target_link_libraries(pdsch_modulator_test srsran_channel_processors srsran_channel_precoder srslog)
+    target_link_libraries(pdsch_modulator_test srsran_channel_processors srsran_channel_precoder srslog gtest gtest_main)
     add_test_vector(pdsch_modulator_test pdsch_modulator_test_data.tar.gz "")
 
     add_executable(pdsch_processor_vectortest pdsch_processor_vectortest.cpp)

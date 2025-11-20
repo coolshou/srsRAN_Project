@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,6 +24,7 @@
 #include "../support/dmrs_helpers.h"
 #include "../support/pdsch/pdsch_default_time_allocation.h"
 #include "../support/prbs_calculator.h"
+#include "srsran/ran/band_helper.h"
 #include "srsran/ran/duplex_mode.h"
 #include "srsran/ran/prach/prach_configuration.h"
 #include "srsran/ran/prach/prach_frequency_mapping.h"
@@ -58,8 +59,8 @@ static error_type<std::string> validate_pdcch_cfg_common(const sched_cell_config
         msg.dl_cfg_common.init_dl_bwp.pdcch_common.coreset0.has_value() ? ss.get_coreset_id() == 0 : false;
     VERIFY(cset_id_exits_in_common or cset_id_exits_in_cset0,
            "Coreset Id. {} indexed by SearchSpace Id. {} not found within the configured Common Coresets",
-           ss.get_coreset_id(),
-           ss.get_id());
+           fmt::underlying(ss.get_coreset_id()),
+           fmt::underlying(ss.get_id()));
   }
 
   return {};
@@ -78,19 +79,25 @@ static error_type<std::string> validate_rach_cfg_common(const sched_cell_configu
   VERIFY((unsigned)mcs_descr.modulation < (unsigned)modulation_scheme::QAM64,
          "Modulation order for PDSCH scheduled with RA-RNTI cannot be > 2");
 
-  duplex_mode dplx_mode = band_helper::get_duplex_mode(msg.dl_carrier.band);
+  frequency_range freq_range = band_helper::get_freq_range(msg.dl_carrier.band);
+  duplex_mode     dplx_mode  = band_helper::get_duplex_mode(msg.dl_carrier.band);
 
   // Check PRACH config index.
-  auto code = prach_helper::prach_config_index_is_valid(rach_cfg_cmn.rach_cfg_generic.prach_config_index, dplx_mode);
+  auto code = prach_helper::prach_config_index_is_valid(
+      rach_cfg_cmn.rach_cfg_generic.prach_config_index, freq_range, dplx_mode);
   if (not code.has_value()) {
     return code;
   }
 
   const prach_configuration prach_cfg =
-      prach_configuration_get(frequency_range::FR1,
-                              msg.tdd_ul_dl_cfg_common.has_value() ? duplex_mode::TDD : duplex_mode::FDD,
-                              rach_cfg_cmn.rach_cfg_generic.prach_config_index);
+      prach_configuration_get(freq_range, dplx_mode, rach_cfg_cmn.rach_cfg_generic.prach_config_index);
   VERIFY(prach_cfg.format < prach_format_type::invalid, "Invalid PRACH format");
+
+  // Check PRACH root sequence index.
+  code = prach_helper::prach_root_sequence_index_is_valid(rach_cfg_cmn.prach_root_seq_index, prach_cfg.format);
+  if (not code.has_value()) {
+    return code;
+  }
 
   subcarrier_spacing pusch_scs = msg.ul_cfg_common.init_ul_bwp.generic_params.scs;
 
@@ -113,6 +120,7 @@ static error_type<std::string> validate_rach_cfg_common(const sched_cell_configu
   // Check zero correlation zone validity.
   code = prach_helper::zero_correlation_zone_is_valid(rach_cfg_cmn.rach_cfg_generic.zero_correlation_zone_config,
                                                       rach_cfg_cmn.rach_cfg_generic.prach_config_index,
+                                                      freq_range,
                                                       dplx_mode);
   if (not code.has_value()) {
     return code;
@@ -164,12 +172,8 @@ static error_type<std::string> validate_pusch_cfg_common(const sched_cell_config
 
 static error_type<std::string> validate_pucch_cfg_common(const sched_cell_configuration_request_message& msg)
 {
-  for (const auto& pucch_guard : msg.pucch_guardbands) {
-    VERIFY(msg.ul_cfg_common.init_ul_bwp.generic_params.crbs.contains(pucch_guard.prbs),
-           "PUCCH guardbands={} fall outside of the initial BWP RBs={}",
-           pucch_guard.prbs,
-           msg.ul_cfg_common.init_ul_bwp.generic_params.crbs);
-  }
+  VERIFY(msg.ul_cfg_common.init_ul_bwp.pucch_cfg_common.has_value(),
+         "Cells without PUCCH-ConfigCommon are not supported");
 
   return {};
 }
@@ -192,7 +196,7 @@ static error_type<std::string> validate_sib1_cfg(const sched_cell_configuration_
   // See TS 38.214, 5.1.3.1, Modulation order and target code rate determination.
   VERIFY((unsigned)mcs_descr.modulation < (unsigned)modulation_scheme::QAM64,
          "Modulation order for PDSCH scheduled with SI-RNTI cannot be > 2");
-  const sch_prbs_tbs sib1_prbs_tbs = get_nof_prbs(prbs_calculator_sch_config{msg.sib1_payload_size,
+  const sch_prbs_tbs sib1_prbs_tbs = get_nof_prbs(prbs_calculator_sch_config{msg.sib1_payload_size.value(),
                                                                              (unsigned)sib1_symbols.length(),
                                                                              calculate_nof_dmrs_per_rb(dmrs_info),
                                                                              nof_oh_prb,
@@ -228,7 +232,7 @@ error_type<std::string> srsran::config_validators::validate_sched_cell_configura
     const sched_cell_configuration_request_message& msg,
     const scheduler_expert_config&                  expert_cfg)
 {
-  VERIFY(msg.cell_index < MAX_NOF_DU_CELLS, "cell index={} is not valid", msg.cell_index);
+  VERIFY(msg.cell_index < MAX_NOF_DU_CELLS, "cell index={} is not valid", fmt::underlying(msg.cell_index));
 
   const auto& dl_lst = msg.dl_cfg_common.init_dl_bwp.pdsch_common.pdsch_td_alloc_list;
   for (const auto& pdsch : dl_lst) {

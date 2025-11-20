@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,10 +24,8 @@
 
 #include "../../../lib/phy/support/prach_buffer_impl.h"
 #include "srsran/adt/tensor.h"
-#include "srsran/phy/support/support_factories.h"
 #include "srsran/srsvec/copy.h"
 #include "srsran/support/error_handling.h"
-#include "srsran/support/file_tensor.h"
 
 namespace srsran {
 
@@ -125,8 +123,8 @@ public:
            get_symbol_const_entries.size();
   }
 
-  const std::vector<entry_t>& get_get_symbol_entries() { return get_symbol_entries; };
-  const std::vector<entry_t>& get_get_symbol_const_entries() { return get_symbol_const_entries; };
+  const std::vector<entry_t>& get_get_symbol_entries() { return get_symbol_entries; }
+  const std::vector<entry_t>& get_get_symbol_const_entries() { return get_symbol_const_entries; }
 
   void clear()
   {

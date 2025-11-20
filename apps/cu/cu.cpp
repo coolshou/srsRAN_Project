@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,12 +21,17 @@
  */
 
 #include "apps/cu/cu_appconfig_cli11_schema.h"
+#include "apps/helpers/f1u/f1u_appconfig.h"
+#include "apps/helpers/metrics/metrics_helpers.h"
+#include "apps/services/app_execution_metrics/executor_metrics_manager.h"
+#include "apps/services/app_resource_usage/app_resource_usage.h"
 #include "apps/services/application_message_banners.h"
 #include "apps/services/application_tracer.h"
 #include "apps/services/buffer_pool/buffer_pool_manager.h"
+#include "apps/services/cmdline/cmdline_command_dispatcher.h"
 #include "apps/services/metrics/metrics_manager.h"
 #include "apps/services/metrics/metrics_notifier_proxy.h"
-#include "apps/services/stdin_command_dispatcher.h"
+#include "apps/services/remote_control/remote_server.h"
 #include "apps/services/worker_manager/worker_manager.h"
 #include "apps/services/worker_manager/worker_manager_config.h"
 #include "apps/units/o_cu_cp/o_cu_cp_application_unit.h"
@@ -38,14 +43,18 @@
 #include "cu_appconfig.h"
 #include "cu_appconfig_validator.h"
 #include "cu_appconfig_yaml_writer.h"
+#include "srsran/adt/scope_exit.h"
+#include "srsran/cu_cp/cu_cp_operation_controller.h"
 #include "srsran/e1ap/gateways/e1_local_connector_factory.h"
 #include "srsran/e2/e2ap_config_translators.h"
 #include "srsran/f1ap/gateways/f1c_network_server_factory.h"
+#include "srsran/f1u/cu_up/f1u_gateway.h"
 #include "srsran/f1u/cu_up/split_connector/f1u_split_connector_factory.h"
+#include "srsran/f1u/split_connector/f1u_five_qi_gw_maps.h"
 #include "srsran/gateways/udp_network_gateway.h"
 #include "srsran/gtpu/gtpu_config.h"
 #include "srsran/gtpu/gtpu_demux_factory.h"
-#include "srsran/gtpu/ngu_gateway.h"
+#include "srsran/gtpu/gtpu_gateway.h"
 #include "srsran/support/backtrace.h"
 #include "srsran/support/config_parsers.h"
 #include "srsran/support/cpu_features.h"
@@ -54,6 +63,7 @@
 #include "srsran/support/io/io_broker_factory.h"
 #include "srsran/support/io/io_timer_source.h"
 #include "srsran/support/signal_handling.h"
+#include "srsran/support/signal_observer.h"
 #include "srsran/support/sysinfo.h"
 #include "srsran/support/timers.h"
 #include "srsran/support/tracing/event_tracing.h"
@@ -83,26 +93,31 @@ static constexpr unsigned MAX_CONFIG_FILES = 10;
 static void populate_cli11_generic_args(CLI::App& app)
 {
   fmt::memory_buffer buffer;
-  format_to(buffer, "srsRAN 5G CU version {} ({})", get_version(), get_build_hash());
+  format_to(std::back_inserter(buffer), "srsRAN 5G CU version {} ({})", get_version(), get_build_hash());
   app.set_version_flag("-v,--version", srsran::to_c_str(buffer));
   app.set_config("-c,", config_file, "Read config from file", false)->expected(1, MAX_CONFIG_FILES);
 }
 
 /// Function to call when the application is interrupted.
-static void interrupt_signal_handler()
+static void interrupt_signal_handler(int signal)
 {
   is_app_running = false;
 }
 
+static signal_dispatcher cleanup_signal_dispatcher;
+
 /// Function to call when the application is going to be forcefully shutdown.
-static void cleanup_signal_handler()
+static void cleanup_signal_handler(int signal)
 {
+  cleanup_signal_dispatcher.notify_signal(signal);
+  srslog::fetch_basic_logger("APP").error("Emergency flush of the logger");
   srslog::flush();
 }
 
 /// Function to call when an error is reported by the application.
 static void app_error_report_handler()
 {
+  srslog::fetch_basic_logger("APP").error("Emergency flush of the logger");
   srslog::flush();
 }
 
@@ -116,12 +131,13 @@ static void initialize_log(const std::string& filename)
   srslog::init();
 }
 
-static void register_app_logs(const logger_appconfig&   log_cfg,
+static void register_app_logs(const cu_appconfig&       cu_cfg,
                               o_cu_cp_application_unit& cu_cp_app_unit,
                               o_cu_up_application_unit& cu_up_app_unit)
 {
+  const logger_appconfig& log_cfg = cu_cfg.log_cfg;
   // Set log-level of app and all non-layer specific components to app level.
-  for (const auto& id : {"ALL", "SCTP-GW", "IO-EPOLL", "UDP-GW", "PCAP"}) {
+  for (const auto& id : {"ALL", "SCTP-GW", "IO-EPOLL", "UDP-GW", "PCAP", "ASN1"}) {
     auto& logger = srslog::fetch_basic_logger(id, false);
     logger.set_level(log_cfg.lib_level);
     logger.set_hex_dump_max_size(log_cfg.hex_max_size);
@@ -130,38 +146,55 @@ static void register_app_logs(const logger_appconfig&   log_cfg,
   auto& app_logger = srslog::fetch_basic_logger("CU", false);
   app_logger.set_level(srslog::basic_levels::info);
   app_services::application_message_banners::log_build_info(app_logger);
-  app_logger.set_level(log_cfg.config_level);
+  app_logger.set_level(log_cfg.all_level);
   app_logger.set_hex_dump_max_size(log_cfg.hex_max_size);
+
+  {
+    auto& logger = srslog::fetch_basic_logger("APP", false);
+    logger.set_level(log_cfg.all_level);
+    logger.set_hex_dump_max_size(log_cfg.hex_max_size);
+  }
 
   auto& config_logger = srslog::fetch_basic_logger("CONFIG", false);
   config_logger.set_level(log_cfg.config_level);
   config_logger.set_hex_dump_max_size(log_cfg.hex_max_size);
 
-  auto& metrics_logger = srslog::fetch_basic_logger("METRICS", false);
-  metrics_logger.set_level(log_cfg.metrics_level.level);
-  metrics_logger.set_hex_dump_max_size(log_cfg.metrics_level.hex_max_size);
+  // Metrics log channels.
+  const app_helpers::metrics_config& metrics_cfg = cu_cfg.metrics_cfg.rusage_config.metrics_consumers_cfg;
+  app_helpers::initialize_metrics_log_channels(metrics_cfg, log_cfg.hex_max_size);
+  if (metrics_cfg.enable_json_metrics) {
+    app_services::initialize_json_channel();
+  }
 
   // Register units logs.
   cu_cp_app_unit.on_loggers_registration();
   cu_up_app_unit.on_loggers_registration();
 }
 
-static void fill_cu_worker_manager_config(worker_manager_config& config, const cu_appconfig& unit_cfg)
+static void fill_cu_worker_manager_config(worker_manager_config& config, const cu_appconfig& app_cfg)
 {
-  config.nof_low_prio_threads     = unit_cfg.expert_execution_cfg.threads.non_rt_threads.nof_non_rt_threads;
-  config.low_prio_task_queue_size = unit_cfg.expert_execution_cfg.threads.non_rt_threads.non_rt_task_queue_size;
-  config.low_prio_sched_config    = unit_cfg.expert_execution_cfg.affinities.low_priority_cpu_cfg;
+  config.nof_main_pool_threads     = app_cfg.expert_execution_cfg.threads.main_pool.nof_threads;
+  config.main_pool_task_queue_size = app_cfg.expert_execution_cfg.threads.main_pool.task_queue_size;
+  config.main_pool_backoff_period =
+      std::chrono::microseconds{app_cfg.expert_execution_cfg.threads.main_pool.backoff_period};
+  config.main_pool_affinity_cfg = app_cfg.expert_execution_cfg.affinities.main_pool_cpu_cfg;
 }
 
-static void autoderive_cu_up_parameters_after_parsing(o_cu_up_unit_config&     o_cu_up_cfg,
+static void autoderive_cu_up_parameters_after_parsing(cu_appconfig&            cu_config,
+                                                      o_cu_up_unit_config&     o_cu_up_cfg,
                                                       const cu_cp_unit_config& cu_cp_cfg)
 {
   // If no UPF is configured, we set the UPF configuration from the CU-CP AMF configuration.
-  if (o_cu_up_cfg.cu_up_cfg.upf_cfg.bind_addr == "auto") {
-    o_cu_up_cfg.cu_up_cfg.upf_cfg.bind_addr = cu_cp_cfg.amf_config.amf.bind_addr;
+  if (o_cu_up_cfg.cu_up_cfg.ngu_cfg.ngu_socket_cfg.empty()) {
+    cu_up_unit_ngu_socket_config sock_cfg;
+    sock_cfg.bind_addr = cu_cp_cfg.amf_config.amf.bind_addr;
+    o_cu_up_cfg.cu_up_cfg.ngu_cfg.ngu_socket_cfg.push_back(sock_cfg);
   }
-  o_cu_up_cfg.cu_up_cfg.upf_cfg.no_core = cu_cp_cfg.amf_config.no_core;
-  o_cu_up_cfg.e2_cfg.pcaps.enabled = o_cu_up_cfg.e2_cfg.base_config.enable_unit_e2 && o_cu_up_cfg.e2_cfg.pcaps.enabled;
+  // If no F1-U socket configuration is derived, we set a default configuration.
+  if (cu_config.f1u_cfg.f1u_socket_cfg.empty()) {
+    f1u_socket_appconfig sock_cfg;
+    cu_config.f1u_cfg.f1u_socket_cfg.push_back(sock_cfg);
+  }
 }
 
 int main(int argc, char** argv)
@@ -197,26 +230,47 @@ int main(int argc, char** argv)
   o_cu_up_app_unit->on_parsing_configuration_registration(app);
 
   // Set the callback for the app calling all the autoderivation functions.
-  app.callback([&app, &o_cu_cp_app_unit, &o_cu_up_app_unit]() {
+  app.callback([&app, &cu_cfg, &o_cu_cp_app_unit, &o_cu_up_app_unit]() {
     o_cu_cp_app_unit->on_configuration_parameters_autoderivation(app);
+    o_cu_up_app_unit->on_configuration_parameters_autoderivation(app);
 
-    autoderive_cu_up_parameters_after_parsing(o_cu_up_app_unit->get_o_cu_up_unit_config(),
-                                              o_cu_cp_app_unit->get_o_cu_cp_unit_config().cucp_cfg);
+    autoderive_cu_up_parameters_after_parsing(
+        cu_cfg, o_cu_up_app_unit->get_o_cu_up_unit_config(), o_cu_cp_app_unit->get_o_cu_cp_unit_config().cucp_cfg);
   });
 
   // Parse arguments.
   CLI11_PARSE(app, argc, argv);
 
+  // Dry run mode, exit.
+  if (cu_cfg.enable_dryrun) {
+    return 0;
+  }
+
+  if (cu_cfg.metrics_cfg.rusage_config.metrics_consumers_cfg.enable_json_metrics &&
+      !cu_cfg.remote_control_config.enabled) {
+    fmt::println("NOTE: No JSON metrics will be generated as the remote server is disabled");
+  }
+
   // Check the modified configuration.
-  if (!validate_cu_appconfig(cu_cfg) ||
-      !o_cu_cp_app_unit->on_configuration_validation(os_sched_affinity_bitmask::available_cpus()) ||
-      !o_cu_up_app_unit->on_configuration_validation(os_sched_affinity_bitmask::available_cpus())) {
+  if (!validate_cu_appconfig(cu_cfg) || !o_cu_cp_app_unit->on_configuration_validation() ||
+      !o_cu_up_app_unit->on_configuration_validation(not cu_cfg.trace_cfg.filename.empty())) {
     report_error("Invalid configuration detected.\n");
   }
 
   // Set up logging.
   initialize_log(cu_cfg.log_cfg.filename);
-  register_app_logs(cu_cfg.log_cfg, *o_cu_cp_app_unit, *o_cu_up_app_unit);
+  auto log_flusher = make_scope_exit([]() { srslog::flush(); });
+  register_app_logs(cu_cfg, *o_cu_cp_app_unit, *o_cu_up_app_unit);
+
+  // Check the metrics and metrics consumers.
+  srslog::basic_logger& cu_logger = srslog::fetch_basic_logger("CU");
+  bool metrics_enabled = o_cu_cp_app_unit->are_metrics_enabled() || o_cu_up_app_unit->are_metrics_enabled() ||
+                         cu_cfg.metrics_cfg.rusage_config.enable_app_usage;
+
+  if (!metrics_enabled && cu_cfg.metrics_cfg.rusage_config.metrics_consumers_cfg.enabled()) {
+    cu_logger.warning("Logger or JSON metrics output enabled but no metrics will be reported as no layer was enabled");
+    fmt::println("Logger or JSON metrics output enabled but no metrics will be reported as no layer was enabled");
+  }
 
   // Log input configuration.
   srslog::basic_logger& config_logger = srslog::fetch_basic_logger("CONFIG");
@@ -230,10 +284,12 @@ int main(int argc, char** argv)
     config_logger.info("Input configuration (only non-default values): \n{}", app.config_to_str(false, false));
   }
 
-  srslog::basic_logger&            cu_logger = srslog::fetch_basic_logger("CU");
   app_services::application_tracer app_tracer;
-  if (not cu_cfg.log_cfg.tracing_filename.empty()) {
-    app_tracer.enable_tracer(cu_cfg.log_cfg.tracing_filename, cu_logger);
+  if (not cu_cfg.trace_cfg.filename.empty()) {
+    app_tracer.enable_tracer(cu_cfg.trace_cfg.filename,
+                             cu_cfg.trace_cfg.max_tracing_events_per_file,
+                             cu_cfg.trace_cfg.nof_tracing_events_after_severe,
+                             cu_logger);
   }
 
   // configure cgroups
@@ -260,23 +316,42 @@ int main(int argc, char** argv)
   check_cpu_governor(cu_logger);
   check_drm_kms_polling(cu_logger);
 
+  // Create manager of timers for CU-CP and CU-UP, which will be driven by the system timer slot ticks.
+  timer_manager  app_timers{256};
+  timer_manager* cu_timers = &app_timers;
+
+  app_services::metrics_notifier_proxy_impl metrics_notifier_forwarder;
+
+  // Instantiate executor metrics service.
+  app_services::executor_metrics_service_and_metrics exec_metrics_service =
+      build_executor_metrics_service(metrics_notifier_forwarder, app_timers, cu_cfg.metrics_cfg.executors_metrics_cfg);
+  std::vector<app_services::metrics_config> metrics_configs = std::move(exec_metrics_service.metrics);
+
   // Create worker manager.
   worker_manager_config worker_manager_cfg;
   fill_cu_worker_manager_config(worker_manager_cfg, cu_cfg);
   o_cu_cp_app_unit->fill_worker_manager_config(worker_manager_cfg);
   o_cu_up_app_unit->fill_worker_manager_config(worker_manager_cfg);
+  worker_manager_cfg.app_timers                    = &app_timers;
+  worker_manager_cfg.exec_metrics_channel_registry = exec_metrics_service.channel_registry;
   worker_manager workers{worker_manager_cfg};
 
-  // Create layer specific PCAPs.
-  o_cu_cp_dlt_pcaps cu_cp_dlt_pcaps =
-      create_o_cu_cp_dlt_pcap(o_cu_cp_app_unit->get_o_cu_cp_unit_config(), *workers.get_executor_getter());
-  o_cu_up_dlt_pcaps cu_up_dlt_pcaps =
-      create_o_cu_up_dlt_pcaps(o_cu_up_app_unit->get_o_cu_up_unit_config(), *workers.get_executor_getter());
-
   // Create IO broker.
-  const auto&                low_prio_cpu_mask = cu_cfg.expert_execution_cfg.affinities.low_priority_cpu_cfg.mask;
-  io_broker_config           io_broker_cfg(low_prio_cpu_mask);
+  const auto&                main_pool_cpu_mask = cu_cfg.expert_execution_cfg.affinities.main_pool_cpu_cfg.mask;
+  io_broker_config           io_broker_cfg(os_thread_realtime_priority::min() + 5, main_pool_cpu_mask);
   std::unique_ptr<io_broker> epoll_broker = create_io_broker(io_broker_type::epoll, io_broker_cfg);
+
+  // Create time source that ticks the timers.
+  std::optional<io_timer_source> time_source(
+      std::in_place_t{}, app_timers, *epoll_broker, workers.get_timer_source_executor(), std::chrono::milliseconds{1});
+
+  // Create layer specific PCAPs.
+  auto on_pcap_close = make_scope_exit([&cu_logger]() { cu_logger.info("PCAP files successfully closed."); });
+  o_cu_cp_dlt_pcaps cu_cp_dlt_pcaps = create_o_cu_cp_dlt_pcap(
+      o_cu_cp_app_unit->get_o_cu_cp_unit_config(), workers.get_cu_cp_pcap_executors(), cleanup_signal_dispatcher);
+  o_cu_up_dlt_pcaps cu_up_dlt_pcaps = create_o_cu_up_dlt_pcaps(
+      o_cu_up_app_unit->get_o_cu_up_unit_config(), workers.get_cu_up_pcap_executors(), cleanup_signal_dispatcher);
+  auto on_pcap_close_init = make_scope_exit([&cu_logger]() { cu_logger.info("Closing PCAP files..."); });
 
   // Create F1-C GW (TODO cleanup port and PPID args with factory)
   sctp_network_gateway_config f1c_sctp_cfg = {};
@@ -284,54 +359,70 @@ int main(int argc, char** argv)
   f1c_sctp_cfg.bind_address                = cu_cfg.f1ap_cfg.bind_addr;
   f1c_sctp_cfg.bind_port                   = F1AP_PORT;
   f1c_sctp_cfg.ppid                        = F1AP_PPID;
-  f1c_cu_sctp_gateway_config f1c_server_cfg({f1c_sctp_cfg, *epoll_broker, *cu_cp_dlt_pcaps.f1ap});
+  f1c_cu_sctp_gateway_config f1c_server_cfg(
+      {f1c_sctp_cfg, *epoll_broker, workers.get_cu_cp_executor_mapper().f1c_rx_executor(), *cu_cp_dlt_pcaps.f1ap});
   std::unique_ptr<srs_cu_cp::f1c_connection_server> cu_f1c_gw = srsran::create_f1c_gateway_server(f1c_server_cfg);
 
-  // Create F1-U GW (TODO factory and cleanup).
+  // Create F1-U GW.
+  // > Create GTP-U Demux.
   gtpu_demux_creation_request cu_f1u_gtpu_msg   = {};
   cu_f1u_gtpu_msg.cfg.warn_on_drop              = true;
   cu_f1u_gtpu_msg.gtpu_pcap                     = cu_up_dlt_pcaps.f1u.get();
   std::unique_ptr<gtpu_demux> cu_f1u_gtpu_demux = create_gtpu_demux(cu_f1u_gtpu_msg);
-  udp_network_gateway_config  cu_f1u_gw_config  = {};
-  cu_f1u_gw_config.bind_address                 = cu_cfg.nru_cfg.bind_addr;
-  cu_f1u_gw_config.bind_port                    = GTPU_PORT;
-  cu_f1u_gw_config.reuse_addr                   = false;
-  cu_f1u_gw_config.pool_occupancy_threshold     = cu_cfg.nru_cfg.pool_occupancy_threshold;
-  std::unique_ptr<srs_cu_up::ngu_gateway> cu_f1u_gw =
-      srs_cu_up::create_udp_ngu_gateway(cu_f1u_gw_config, *epoll_broker, workers.cu_up_exec_mapper->io_ul_executor());
-  std::unique_ptr<f1u_cu_up_udp_gateway> cu_f1u_conn = srs_cu_up::create_split_f1u_gw(
-      {*cu_f1u_gw, *cu_f1u_gtpu_demux, *cu_up_dlt_pcaps.f1u, GTPU_PORT, cu_cfg.nru_cfg.ext_addr});
+  // > Create UDP gateway(s).
+  gtpu_gateway_maps f1u_gw_maps;
+  for (const f1u_socket_appconfig& sock_cfg : cu_cfg.f1u_cfg.f1u_socket_cfg) {
+    udp_network_gateway_config cu_f1u_gw_config = {};
+    cu_f1u_gw_config.bind_address               = sock_cfg.bind_addr;
+    cu_f1u_gw_config.ext_bind_addr              = sock_cfg.udp_config.ext_addr;
+    cu_f1u_gw_config.bind_port                  = cu_cfg.f1u_cfg.bind_port;
+    cu_f1u_gw_config.reuse_addr                 = false;
+    cu_f1u_gw_config.pool_occupancy_threshold   = sock_cfg.udp_config.pool_threshold;
+    cu_f1u_gw_config.rx_max_mmsg                = sock_cfg.udp_config.rx_max_msgs;
+    cu_f1u_gw_config.dscp                       = sock_cfg.udp_config.dscp;
+    std::unique_ptr<gtpu_gateway> cu_f1u_gw =
+        create_udp_gtpu_gateway(cu_f1u_gw_config,
+                                *epoll_broker,
+                                workers.get_cu_up_executor_mapper().io_ul_executor(),
+                                workers.get_cu_up_executor_mapper().f1u_rx_executor());
+    f1u_gw_maps.add_gtpu_gateway(sock_cfg.sst, sock_cfg.sd, sock_cfg.five_qi, std::move(cu_f1u_gw));
+  }
+
+  std::unique_ptr<f1u_cu_up_udp_gateway> cu_f1u_conn =
+      srs_cu_up::create_split_f1u_gw({f1u_gw_maps, *cu_f1u_gtpu_demux, *cu_up_dlt_pcaps.f1u, cu_cfg.f1u_cfg.peer_port});
 
   // Create E1AP local connector
   std::unique_ptr<e1_local_connector> e1_gw =
       create_e1_local_connector(e1_local_connector_config{*cu_up_dlt_pcaps.e1ap});
 
-  // Create manager of timers for CU-CP and CU-UP, which will be
-  // driven by the system timer slot ticks.
-  timer_manager  app_timers{256};
-  timer_manager* cu_timers = &app_timers;
-
-  // Create time source that ticks the timers
-  io_timer_source time_source{app_timers, *epoll_broker, std::chrono::milliseconds{1}};
-
   // Instantiate E2AP client gateway.
   std::unique_ptr<e2_connection_client> e2_gw_cu_cp = create_e2_gateway_client(
       generate_e2_client_gateway_config(o_cu_cp_app_unit->get_o_cu_cp_unit_config().e2_cfg.base_config,
                                         *epoll_broker,
+                                        workers.get_cu_cp_executor_mapper().e2_rx_executor(),
                                         *cu_cp_dlt_pcaps.e2ap,
                                         E2_CP_PPID));
   std::unique_ptr<e2_connection_client> e2_gw_cu_up = create_e2_gateway_client(
       generate_e2_client_gateway_config(o_cu_up_app_unit->get_o_cu_up_unit_config().e2_cfg.base_config,
                                         *epoll_broker,
+                                        workers.get_cu_up_executor_mapper().e2_rx_executor(),
                                         *cu_up_dlt_pcaps.e2ap,
                                         E2_UP_PPID));
 
-  app_services::metrics_notifier_proxy_impl metrics_notifier_forwarder;
+  // Create app-level resource usage service and metrics.
+  auto app_resource_usage_service = app_services::build_app_resource_usage_service(
+      metrics_notifier_forwarder, cu_cfg.metrics_cfg.rusage_config, cu_logger);
+
+  for (auto& metric : app_resource_usage_service.metrics) {
+    metrics_configs.push_back(std::move(metric));
+  }
+
+  buffer_pool_service.add_metrics_to_metrics_service(
+      metrics_configs, cu_cfg.buffer_pool_config.metrics_config, metrics_notifier_forwarder);
 
   // Create O-CU-CP dependencies.
   o_cu_cp_unit_dependencies o_cucp_deps;
-  o_cucp_deps.cu_cp_executor   = workers.cu_cp_exec;
-  o_cucp_deps.cu_cp_e2_exec    = workers.cu_e2_exec;
+  o_cucp_deps.executor_mapper  = &workers.get_cu_cp_executor_mapper();
   o_cucp_deps.timers           = cu_timers;
   o_cucp_deps.ngap_pcap        = cu_cp_dlt_pcaps.ngap.get();
   o_cucp_deps.broker           = epoll_broker.get();
@@ -342,16 +433,25 @@ int main(int argc, char** argv)
   auto                o_cucp_unit = o_cu_cp_app_unit->create_o_cu_cp(o_cucp_deps);
   srs_cu_cp::o_cu_cp& o_cucp_obj  = *o_cucp_unit.unit;
 
+  if (std::unique_ptr<app_services::cmdline_command> cmd = app_services::create_stdout_metrics_app_command(
+          {{o_cucp_unit.commands.cmdline.metrics_subcommands}}, false)) {
+    o_cucp_unit.commands.cmdline.commands.push_back(std::move(cmd));
+  }
+
   // Create console helper object for commands and metrics printing.
-  app_services::stdin_command_dispatcher    command_parser(*epoll_broker, o_cucp_unit.commands);
-  std::vector<app_services::metrics_config> metrics_configs = std::move(o_cucp_unit.metrics);
+  app_services::cmdline_command_dispatcher command_parser(
+      *epoll_broker, workers.get_cmd_line_executor(), o_cucp_unit.commands.cmdline.commands);
+
+  for (auto& metric : o_cucp_unit.metrics) {
+    metrics_configs.push_back(std::move(metric));
+  }
 
   // Connect E1AP to O-CU-CP.
   e1_gw->attach_cu_cp(o_cucp_obj.get_cu_cp().get_e1_handler());
 
   // start O-CU-CP
   cu_logger.info("Starting CU-CP...");
-  o_cucp_obj.get_cu_cp().start();
+  o_cucp_obj.get_operation_controller().start();
   cu_logger.info("CU-CP started successfully");
 
   // Check connection to AMF
@@ -365,7 +465,6 @@ int main(int argc, char** argv)
   // Create and start O-CU-UP
   o_cu_up_unit_dependencies o_cuup_unit_deps;
   o_cuup_unit_deps.workers          = &workers;
-  o_cuup_unit_deps.cu_up_e2_exec    = workers.cu_e2_exec;
   o_cuup_unit_deps.e1ap_conn_client = e1_gw.get();
   o_cuup_unit_deps.f1u_gateway      = cu_f1u_conn.get();
   o_cuup_unit_deps.gtpu_pcap        = cu_up_dlt_pcaps.n3.get();
@@ -379,37 +478,46 @@ int main(int argc, char** argv)
     metrics_configs.push_back(std::move(metric));
   }
   app_services::metrics_manager metrics_mngr(
-      srslog::fetch_basic_logger("CU"), *workers.metrics_hub_exec, metrics_configs);
+      srslog::fetch_basic_logger("CU"),
+      workers.get_metrics_executor(),
+      metrics_configs,
+      app_timers,
+      std::chrono::milliseconds(cu_cfg.metrics_cfg.metrics_service_cfg.app_usage_report_period));
+
   // Connect the forwarder to the metrics manager.
   metrics_notifier_forwarder.connect(metrics_mngr);
 
-  o_cuup_unit.unit->get_power_controller().start();
+  o_cuup_unit.unit->get_operation_controller().start();
+
+  metrics_mngr.start();
+
+  std::unique_ptr<app_services::remote_server> remote_control_server =
+      app_services::create_remote_server(cu_cfg.remote_control_config, {});
+
   {
-    app_services::application_message_banners app_banner(app_name);
+    app_services::application_message_banners app_banner(
+        app_name, cu_cfg.log_cfg.filename == "stdout" ? std::string_view() : cu_cfg.log_cfg.filename);
+
+    auto exec_metrics_session = exec_metrics_service.service
+                                    ? exec_metrics_service.service->create_session(workers.get_metrics_executor())
+                                    : app_services::app_executor_metrics_service::create_dummy_session();
 
     while (is_app_running) {
       std::this_thread::sleep_for(std::chrono::milliseconds(250));
     }
   }
 
+  metrics_mngr.stop();
+
+  if (remote_control_server) {
+    remote_control_server->stop();
+  }
+
   // Stop O-CU-UP activity.
-  o_cuup_unit.unit->get_power_controller().stop();
+  o_cuup_unit.unit->get_operation_controller().stop();
 
   // Stop O-CU-CP activity.
-  o_cucp_obj.get_cu_cp().stop();
-
-  // Close PCAPs
-  cu_logger.info("Closing PCAP files...");
-  cu_cp_dlt_pcaps.close();
-  cu_up_dlt_pcaps.close();
-  cu_logger.info("PCAP files successfully closed.");
-
-  // Stop workers
-  cu_logger.info("Stopping executors...");
-  workers.stop();
-  cu_logger.info("Executors closed successfully.");
-
-  srslog::flush();
+  o_cucp_obj.get_operation_controller().stop();
 
   return 0;
 }

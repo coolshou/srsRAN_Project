@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -59,7 +59,7 @@ struct formatter<srsran::sdap_hdr_ul_cfg> {
   }
 
   template <typename FormatContext>
-  auto format(srsran::sdap_hdr_ul_cfg hdr_cfg, FormatContext& ctx)
+  auto format(srsran::sdap_hdr_ul_cfg hdr_cfg, FormatContext& ctx) const
   {
     static constexpr const char* options[] = {"present", "absent"};
     return format_to(ctx.out(), "{}", options[static_cast<unsigned>(hdr_cfg)]);
@@ -76,7 +76,7 @@ struct formatter<srsran::sdap_hdr_dl_cfg> {
   }
 
   template <typename FormatContext>
-  auto format(srsran::sdap_hdr_dl_cfg hdr_cfg, FormatContext& ctx)
+  auto format(srsran::sdap_hdr_dl_cfg hdr_cfg, FormatContext& ctx) const
   {
     static constexpr const char* options[] = {"present", "absent"};
     return format_to(ctx.out(), "{}", options[static_cast<unsigned>(hdr_cfg)]);
@@ -93,7 +93,7 @@ struct formatter<srsran::sdap_config> {
   }
 
   template <typename FormatContext>
-  auto format(srsran::sdap_config cfg, FormatContext& ctx)
+  auto format(srsran::sdap_config cfg, FormatContext& ctx) const
   {
     return format_to(ctx.out(), "default_drb={} hdr_ul={} hdr_dl={}", cfg.default_drb, cfg.header_ul, cfg.header_dl);
   }

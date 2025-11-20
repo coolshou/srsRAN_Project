@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,21 +25,25 @@
 #include "srsran/adt/bounded_bitset.h"
 #include "srsran/adt/circular_map.h"
 #include "srsran/ofh/ecpri/ecpri_constants.h"
+#include "srsran/ofh/ethernet/ethernet_controller.h"
 #include "srsran/ofh/ethernet/ethernet_frame_notifier.h"
-#include "srsran/ofh/ethernet/ethernet_gateway.h"
 #include "srsran/ofh/ethernet/ethernet_receiver.h"
+#include "srsran/ofh/ethernet/ethernet_receiver_metrics_collector.h"
+#include "srsran/ofh/ethernet/ethernet_transmitter.h"
+#include "srsran/ofh/ethernet/ethernet_transmitter_metrics_collector.h"
 #include "srsran/phy/support/resource_grid_context.h"
 #include "srsran/phy/support/resource_grid_writer.h"
 #include "srsran/phy/support/shared_resource_grid.h"
 #include "srsran/phy/support/support_factories.h"
+#include "srsran/ru/ofh/ru_ofh_factory.h"
 #include "srsran/ru/ru_controller.h"
 #include "srsran/ru/ru_downlink_plane.h"
 #include "srsran/ru/ru_error_notifier.h"
-#include "srsran/ru/ru_ofh_factory.h"
 #include "srsran/ru/ru_timing_notifier.h"
 #include "srsran/ru/ru_uplink_plane.h"
 #include "srsran/support/executors/task_execution_manager.h"
 #include "srsran/support/executors/task_executor.h"
+#include "fmt/std.h"
 #include <arpa/inet.h>
 #include <getopt.h>
 #include <linux/if_packet.h>
@@ -90,7 +94,6 @@ struct test_parameters {
   srslog::basic_levels  log_level                           = srslog::basic_levels::warning;
   std::string           log_filename                        = "stdout";
   bool                  is_prach_control_plane_enabled      = true;
-  bool                  is_downlink_broadcast_enabled       = false;
   bool                  ignore_ecpri_payload_size_field     = false;
   std::string           data_compr_method                   = "bfp";
   unsigned              data_bitwidth                       = 9;
@@ -114,6 +117,8 @@ class dummy_ru_error_notifier : public ru_error_notifier
 {
 public:
   void on_late_downlink_message(const ru_error_context& context) override {}
+  void on_late_uplink_message(const ru_error_context& context) override {}
+  void on_late_prach_message(const ru_error_context& context) override {}
 };
 } // namespace
 
@@ -123,7 +128,7 @@ static test_parameters test_params;
 static void usage(const char* prog)
 {
   fmt::print("Usage: {} [-s silent]\n", prog);
-  fmt::print("\t-w Channel bandwidth [Default {}]\n", test_params.bw);
+  fmt::print("\t-w Channel bandwidth [Default {}]\n", fmt::underlying(test_params.bw));
   fmt::print("\t-c Subcarrier spacing. [Default {}]\n", to_string(test_params.scs));
   fmt::print("\t-d Array of downlink eAxCs [default is {}]\n", port_ids_to_str(test_params.dl_port_id));
   fmt::print("\t-u Array of uplink eAxCs [default is {}]\n", port_ids_to_str(test_params.ul_port_id));
@@ -136,8 +141,6 @@ static void usage(const char* prog)
              test_params.is_downlink_static_comp_hdr_enabled);
   fmt::print("\t-a Use static compression header for UL data [Default {}]\n",
              test_params.is_uplink_static_comp_hdr_enabled);
-  fmt::print("\t-e Broadcasts the contents of a single antenna port to all downlink eAxCs [Default {}]\n",
-             test_params.is_downlink_broadcast_enabled);
   fmt::print("\t-r Enable the Control-Plane PRACH message signalling [Default {}]\n",
              test_params.is_prach_control_plane_enabled);
   fmt::print("\t-i If set to true, the payload size encoded in a eCPRI header is ignored [Default {}]\n",
@@ -148,7 +151,7 @@ static void usage(const char* prog)
              test_params.use_loopback_receiver);
   fmt::print("\t-N Number of slots processed in the test [Default {}]]\n", nof_test_slots);
   fmt::print("\t-s Toggle silent operation [Default {}]\n", test_params.silent);
-  fmt::print("\t-v Logging level. [Default {}]\n", test_params.log_level);
+  fmt::print("\t-v Logging level. [Default {}]\n", fmt::underlying(test_params.log_level));
   fmt::print("\t-f Log file name. [Default {}]\n", test_params.log_filename);
   fmt::print("\t-h Show this message\n");
 }
@@ -178,9 +181,6 @@ static void parse_args(int argc, char** argv)
         break;
       case 'a':
         test_params.is_uplink_static_comp_hdr_enabled = true;
-        break;
-      case 'e':
-        test_params.is_downlink_broadcast_enabled = true;
         break;
       case 'r':
         test_params.is_prach_control_plane_enabled = true;
@@ -265,11 +265,11 @@ static void parse_args(int argc, char** argv)
       case 'h':
       default:
         usage(argv[0]);
-        ::exit(0);
+        std::exit(0);
     }
     if (invalid_arg) {
       usage(argv[0]);
-      ::exit(0);
+      std::exit(0);
     }
     nof_antennas_dl = test_params.dl_port_id.size();
     nof_antennas_ul = test_params.ul_port_id.size();
@@ -286,24 +286,39 @@ class dummy_frame_notifier : public ether::frame_notifier
 dummy_frame_notifier dummy_notifier;
 
 /// Test Ethernet receiver interface.
-class test_ether_receiver : public ether::receiver
+class test_ether_receiver : public ether::receiver, public ether::receiver_operation_controller
 {
 public:
   test_ether_receiver(srslog::basic_logger& logger_) : logger(logger_), notifier(dummy_notifier) {}
   virtual ~test_ether_receiver() = default;
+
+  receiver_operation_controller& get_operation_controller() override { return *this; }
 
   void start(ether::frame_notifier& notifier_) override
   {
     notifier = std::ref(notifier_);
     logger.debug("Test Ethernet receiver started");
   }
-  void stop() override {}
+
+  void stop() override
+  {
+    stop_requested.store(true, std::memory_order_relaxed);
+
+    while (is_running.load(std::memory_order_relaxed)) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  }
+
+  // See interface for documentation.
+  ether::receiver_metrics_collector* get_metrics_collector() override { return nullptr; }
 
   virtual void push_new_data(span<const uint8_t> frame) = 0;
 
 protected:
   srslog::basic_logger&                         logger;
   std::reference_wrapper<ether::frame_notifier> notifier;
+  std::atomic<bool>                             is_running{false};
+  std::atomic<bool>                             stop_requested{false};
 };
 
 /// Dummy Ethernet receiver that receives data from RU emulator and pushes them to the OFH receiver without using real
@@ -318,9 +333,15 @@ public:
 
   void push_new_data(span<const uint8_t> frame) override
   {
+    if (stop_requested.load(std::memory_order_relaxed)) {
+      return;
+    }
+    is_running.store(true, std::memory_order::memory_order_relaxed);
+
     auto exp_buffer = buffer_pool.reserve();
     if (!exp_buffer.has_value()) {
       logger.warning("Dummy Ethernet receiver: no buffer is available for receiving a packet");
+      is_running.store(false, std::memory_order::memory_order_relaxed);
       return;
     }
     ether::ethernet_rx_buffer_impl buffer = std::move(exp_buffer.value());
@@ -328,6 +349,7 @@ public:
     buffer.resize(frame.size());
 
     notifier.get().on_new_frame(ether::unique_rx_buffer(std::move(buffer)));
+    is_running.store(false, std::memory_order::memory_order_relaxed);
   }
 
 private:
@@ -358,7 +380,7 @@ private:
   {
     socket_fd = ::socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK, IPPROTO_RAW);
     if (socket_fd < 0) {
-      report_error("Unable to open raw socket for Ethernet gateway: {}", strerror(errno));
+      report_error("Unable to open raw socket for Ethernet gateway: {}", ::strerror(errno));
     }
 
     // Get the index of loopback interface.
@@ -384,7 +406,9 @@ class dummy_rx_symbol_notifier : public ru_uplink_plane_rx_symbol_notifier
 {
 public:
   // See interface for documentation.
-  void on_new_uplink_symbol(const ru_uplink_rx_symbol_context& context, const shared_resource_grid& grid) override
+  void on_new_uplink_symbol(const ru_uplink_rx_symbol_context& context,
+                            const shared_resource_grid&        grid,
+                            bool                               is_valid) override
   {
     srsran_assert(grid, "Invalid grid.");
   }
@@ -399,12 +423,12 @@ class dummy_timing_notifier : public ru_timing_notifier
 {
 public:
   // See interface for documentation.
-  void on_tti_boundary(slot_point slot_) override
+  void on_tti_boundary(const tti_boundary_context& slot_context) override
   {
     if (!slot_synchronized) {
-      slot_val          = (slot_ + processing_delay_slots).to_uint();
+      slot_val          = (slot_context.slot + processing_delay_slots).to_uint();
       slot_synchronized = true;
-      fmt::print("Initial slot set to {}\n", slot_point(slot_.numerology(), slot_val));
+      fmt::print("Initial slot set to {}\n", slot_point(slot_context.slot.numerology(), slot_val));
     }
   }
 
@@ -621,9 +645,9 @@ private:
   const unsigned              nof_prb;
   units::bytes                prb_size;
   /// Stores byte arrays for each antenna.
-  std::vector<std::vector<std::vector<uint8_t>>>                      test_data;
-  static_circular_map<unsigned, uint8_t, MAX_SUPPORTED_EAXC_ID_VALUE> seq_counters;
-  static_vector<unsigned, ofh::MAX_NOF_SUPPORTED_EAXC>                ul_eaxc;
+  std::vector<std::vector<std::vector<uint8_t>>>                     test_data;
+  static_circular_map<uint8_t, uint8_t, MAX_SUPPORTED_EAXC_ID_VALUE> seq_counters;
+  static_vector<unsigned, ofh::MAX_NOF_SUPPORTED_EAXC>               ul_eaxc;
 };
 
 /// DU emulator that pushes resource grids to the OFH RU implementation.
@@ -683,7 +707,7 @@ private:
         resource_grid_context context{slot, 0};
         shared_resource_grid  dl_grid;
         while (!dl_grid && alloc_attempts--) {
-          dl_grid = dl_rg_pool.allocate_resource_grid(context);
+          dl_grid = dl_rg_pool.allocate_resource_grid(slot);
           if (!dl_grid) {
             std::this_thread::sleep_for(std::chrono::microseconds(10));
           }
@@ -703,7 +727,7 @@ private:
         resource_grid_context context{slot, 0};
         shared_resource_grid  ul_grid;
         while (!ul_grid && alloc_attempts--) {
-          ul_grid = ul_rg_pool.allocate_resource_grid(context);
+          ul_grid = ul_rg_pool.allocate_resource_grid(slot);
           if (!ul_grid) {
             std::this_thread::sleep_for(std::chrono::microseconds(10));
           }
@@ -745,7 +769,7 @@ private:
 
 /// Ethernet transmitter gateway that analyzes incoming packets and checks integrity of the DL packets, as well as asks
 /// RU emulator for UL traffic generation.
-class test_gateway : public ether::gateway
+class test_gateway : public ether::transmitter
 {
 public:
   test_gateway() :
@@ -781,6 +805,9 @@ public:
       }
     }
   }
+
+  // See interface for documentation.
+  ether::transmitter_metrics_collector* get_metrics_collector() override { return nullptr; }
 
 private:
   void check_and_update_sequence_id(span<const uint8_t> message)
@@ -843,11 +870,11 @@ private:
   }
 
 private:
-  const subcarrier_spacing                                            scs;
-  const unsigned                                                      nof_symbols;
-  static_circular_map<unsigned, uint8_t, MAX_SUPPORTED_EAXC_ID_VALUE> seq_counters;
-  bounded_bitset<MAX_SUPPORTED_EAXC_ID_VALUE>                         seq_counter_initialized;
-  test_ru_emulator*                                                   ru_emulator;
+  const subcarrier_spacing                                           scs;
+  const unsigned                                                     nof_symbols;
+  static_circular_map<uint8_t, uint8_t, MAX_SUPPORTED_EAXC_ID_VALUE> seq_counters;
+  bounded_bitset<MAX_SUPPORTED_EAXC_ID_VALUE>                        seq_counter_initialized;
+  test_ru_emulator*                                                  ru_emulator;
 };
 
 /// Manages the workers of the test application and OFH RU.
@@ -868,9 +895,8 @@ struct worker_manager {
       const std::string exec_name = "ru_timing_exec";
 
       const single_worker ru_worker{name,
-                                    {concurrent_queue_policy::lockfree_spsc, 4},
-                                    {{exec_name}},
-                                    std::chrono::microseconds{0},
+                                    {exec_name, concurrent_queue_policy::lockfree_spsc, 4},
+                                    std::chrono::microseconds{1},
                                     os_thread_realtime_priority::max() - 0};
       if (!exec_mng.add_execution_context(create_execution_context(ru_worker))) {
         report_fatal_error("Failed to instantiate {} execution context", ru_worker.name);
@@ -886,8 +912,7 @@ struct worker_manager {
 
       const worker_pool ru_pool{name,
                                 nof_workers,
-                                {{concurrent_queue_policy::locking_mpmc, task_worker_queue_size}},
-                                {{exec_name}},
+                                {{exec_name, concurrent_queue_policy::locking_mpmc, task_worker_queue_size}},
                                 std::chrono::microseconds(0),
                                 os_thread_realtime_priority::max() - 5,
                                 {}};
@@ -903,8 +928,7 @@ struct worker_manager {
       const std::string exec_name = "ru_txrx_exec";
 
       const single_worker ru_worker{name,
-                                    {concurrent_queue_policy::lockfree_mpmc, task_worker_queue_size},
-                                    {{exec_name}},
+                                    {exec_name, concurrent_queue_policy::lockfree_mpmc, task_worker_queue_size},
                                     std::chrono::microseconds{5},
                                     os_thread_realtime_priority::max() - 1};
       if (!exec_mng.add_execution_context(create_execution_context(ru_worker))) {
@@ -919,8 +943,7 @@ struct worker_manager {
       const std::string exec_name = "ru_rx_exec";
 
       const single_worker ru_worker{name,
-                                    {concurrent_queue_policy::lockfree_mpmc, task_worker_queue_size},
-                                    {{exec_name}},
+                                    {exec_name, concurrent_queue_policy::lockfree_mpmc, task_worker_queue_size},
                                     std::chrono::microseconds{15},
                                     os_thread_realtime_priority::max() - 5};
       if (!exec_mng.add_execution_context(create_execution_context(ru_worker))) {
@@ -935,8 +958,7 @@ struct worker_manager {
       const std::string exec_name = "du_sim_exec";
 
       const single_worker du_sim_worker{name,
-                                        {concurrent_queue_policy::locking_mpmc, 2},
-                                        {{exec_name}},
+                                        {exec_name, concurrent_queue_policy::locking_mpmc, 2},
                                         std::nullopt,
                                         os_thread_realtime_priority::max() - 10};
       if (!exec_mng.add_execution_context(create_execution_context(du_sim_worker))) {
@@ -951,8 +973,7 @@ struct worker_manager {
       const std::string exec_name = "ru_sim_exec";
 
       const single_worker ru_sim_worker{name,
-                                        {concurrent_queue_policy::lockfree_spsc, task_worker_queue_size},
-                                        {{exec_name}},
+                                        {exec_name, concurrent_queue_policy::lockfree_spsc, task_worker_queue_size},
                                         std::chrono::microseconds{5},
                                         os_thread_realtime_priority::max() - 2};
       if (!exec_mng.add_execution_context(create_execution_context(ru_sim_worker))) {
@@ -972,10 +993,17 @@ struct worker_manager {
 };
 } // namespace
 
-static void configure_ofh_sector(ru_ofh_sector_configuration& sector_cfg)
+static void configure_ofh_sector(ofh::sector_configuration& sector_cfg)
 {
   // Default IQ data scaling to be applied prior to downlink data compression.
   const float iq_scaling = 0.9f;
+  // Downlink processing time in microseconds.
+  const std::chrono::microseconds dl_processing_time = 400us;
+
+  sector_cfg.max_processing_delay_slots = processing_delay_slots;
+  sector_cfg.dl_processing_time         = dl_processing_time;
+  sector_cfg.uses_dpdk                  = false;
+  sector_cfg.sector_id                  = 0;
 
   std::chrono::duration<double, std::nano> symbol_duration(
       (1e6 / (get_nsymb_per_slot(cyclic_prefix::NORMAL) * get_nof_slots_per_subframe(test_params.scs))));
@@ -988,25 +1016,25 @@ static void configure_ofh_sector(ru_ofh_sector_configuration& sector_cfg)
   sector_cfg.tci_up                          = vlan_tag;
   sector_cfg.scs                             = test_params.scs;
   sector_cfg.bw                              = test_params.bw;
+  sector_cfg.ru_operating_bw                 = sector_cfg.bw;
   sector_cfg.cp                              = cyclic_prefix::NORMAL;
   sector_cfg.is_prach_control_plane_enabled  = test_params.is_prach_control_plane_enabled;
   sector_cfg.ignore_ecpri_payload_size_field = test_params.ignore_ecpri_payload_size_field;
   sector_cfg.tx_window_timing_params         = {
-              T1a_max_cp_dl, T1a_min_cp_dl, T1a_max_cp_ul, T1a_min_cp_ul, T1a_max_up, T1a_min_up};
-  sector_cfg.rx_window_timing_params       = {Ta4_min, Ta4_max};
-  sector_cfg.is_downlink_broadcast_enabled = test_params.is_downlink_broadcast_enabled;
+      T1a_max_cp_dl, T1a_min_cp_dl, T1a_max_cp_ul, T1a_min_cp_ul, T1a_max_up, T1a_min_up};
+  sector_cfg.rx_window_timing_params = {Ta4_min, Ta4_max};
 
   // Configure compression
   ru_compression_params dl_ul_compression_params{to_compression_type(test_params.data_compr_method),
                                                  test_params.data_bitwidth};
   ru_compression_params prach_compression_params{to_compression_type(test_params.prach_compr_method),
                                                  test_params.prach_bitwidth};
-  sector_cfg.dl_compression_params               = dl_ul_compression_params;
-  sector_cfg.ul_compression_params               = dl_ul_compression_params;
-  sector_cfg.prach_compression_params            = prach_compression_params;
-  sector_cfg.iq_scaling                          = iq_scaling;
-  sector_cfg.is_downlink_static_comp_hdr_enabled = test_params.is_downlink_static_comp_hdr_enabled;
-  sector_cfg.is_uplink_static_comp_hdr_enabled   = test_params.is_uplink_static_comp_hdr_enabled;
+  sector_cfg.dl_compression_params                = dl_ul_compression_params;
+  sector_cfg.ul_compression_params                = dl_ul_compression_params;
+  sector_cfg.prach_compression_params             = prach_compression_params;
+  sector_cfg.iq_scaling                           = iq_scaling;
+  sector_cfg.is_downlink_static_compr_hdr_enabled = test_params.is_downlink_static_comp_hdr_enabled;
+  sector_cfg.is_uplink_static_compr_hdr_enabled   = test_params.is_uplink_static_comp_hdr_enabled;
 
   // Configure eAxCs.
   sector_cfg.prach_eaxc.assign(test_params.prach_port_id.begin(), test_params.prach_port_id.end());
@@ -1017,18 +1045,12 @@ static void configure_ofh_sector(ru_ofh_sector_configuration& sector_cfg)
 
 static ru_ofh_configuration generate_ru_config()
 {
-  // Downlink processing time in microseconds.
-  const std::chrono::microseconds dl_processing_time = 400us;
-
   ru_ofh_configuration ru_cfg;
-  ru_cfg.max_processing_delay_slots = processing_delay_slots;
-  ru_cfg.gps_Alpha                  = 0;
-  ru_cfg.gps_Beta                   = 0;
-  ru_cfg.dl_processing_time         = dl_processing_time;
-  ru_cfg.uses_dpdk                  = false;
 
-  ru_cfg.sector_configs.emplace_back();
-  ru_ofh_sector_configuration& sector_cfg = ru_cfg.sector_configs.back();
+  ru_cfg.gps_Alpha = 0;
+  ru_cfg.gps_Beta  = 0;
+
+  ofh::sector_configuration& sector_cfg = ru_cfg.sector_configs.emplace_back();
   configure_ofh_sector(sector_cfg);
 
   return ru_cfg;
@@ -1058,9 +1080,9 @@ static ru_ofh_dependencies generate_ru_dependencies(srslog::basic_logger&       
   sector_deps.txrx_executor     = workers.ru_tx_exec;
 
   // Configure Ethernet gateway.
-  auto gateway            = std::make_unique<test_gateway>();
-  tx_gateway              = gateway.get();
-  sector_deps.eth_gateway = std::move(gateway);
+  auto gateway                = std::make_unique<test_gateway>();
+  tx_gateway                  = gateway.get();
+  sector_deps.eth_transmitter = std::move(gateway);
 
   // Configure Ethernet receiver.
   auto dummy_receiver      = std::make_unique<dummy_eth_receiver>(logger, buffer_pool);
@@ -1134,13 +1156,13 @@ int main(int argc, char** argv)
   auto dl_rg_pool = create_dl_resource_grid_pool(rg_factory, nof_prb);
   auto ul_rg_pool = create_ul_resource_grid_pool(rg_factory, nof_prb);
 
+  ether::ethernet_rx_buffer_pool buffer_pool(BUFFER_SIZE);
   worker_manager                 workers;
   dummy_rx_symbol_notifier       rx_symbol_notifier;
   dummy_timing_notifier          timing_notifier;
   test_gateway*                  tx_gateway;
   test_ether_receiver*           eth_receiver;
   dummy_ru_error_notifier        error_notifier;
-  ether::ethernet_rx_buffer_pool buffer_pool(BUFFER_SIZE);
 
   ru_ofh_configuration ru_cfg  = generate_ru_config();
   ru_ofh_dependencies  ru_deps = generate_ru_dependencies(
@@ -1171,7 +1193,7 @@ int main(int argc, char** argv)
 
   // Start the RU.
   fmt::print("Starting RU...\n");
-  ru_object->get_controller().start();
+  ru_object->get_controller().get_operation_controller().start();
 
   // Wait until TTI callback is called and slot point gets initialized.
   while (!slot_synchronized) {
@@ -1188,7 +1210,7 @@ int main(int argc, char** argv)
   fmt::print("DU emulator stopped\n");
 
   fmt::print("Stopping the RU...\n");
-  ru_object->get_controller().stop();
+  ru_object->get_controller().get_operation_controller().stop();
   fmt::print("RU stopped successfully.\n");
 
   workers.stop();

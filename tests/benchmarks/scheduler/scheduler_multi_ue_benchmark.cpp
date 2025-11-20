@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,6 +26,8 @@
 #include "tests/unittests/scheduler/test_utils/config_generators.h"
 #include "srsran/adt/circular_array.h"
 #include "srsran/du/du_cell_config_helpers.h"
+#include "srsran/scheduler/config/sched_cell_config_helpers.h"
+#include "srsran/scheduler/result/sched_result.h"
 #include "srsran/scheduler/scheduler_factory.h"
 #include "srsran/srslog/srslog.h"
 #include "srsran/support/benchmark_utils.h"
@@ -75,7 +77,7 @@ static void parse_args(int argc, char** argv, bench_params& params)
       case 'h':
       default:
         usage(argv[0], params);
-        exit(0);
+        std::exit(0);
     }
   }
 }
@@ -88,20 +90,21 @@ public:
     expert_cfg(expert_cfg_),
     builder_params(builder_params_),
     logger(srslog::fetch_basic_logger("SCHED")),
-    sch(create_scheduler(scheduler_config{expert_cfg, cfg_notif, metric_notif})),
+    sch(create_scheduler(scheduler_config{expert_cfg, cfg_notif})),
     next_sl_tx(builder_params.scs_common, 0)
   {
-    du_cell_cfgs                                      = {config_helpers::make_default_du_cell_config(builder_params)};
-    du_cell_cfgs[0].pucch_cfg.f2_params.max_code_rate = max_pucch_code_rate::dot_35;
-    du_cell_cfgs[0].pucch_cfg.nof_csi_resources       = 4;
-    du_cell_cfgs[0].pucch_cfg.nof_sr_resources        = 2;
-    du_cell_cfgs[0].pucch_cfg.nof_ue_pucch_f0_or_f1_res_harq = 3;
-    du_cell_cfgs[0].pucch_cfg.nof_ue_pucch_f2_res_harq       = 6;
+    du_cell_cfgs = {config_helpers::make_default_du_cell_config(builder_params)};
+    std::get<pucch_f2_params>(du_cell_cfgs[0].pucch_cfg.f2_or_f3_or_f4_params).max_code_rate =
+        max_pucch_code_rate::dot_35;
+    du_cell_cfgs[0].pucch_cfg.nof_csi_resources                    = 4;
+    du_cell_cfgs[0].pucch_cfg.nof_sr_resources                     = 2;
+    du_cell_cfgs[0].pucch_cfg.nof_ue_pucch_f0_or_f1_res_harq       = 3;
+    du_cell_cfgs[0].pucch_cfg.nof_ue_pucch_f2_or_f3_or_f4_res_harq = 6;
 
     sched_cell_configuration_request_message cell_cfg_msg =
         sched_config_helper::make_default_sched_cell_configuration_request(builder_params);
 
-    cell_cfg_msg.pucch_guardbands = config_helpers::build_pucch_guardbands_list(
+    cell_cfg_msg.ded_pucch_resources = config_helpers::build_pucch_resource_list(
         du_cell_cfgs[0].pucch_cfg, cell_cfg_msg.ul_cfg_common.init_ul_bwp.generic_params.crbs.length());
     sch->handle_cell_configuration_request(cell_cfg_msg);
 
@@ -166,27 +169,27 @@ public:
         uci_indication::uci_pdu pdu;
         pdu.ue_index = to_du_ue_index(static_cast<unsigned>(pucch.crnti) - 0x4601);
         pdu.crnti    = pucch.crnti;
-        if (pucch.format == pucch_format::FORMAT_1) {
+        if (pucch.format() == pucch_format::FORMAT_1) {
           uci_indication::uci_pdu::uci_pucch_f0_or_f1_pdu f1{};
           f1.sr_detected = false;
-          if (pucch.format_1.harq_ack_nof_bits > 0 and pucch.format_1.sr_bits == sr_nof_bits::no_sr) {
+          if (pucch.uci_bits.harq_ack_nof_bits > 0 and pucch.uci_bits.sr_bits == sr_nof_bits::no_sr) {
             f1.ul_sinr_dB = 10;
-            f1.harqs.resize(pucch.format_1.harq_ack_nof_bits, mac_harq_ack_report_status::ack);
-          } else if (pucch.format_1.harq_ack_nof_bits > 0) {
+            f1.harqs.resize(pucch.uci_bits.harq_ack_nof_bits, mac_harq_ack_report_status::ack);
+          } else if (pucch.uci_bits.harq_ack_nof_bits > 0) {
             // ACK+SR
             f1.ul_sinr_dB = -10;
-            f1.harqs.resize(pucch.format_1.harq_ack_nof_bits, mac_harq_ack_report_status::dtx);
+            f1.harqs.resize(pucch.uci_bits.harq_ack_nof_bits, mac_harq_ack_report_status::dtx);
           } else {
             f1.ul_sinr_dB  = -10;
             f1.sr_detected = false;
           }
           pdu.pdu = f1;
           ind.ucis.push_back(pdu);
-        } else if (pucch.format == pucch_format::FORMAT_2) {
+        } else if (pucch.format() == pucch_format::FORMAT_2) {
           uci_indication::uci_pdu::uci_pucch_f2_or_f3_or_f4_pdu f2{};
           f2.ul_sinr_dB = 10;
-          if (pucch.format_2.harq_ack_nof_bits > 0) {
-            f2.harqs.resize(pucch.format_2.harq_ack_nof_bits, mac_harq_ack_report_status::ack);
+          if (pucch.uci_bits.harq_ack_nof_bits > 0) {
+            f2.harqs.resize(pucch.uci_bits.harq_ack_nof_bits, mac_harq_ack_report_status::ack);
           }
           if (pucch.csi_rep_cfg.has_value()) {
             f2.csi =
@@ -195,7 +198,8 @@ public:
                                 std::nullopt,
                                 csi_report_pmi{csi_report_pmi::typeI_single_panel_4ports_mode1{0, std::nullopt, 0}},
                                 15,
-                                std::nullopt};
+                                std::nullopt,
+                                true};
           }
           pdu.pdu = f2;
           ind.ucis.push_back(pdu);
@@ -216,7 +220,8 @@ public:
                               std::nullopt,
                               csi_report_pmi{csi_report_pmi::typeI_single_panel_4ports_mode1{0, std::nullopt, 0}},
                               15,
-                              std::nullopt};
+                              std::nullopt,
+                              true};
           ind.ucis.push_back(pdu);
         }
       }
@@ -248,7 +253,7 @@ private:
   slot_point          next_sl_tx;
   const sched_result* result = nullptr;
 
-  circular_array<sched_result, 64> sched_results;
+  circular_array<sched_result, 64> sched_results{};
 };
 
 void benchmark_tdd(benchmarker& bm, const bench_params& params)
@@ -263,24 +268,26 @@ void benchmark_tdd(benchmarker& bm, const bench_params& params)
   builder_params.scs_common           = subcarrier_spacing::kHz30;
   builder_params.tdd_ul_dl_cfg_common = tdd_ul_dl_config_common{builder_params.scs_common, {10, 7, 8, 2, 0}};
   builder_params.nof_dl_ports         = 4;
-  multi_ue_sched_simulator sim{sched_cfg, builder_params};
+
+  // Instantiate the simulator on the heap because of huge object size
+  std::unique_ptr<multi_ue_sched_simulator> sim = std::make_unique<multi_ue_sched_simulator>(sched_cfg, builder_params);
 
   // Add UEs.
   for (unsigned ue_count = 0; ue_count != params.nof_ues; ++ue_count) {
-    sim.add_ue();
+    sim->add_ue();
   }
 
   // Update UE buffer states.
-  sim.push_dl_bs(params.dl_bs);
+  sim->push_dl_bs(params.dl_bs);
 
   // Run benchmark.
   bm.new_measure(
       fmt::format("TDD scheduling {} UEs", params.nof_ues),
       1,
-      [&sim]() mutable { sim.run_slot(); },
+      [&sim]() mutable { sim->run_slot(); },
       [&]() {
-        sim.process_results();
-        sim.push_dl_bs(params.dl_bs);
+        sim->process_results();
+        sim->push_dl_bs(params.dl_bs);
       });
 }
 

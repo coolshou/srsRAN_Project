@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,10 +22,11 @@
 
 #pragma once
 
-#include "apps/services/application_command.h"
-#include "apps/services/e2/e2_metric_connector_manager.h"
+#include "apps/helpers/e2/e2_metric_connector_manager.h"
 #include "apps/services/metrics/metrics_config.h"
+#include "apps/units/application_unit_commands.h"
 #include "srsran/du/du.h"
+#include "srsran/ntn/ntn_configuration_manager.h"
 #include <memory>
 #include <vector>
 
@@ -48,14 +49,16 @@ class mac_pcap;
 class rlc_pcap;
 class timer_manager;
 struct worker_manager;
+class mac_clock_controller;
 
 /// O-DU unit.
 struct o_du_unit {
-  std::unique_ptr<srs_du::du>                                     unit;
-  std::vector<std::unique_ptr<app_services::application_command>> commands;
-  std::vector<app_services::metrics_config>                       metrics;
+  std::unique_ptr<srs_du::du>               unit;
+  std::vector<app_services::metrics_config> metrics;
+  application_unit_commands                 commands;
   std::unique_ptr<e2_metric_connector_manager<e2_du_metrics_connector, e2_du_metrics_notifier, e2_du_metrics_interface>>
-      e2_metric_connectors;
+                                                      e2_metric_connectors;
+  std::unique_ptr<srs_ntn::ntn_configuration_manager> ntn_configurator_manager;
 };
 
 /// O-RAN DU unit dependencies.
@@ -63,11 +66,10 @@ struct o_du_unit_dependencies {
   worker_manager*                 workers            = nullptr;
   srs_du::f1c_connection_client*  f1c_client_handler = nullptr;
   srs_du::f1u_du_gateway*         f1u_gw             = nullptr;
-  timer_manager*                  timer_mng          = nullptr;
+  mac_clock_controller*           timer_ctrl         = nullptr;
   mac_pcap*                       mac_p              = nullptr;
   rlc_pcap*                       rlc_p              = nullptr;
   e2_connection_client*           e2_client_handler  = nullptr;
-  srslog::sink*                   json_sink          = nullptr;
   app_services::metrics_notifier* metrics_notifier   = nullptr;
 };
 

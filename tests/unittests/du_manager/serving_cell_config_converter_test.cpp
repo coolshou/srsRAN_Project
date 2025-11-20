@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,12 +25,13 @@
 #include "srsran/asn1/rrc_nr/cell_group_config.h"
 #include "srsran/mac/config/mac_cell_group_config_factory.h"
 #include "srsran/scheduler/config/csi_helper.h"
+#include "srsran/scheduler/config/rlm_helper.h"
 #include "srsran/scheduler/config/serving_cell_config_factory.h"
 #include <gtest/gtest.h>
 
 using namespace srsran;
 
-srs_du::du_ue_resource_config make_initial_du_ue_resource_config()
+static srs_du::du_ue_resource_config make_initial_du_ue_resource_config()
 {
   srs_du::du_ue_resource_config dest_cfg{};
   dest_cfg.cell_group.cells.emplace(0, config_helpers::create_default_initial_ue_spcell_cell_config());
@@ -38,7 +39,7 @@ srs_du::du_ue_resource_config make_initial_du_ue_resource_config()
   return dest_cfg;
 }
 
-pusch_config make_initial_pusch_config()
+static pusch_config make_initial_pusch_config()
 {
   pusch_config cfg{};
   cfg.tx_cfg = tx_scheme_codebook{.max_rank        = 1,
@@ -88,7 +89,7 @@ pusch_config make_initial_pusch_config()
   return cfg;
 }
 
-srs_config make_initial_srs_config()
+static srs_config make_initial_srs_config()
 {
   srs_config cfg{};
 
@@ -106,9 +107,9 @@ srs_config make_initial_srs_config()
       .id                    = srs_config::srs_res_id_t{0U, static_cast<srs_config::srs_res_id>(0)},
       .nof_ports             = srs_config::srs_resource::nof_srs_ports::port1,
       .tx_comb               = tx_comb,
-      .res_mapping           = srs_config::srs_resource::resource_mapping{.start_pos   = 2,
-                                                                          .nof_symb    = srs_nof_symbols::n1,
-                                                                          .rept_factor = srs_nof_symbols::n1},
+      .res_mapping           = srs_config::resource_mapping{.start_pos   = 2,
+                                                            .nof_symb    = srs_nof_symbols::n1,
+                                                            .rept_factor = srs_nof_symbols::n1},
       .freq_domain_pos       = 0,
       .freq_domain_shift     = 0,
       .freq_hop              = srs_config::srs_resource::frequency_hopping{.c_srs = 0, .b_srs = 0, .b_hop = 0},
@@ -417,10 +418,14 @@ TEST(serving_cell_config_converter_test, test_ue_custom_pucch_cfg_conversion)
   dest_pucch_cfg.pucch_res_set.erase(dest_pucch_cfg.pucch_res_set.begin());
 
   // >>> PUCCH resource 2.
-  pucch_resource res_basic{
-      .res_id = pucch_res_id_t{12, 12}, .starting_prb = 40, .second_hop_prb = 50, .format = pucch_format::FORMAT_3};
+  pucch_resource res_basic{.res_id           = pucch_res_id_t{12, 12},
+                           .starting_prb     = 40,
+                           .second_hop_prb   = 50,
+                           .nof_symbols      = 1,
+                           .starting_sym_idx = 13,
+                           .format           = pucch_format::FORMAT_3};
   res_basic.format = pucch_format::FORMAT_2;
-  res_basic.format_params.emplace<pucch_format_2_3_cfg>(pucch_format_2_3_cfg{.nof_symbols = 1, .starting_sym_idx = 13});
+  res_basic.format_params.emplace<pucch_format_2_3_cfg>();
   dest_pucch_cfg.pucch_res_list.push_back(res_basic);
 
   // Remove first element.
@@ -760,13 +765,13 @@ TEST(serving_cell_config_converter_test, test_ue_custom_srs_cfg_conversion)
       .id                    = srs_config::srs_res_id_t{0U, static_cast<srs_config::srs_res_id>(1)},
       .nof_ports             = srs_config::srs_resource::nof_srs_ports::port1,
       .tx_comb               = tx_comb,
-      .res_mapping           = srs_config::srs_resource::resource_mapping{.start_pos   = 50,
-                                                                          .nof_symb    = srs_nof_symbols::n1,
-                                                                          .rept_factor = srs_nof_symbols::n1},
+      .res_mapping           = srs_config::resource_mapping{.start_pos   = 50,
+                                                            .nof_symb    = srs_nof_symbols::n1,
+                                                            .rept_factor = srs_nof_symbols::n1},
       .freq_domain_pos       = 0,
       .freq_domain_shift     = 0,
       .freq_hop              = srs_config::srs_resource::frequency_hopping{.c_srs = 0, .b_srs = 0, .b_hop = 0},
-      .grp_or_seq_hop        = srs_group_or_sequence_hopping::groupHopping,
+      .grp_or_seq_hop        = srs_group_or_sequence_hopping::group_hopping,
       .res_type              = srs_resource_type::semi_persistent,
       .sequence_id           = 41,
       .spatial_relation_info = srs_config::srs_resource::srs_spatial_relation_info{
@@ -1213,4 +1218,129 @@ TEST(serving_cell_config_converter_test, test_csi_meas_cfg_release_conversion)
   ASSERT_EQ(rrc_sp_cell_cfg_ded.csi_meas_cfg_present, not dest_sp_cell_cfg_ded.csi_meas_cfg.has_value());
   // CSI-Meas Config is released due to absence in dest cell group config.
   ASSERT_EQ(rrc_sp_cell_cfg_ded.csi_meas_cfg.type(), asn1::setup_release_opts::release);
+}
+
+TEST(serving_cell_config_converter_test, test_rlm_cfg_conversion)
+{
+  using namespace asn1::rrc_nr;
+
+  // Some lambda to check recurrent configs.
+  auto validate_basic_sp_cell_cfg = [](const cell_group_cfg_s& cell_gr_cfg, size_t sz) {
+    ASSERT_TRUE(cell_gr_cfg.sp_cell_cfg_present);
+    ASSERT_TRUE(cell_gr_cfg.sp_cell_cfg.sp_cell_cfg_ded_present);
+
+    auto& rrc_sp_cell_cfg_ded = cell_gr_cfg.sp_cell_cfg.sp_cell_cfg_ded;
+    ASSERT_TRUE(rrc_sp_cell_cfg_ded.init_dl_bwp_present);
+    ASSERT_TRUE(rrc_sp_cell_cfg_ded.init_dl_bwp.radio_link_monitoring_cfg_present);
+    ASSERT_TRUE(rrc_sp_cell_cfg_ded.init_dl_bwp.radio_link_monitoring_cfg.is_setup());
+    ASSERT_EQ(
+        rrc_sp_cell_cfg_ded.init_dl_bwp.radio_link_monitoring_cfg.setup().fail_detection_res_to_add_mod_list.size(),
+        sz);
+  };
+
+  auto validate_rlm_ssb_resource = [](const serving_cell_cfg_s& sp_cell_cfg) {
+    ASSERT_EQ(
+        sp_cell_cfg.init_dl_bwp.radio_link_monitoring_cfg.setup().fail_detection_res_to_add_mod_list[0U].purpose.value,
+        radio_link_monitoring_rs_s::purpose_opts::rlf);
+    ASSERT_EQ(sp_cell_cfg.init_dl_bwp.radio_link_monitoring_cfg.setup()
+                  .fail_detection_res_to_add_mod_list[0U]
+                  .detection_res.type(),
+              radio_link_monitoring_rs_s::detection_res_c_::types_opts::ssb_idx);
+    ASSERT_EQ(sp_cell_cfg.init_dl_bwp.radio_link_monitoring_cfg.setup()
+                  .fail_detection_res_to_add_mod_list[0U]
+                  .detection_res.ssb_idx(),
+              static_cast<uint8_t>(0U));
+  };
+
+  auto validate_rlm_csi_rs_resources = [](const serving_cell_cfg_s& sp_cell_cfg,
+                                          span<uint8_t>             rlm_res_indices,
+                                          span<uint8_t>             csi_rs_res_indices) {
+    ASSERT_EQ(rlm_res_indices.size(), csi_rs_res_indices.size());
+
+    for (auto rlm_res_idx = rlm_res_indices.begin(), csi_rs_res_idx = csi_rs_res_indices.begin();
+         rlm_res_idx != rlm_res_indices.end();
+         rlm_res_idx++, csi_rs_res_idx++) {
+      ASSERT_EQ(sp_cell_cfg.init_dl_bwp.radio_link_monitoring_cfg.setup()
+                    .fail_detection_res_to_add_mod_list[*rlm_res_idx]
+                    .purpose.value,
+                radio_link_monitoring_rs_s::purpose_opts::rlf)
+          << fmt::format("Invalid purpose for RLM resource idx={}", *rlm_res_idx);
+      ASSERT_EQ(sp_cell_cfg.init_dl_bwp.radio_link_monitoring_cfg.setup()
+                    .fail_detection_res_to_add_mod_list[*rlm_res_idx]
+                    .detection_res.type(),
+                radio_link_monitoring_rs_s::detection_res_c_::types_opts::csi_rs_idx)
+          << fmt::format("Invalid detection resource type for RLM resource idx={}", *rlm_res_idx);
+      ASSERT_EQ(sp_cell_cfg.init_dl_bwp.radio_link_monitoring_cfg.setup()
+                    .fail_detection_res_to_add_mod_list[*rlm_res_idx]
+                    .detection_res.csi_rs_idx(),
+                *csi_rs_res_idx)
+          << fmt::format("Invalid detection CSI-res idx ({}) for RLM resource idx={}", *csi_rs_res_idx, *rlm_res_idx);
+    }
+  };
+
+  auto src_cfg = make_initial_du_ue_resource_config();
+
+  if (not src_cfg.cell_group.cells.begin()->serv_cell_cfg.csi_meas_cfg.has_value()) {
+    src_cfg.cell_group.cells.begin()->serv_cell_cfg.csi_meas_cfg = make_test_csi_meas_cfg();
+  }
+
+  srs_du::du_ue_resource_config dest_cfg{src_cfg};
+
+  // 1. Make a RLM config that uses SSB resources.
+  uint8_t                                  L_max   = 4U;
+  constexpr std::array<uint8_t, NOF_BEAMS> ssb_ids = {0};
+  rlm_helper::rlm_builder_params rlm_params(rlm_resource_type::ssb, L_max, static_cast<uint64_t>(0b1) << 63U, ssb_ids);
+
+  dest_cfg.cell_group.cells[0].serv_cell_cfg.init_dl_bwp.rlm_cfg.emplace(rlm_helper::make_radio_link_monitoring_config(
+      rlm_params, dest_cfg.cell_group.cells.begin()->serv_cell_cfg.csi_meas_cfg.value().nzp_csi_rs_res_list));
+
+  cell_group_cfg_s rrc_cell_grp_cfg;
+  srs_du::calculate_cell_group_config_diff(rrc_cell_grp_cfg, src_cfg, dest_cfg);
+
+  unsigned nof_rlm_resources = 1U;
+  validate_basic_sp_cell_cfg(rrc_cell_grp_cfg, nof_rlm_resources);
+  validate_rlm_ssb_resource(rrc_cell_grp_cfg.sp_cell_cfg.sp_cell_cfg_ded);
+
+  // 2. Make a RLM config that uses CSI-RS resources.
+  L_max      = 8U;
+  rlm_params = rlm_helper::rlm_builder_params(rlm_resource_type::csi_rs, L_max);
+
+  // Set the DEST configuration as the new SRC.
+  src_cfg = dest_cfg;
+
+  dest_cfg.cell_group.cells[0].serv_cell_cfg.init_dl_bwp.rlm_cfg.emplace(rlm_helper::make_radio_link_monitoring_config(
+      rlm_params, dest_cfg.cell_group.cells.begin()->serv_cell_cfg.csi_meas_cfg.value().nzp_csi_rs_res_list));
+
+  srs_du::calculate_cell_group_config_diff(rrc_cell_grp_cfg, src_cfg, dest_cfg);
+
+  // Nof RLM expected resources (this depends on L_max).
+  nof_rlm_resources = 4U;
+  validate_basic_sp_cell_cfg(rrc_cell_grp_cfg, nof_rlm_resources);
+
+  // The CSI-RS resources are those for tracking, which are indexed starting from 1.
+  std::array<uint8_t, 4U> rlm_res_indices    = {0, 1, 2, 3};
+  std::array<uint8_t, 4U> csi_rs_res_indices = {1, 2, 3, 4};
+  validate_rlm_csi_rs_resources(rrc_cell_grp_cfg.sp_cell_cfg.sp_cell_cfg_ded, rlm_res_indices, csi_rs_res_indices);
+
+  // 3. Make a RLM config that uses both SSB and CSI-RS resources.
+  rlm_params = rlm_helper::rlm_builder_params(
+      rlm_resource_type::ssb_and_csi_rs, L_max, static_cast<uint64_t>(0b1) << 63U, ssb_ids);
+
+  // Set the DEST (with SSB config) configuration as the new SRC.
+  src_cfg = dest_cfg;
+
+  dest_cfg.cell_group.cells[0].serv_cell_cfg.init_dl_bwp.rlm_cfg.emplace(rlm_helper::make_radio_link_monitoring_config(
+      rlm_params, dest_cfg.cell_group.cells.begin()->serv_cell_cfg.csi_meas_cfg.value().nzp_csi_rs_res_list));
+
+  srs_du::calculate_cell_group_config_diff(rrc_cell_grp_cfg, src_cfg, dest_cfg);
+
+  // Nof RLM expected resources (this depends on L_max).
+  validate_basic_sp_cell_cfg(rrc_cell_grp_cfg, nof_rlm_resources);
+  validate_rlm_ssb_resource(rrc_cell_grp_cfg.sp_cell_cfg.sp_cell_cfg_ded);
+  // With both SSB and CSI-RS resources used for RLM, the first RLM resource (idx 0) uses SSB, the second RLM resource
+  // (idx 1) uses CSI-RS resource idx 1 (the first CSI-RS for tracking), etc., until max 4 RLM resources are reached.
+  std::array<uint8_t, 3U> rlm_res_new_indices    = {1, 2, 3};
+  std::array<uint8_t, 3U> csi_rs_res_new_indices = {1, 2, 3};
+  validate_rlm_csi_rs_resources(
+      rrc_cell_grp_cfg.sp_cell_cfg.sp_cell_cfg_ded, rlm_res_new_indices, csi_rs_res_new_indices);
 }

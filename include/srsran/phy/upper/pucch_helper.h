@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -45,7 +45,7 @@ public:
     srsran_assert(prg, "Invalid PRG.");
   }
 
-  /// Computes the NR-PUCCH group sequence (TS 38.211 clause 6.3.2.2.1 Group and sequence hopping).
+  /// Computes the NR-PUCCH group sequence (TS38.211 clause 6.3.2.2.1 Group and sequence hopping).
   /// \param[in] group_hopping Group hopping configuration.
   /// \param[in] n_id          Scrambling identifier.
   /// \return A pair of sequence group u and sequence number v.
@@ -69,7 +69,7 @@ public:
     return {u, v};
   }
 
-  /// \brief Computes the NR alpha index (1-NRE) (TS 38.211 clause 6.3.2.2.2 Cyclic shift hopping)
+  /// \brief Computes the NR alpha index (1-NRE) (TS38.211 clause 6.3.2.2.2 Cyclic shift hopping)
   ///
   /// \param slot[in]    Current slot
   /// \param cp[in]      Cyclic prefix type
@@ -78,12 +78,8 @@ public:
   /// \param m0[in]      Initial cyclic shift
   /// \param m_cs[in]    Cyclic shift
   /// \return NR alpha index
-  unsigned get_alpha_index(const slot_point&    slot,
-                           const cyclic_prefix& cp,
-                           unsigned             n_id,
-                           unsigned             symbol,
-                           unsigned             m0,
-                           unsigned             m_cs) const
+  unsigned
+  get_alpha_index(slot_point slot, cyclic_prefix cp, unsigned n_id, unsigned symbol, unsigned m0, unsigned m_cs) const
   {
     // Initialize pseudo-random sequence with the seed set to nid
     unsigned cinit = n_id;

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -206,12 +206,11 @@ void f1ap_du_test::run_f1_setup_procedure()
   // > Launch F1 setup procedure
   f1_setup_request_message request_msg = generate_f1_setup_request_message();
   test_logger.info("Launch f1 setup request procedure...");
-  async_task<f1_setup_response_message>         t = f1ap->handle_f1_setup_request(request_msg);
-  lazy_task_launcher<f1_setup_response_message> t_launcher(t);
+  async_task<f1_setup_result>         t = f1ap->handle_f1_setup_request(request_msg);
+  lazy_task_launcher<f1_setup_result> t_launcher(t);
 
   // > F1 setup response received.
-  unsigned     transaction_id    = get_transaction_id(f1c_gw.last_tx_pdu().pdu).value();
-  f1ap_message f1_setup_response = generate_f1_setup_response_message(transaction_id);
+  f1ap_message f1_setup_response = test_helpers::generate_f1_setup_response(f1c_gw.last_tx_pdu());
   test_logger.info("Injecting F1SetupResponse");
   f1ap->handle_message(f1_setup_response);
 }
@@ -256,7 +255,7 @@ f1ap_du_test::ue_test_context* f1ap_du_test::run_f1ap_ue_create(du_ue_index_t ue
     b.rx_sdu_notifier = &f1c_bearer.rx_sdu_notifier;
     msg.f1c_bearers_to_add.push_back(b);
   }
-  test_logger.info("Creating ueId={}", msg.ue_index);
+  test_logger.info("Creating ueId={}", fmt::underlying(msg.ue_index));
   f1ap_ue_creation_response resp = f1ap->handle_ue_creation_request(msg);
   if (resp.result) {
     unsigned count = 0;
@@ -345,7 +344,7 @@ f1ap_ue_configuration_response f1ap_du_test::update_f1ap_ue_config(du_ue_index_t
     req.f1c_bearers_to_add.push_back(b);
   }
 
-  test_logger.info("Configuring ue={}", ue_index);
+  test_logger.info("Configuring ue={}", fmt::underlying(ue_index));
   return f1ap->handle_ue_configuration_request(req);
 }
 

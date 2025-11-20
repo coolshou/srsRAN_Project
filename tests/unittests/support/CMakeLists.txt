@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -22,6 +22,9 @@ set_directory_properties(PROPERTIES LABELS "support")
 
 add_subdirectory(network)
 add_subdirectory(executors)
+add_subdirectory(format)
+add_subdirectory(rate_limiting)
+add_subdirectory(synchronization)
 
 add_executable(timer_test timer_test.cpp)
 target_link_libraries(timer_test srslog srsran_support gtest gtest_main)
@@ -76,9 +79,9 @@ add_executable(ring_buffer_pool_test ring_buffer_pool_test.cpp)
 target_link_libraries(ring_buffer_pool_test srsran_support gtest gtest_main)
 add_test(ring_buffer_pool_test ring_buffer_pool_test)
 
-add_executable(unbounded_object_pool_test unbounded_object_pool_test.cpp)
-target_link_libraries(unbounded_object_pool_test srsran_support gtest gtest_main)
-add_test(unbounded_object_pool_test unbounded_object_pool_test)
+add_executable(object_pool_test unbounded_object_pool_test.cpp bounded_object_pool_test.cpp)
+target_link_libraries(object_pool_test srsran_support gtest gtest_main)
+add_test(object_pool_test object_pool_test)
 
 add_executable(fixed_size_memory_pool_test fixed_size_memory_pool_test.cpp)
 target_link_libraries(fixed_size_memory_pool_test srsran_support gtest gtest_main)
@@ -112,3 +115,7 @@ add_test(transform_optional_test transform_optional_test)
 add_executable(resource_usage_test tracing/resource_usage_test.cpp)
 target_link_libraries(resource_usage_test srsran_support srslog gtest gtest_main)
 add_test(resource_usage_test resource_usage_test)
+
+add_executable(math_test math/mod_math_utils_test.cpp)
+target_link_libraries(math_test srsran_support gtest gtest_main)
+add_test(math_test math_test)

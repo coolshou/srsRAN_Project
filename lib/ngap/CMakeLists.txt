@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -27,6 +27,7 @@ set(SOURCES
         ngap_connection_handler.cpp
         ngap_validators/ngap_validators.cpp
         gateways/n2_connection_client_factory.cpp
+        metrics/ngap_metrics_aggregator.cpp
         procedures/ng_setup_procedure.cpp
         procedures/ng_reset_procedure.cpp
         procedures/ngap_initial_context_setup_procedure.cpp
@@ -36,8 +37,8 @@ set(SOURCES
         procedures/ngap_pdu_session_resource_release_procedure.cpp
         procedures/ngap_handover_preparation_procedure.cpp
         procedures/ngap_handover_resource_allocation_procedure.cpp
+        procedures/ngap_dl_ran_status_transfer_procedure.cpp
         procedures/ngap_ue_context_release_procedure.cpp
-        procedures/ngap_dl_ue_associated_nrppa_transport_procedure.cpp
     )
 
 

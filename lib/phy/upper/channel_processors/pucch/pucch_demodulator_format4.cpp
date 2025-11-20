@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -56,9 +56,9 @@ void pucch_demodulator_format4::demodulate(span<log_likelihood_ratio>           
                 config.first_prb,
                 grid.get_nof_subc() / NRE);
 
-  srsran_assert(!config.second_hop_prb.has_value() || (config.second_hop_prb.value() * NRE <= grid.get_nof_subc()),
+  srsran_assert(!config.second_hop_prb.has_value() || (*config.second_hop_prb * NRE <= grid.get_nof_subc()),
                 "PUCCH Format 4: PRB allocation outside grid (second hop). Requested {}, grid has {} PRBs.",
-                config.second_hop_prb.value(),
+                *config.second_hop_prb,
                 grid.get_nof_subc() / NRE);
 
   interval<unsigned, true> nof_symbols_range(pucch_constants::FORMAT4_MIN_NSYMB, pucch_constants::FORMAT4_MAX_NSYMB);
@@ -126,5 +126,5 @@ void pucch_demodulator_format4::inverse_blockwise_spreading(span<cf_t>        or
   }
 
   // Scale according to the spreading factor.
-  srsvec::sc_prod(original, 1.0F / config.occ_length, original);
+  srsvec::sc_prod(original, original, 1.0F / config.occ_length);
 }

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,8 +21,7 @@
  */
 
 #include "../../../lib/fapi_adaptor/mac/fapi_to_mac_data_msg_translator.h"
-#include "srsran/fapi/messages.h"
-#include "srsran/support/math/math_utils.h"
+#include "srsran/fapi/messages/rach_indication.h"
 #include <gtest/gtest.h>
 
 using namespace srsran;
@@ -62,7 +61,6 @@ protected:
   {
     rssi  = std::clamp(value, -140.F, 30.F);
     power = std::clamp(value, -140.F, 30.F);
-    snr   = std::clamp(value, -64.F, 63.F);
     test_pdu();
   }
 
@@ -110,9 +108,8 @@ private:
     EXPECT_FLOAT_EQ(rssi, occ.rssi_dBFS.value());
 
     const mac_rach_indication::rach_preamble& pream = occ.preambles.front();
-    EXPECT_FLOAT_EQ(snr, pream.snr_dB.value());
     EXPECT_FLOAT_EQ(power, pream.pwr_dBFS.value());
-    EXPECT_EQ(time_advance_ns, std::roundf(pream.time_advance.to_seconds() * 1e9));
+    EXPECT_EQ(time_advance_ns, std::round(pream.time_advance.to_seconds() * 1e9));
   }
 };
 

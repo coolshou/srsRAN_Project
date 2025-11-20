@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,7 +25,7 @@
 #include "srsran/adt/span.h"
 #include "srsran/ofh/ethernet/ethernet_mac_address.h"
 #include "srsran/ran/bs_channel_bandwidth.h"
-#include "srsran/ru/ru_ofh_configuration.h"
+#include "srsran/ru/ofh/ru_ofh_configuration.h"
 
 namespace srsran {
 

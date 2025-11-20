@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -79,8 +79,11 @@ protected:
                                         to_du_cell_index(0),
                                         drb_id,
                                         lcid,
+                                        s_nssai_t{},
+                                        five_qi_t{9},
                                         rlc_config{},
                                         f1u_config{},
+                                        false,
                                         ul_tnls,
                                         teid_pool,
                                         du_mng->params,

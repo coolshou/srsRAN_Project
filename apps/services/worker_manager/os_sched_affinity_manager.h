@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,7 +27,7 @@
 namespace srsran {
 
 /// Types of CPU affinity masks.
-enum class sched_affinity_mask_types { l1_dl, l1_ul, l2_cell, ru, low_priority, last };
+enum class sched_affinity_mask_types { ru, main, last };
 
 /// Thread pinning policy to a CPU affinity mask.
 enum class sched_affinity_mask_policy {
@@ -166,7 +166,7 @@ public:
   }
 
   /// Calculate and returns the affinity mask for the given type.
-  os_sched_affinity_bitmask calcute_affinity_mask(sched_affinity_mask_types type)
+  os_sched_affinity_bitmask calcute_affinity_mask(sched_affinity_mask_types type) const
   {
     srsran_assert(type != sched_affinity_mask_types::last, "Invalid type '{}'", to_unsigned(type));
     srsran_assert(cpu_masks[to_unsigned(type)], "Invalid manager for type '{}'", to_unsigned(type));

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,7 +21,8 @@
  */
 
 #include "ru_sdr_config_cli11_schema.h"
-#include "apps/services/logger/logger_appconfig_cli11_utils.h"
+#include "apps/helpers/logger/logger_appconfig_cli11_utils.h"
+#include "apps/helpers/metrics/metrics_config_cli11_schema.h"
 #include "apps/services/worker_manager/cli11_cpu_affinities_parser_helper.h"
 #include "ru_sdr_config.h"
 #include "srsran/support/cli11_utils.h"
@@ -43,14 +44,6 @@ static void configure_cli11_amplitude_control_args(CLI::App& app, amplitude_cont
 
 static void configure_cli11_ru_sdr_expert_args(CLI::App& app, ru_sdr_unit_expert_config& config)
 {
-  auto buffer_size_policy_check = [](const std::string& value) -> std::string {
-    if (value == "auto" || value == "single-packet" || value == "half-slot" || value == "slot" ||
-        value == "optimal-slot") {
-      return {};
-    }
-    return "Invalid DL buffer size policy. Accepted values [auto,single-packet,half-slot,slot,optimal-slot]";
-  };
-
   auto tx_mode_check = [](const std::string& value) -> std::string {
     if (value == "continuous" || value == "discontinuous" || value == "same-port") {
       return {};
@@ -61,7 +54,11 @@ static void configure_cli11_ru_sdr_expert_args(CLI::App& app, ru_sdr_unit_expert
   add_option(app,
              "--low_phy_dl_throttling",
              config.lphy_dl_throttling,
-             "Throttles the lower PHY DL baseband generation. The range is (0, 1). Set it to zero to disable it.")
+             "System time-based throttling.\n"
+             "Determines a minimum baseband processor period time between downlink packets. It is expressed as a \n"
+             "fraction of the time equivalent to the number of samples in the baseband buffer. Set to 0.9 to ensure \n"
+             "that the downlink packets are processed with a minimum period of 90% of the buffer duration.\n"
+             "Set to zero to disable this feature.")
       ->capture_default_str();
   add_option(app,
              "--tx_mode",
@@ -76,19 +73,15 @@ static void configure_cli11_ru_sdr_expert_args(CLI::App& app, ru_sdr_unit_expert
   add_option(app,
              "--power_ramping_time_us",
              config.power_ramping_time_us,
-             "Specifies the power ramping time in microseconds, it proactively initiates the transmission and "
+             "Specifies the power ramping time in microseconds, it proactively initiates the transmission and \n"
              "mitigates transient effects.")
       ->capture_default_str();
-  add_option(app,
-             "--dl_buffer_size_policy",
-             config.dl_buffer_size_policy,
-             "Selects the size policy of the baseband buffers that pass DL samples from the lower PHY to the radio.")
-      ->capture_default_str()
-      ->check(buffer_size_policy_check);
 }
 
 static void configure_cli11_ru_sdr_args(CLI::App& app, ru_sdr_unit_config& config)
 {
+  static const char* time_format = "%Y-%m-%d %H:%M:%S";
+
   add_option(app, "--srate", config.srate_MHz, "Sample rate in MHz")->capture_default_str();
   add_option(app, "--device_driver", config.device_driver, "Device driver name")->capture_default_str();
   add_option(app, "--device_args", config.device_arguments, "Optional device arguments")->capture_default_str();
@@ -126,6 +119,45 @@ static void configure_cli11_ru_sdr_args(CLI::App& app, ru_sdr_unit_config& confi
         return IntegerValidator(value);
       })
       ->default_str("auto");
+  add_option_function<std::string>(
+      app,
+      "--start_time",
+      [&config](std::string value) {
+        //
+        if (value.empty()) {
+          config.start_time = std::nullopt;
+          return;
+        }
+
+        //
+        std::tm            tm;
+        std::istringstream ss(value);
+        ss >> std::get_time(&tm, time_format);
+
+        if (ss.fail()) {
+          config.start_time = std::nullopt;
+          return;
+        }
+
+        config.start_time.emplace(std::chrono::system_clock::from_time_t(std::mktime(&tm)));
+      },
+      "Optional radio start time.\n"
+      "The time must be with format %Y-%m-%d %H:%M:%S.")
+      ->check([](std::string value) -> std::string {
+        // Try parsing the time.
+        std::tm            tm;
+        std::istringstream ss(value);
+        ss >> std::get_time(&tm, time_format);
+
+        if (ss.fail()) {
+          return fmt::format(
+              "The starting time '{}' format does not match the expected format: '{}'.\n", value, time_format);
+        }
+
+        // Success.
+        return {};
+      })
+      ->default_str("auto");
 
   // Amplitude control configuration.
   CLI::App* amplitude_control_subcmd = add_subcommand(app, "amplitude_control", "Amplitude control parameters");
@@ -138,46 +170,12 @@ static void configure_cli11_ru_sdr_args(CLI::App& app, ru_sdr_unit_config& confi
 
 static void configure_cli11_log_args(CLI::App& app, ru_sdr_unit_logger_config& log_params)
 {
-  app_services::add_log_option(app, log_params.radio_level, "--radio_level", "Radio log level");
-  app_services::add_log_option(app, log_params.phy_level, "--phy_level", "PHY log level");
+  app_helpers::add_log_option(app, log_params.radio_level, "--radio_level", "Radio log level");
+  app_helpers::add_log_option(app, log_params.phy_level, "--phy_level", "PHY log level");
 }
 
 static void configure_cli11_cell_affinity_args(CLI::App& app, ru_sdr_unit_cpu_affinities_cell_config& config)
 {
-  add_option_function<std::string>(
-      app,
-      "--l1_dl_cpus",
-      [&config](const std::string& value) { parse_affinity_mask(config.l1_dl_cpu_cfg.mask, value, "l1_dl_cpus"); },
-      "CPU cores assigned to L1 downlink tasks");
-
-  add_option_function<std::string>(
-      app,
-      "--l1_ul_cpus",
-      [&config](const std::string& value) { parse_affinity_mask(config.l1_ul_cpu_cfg.mask, value, "l1_ul_cpus"); },
-      "CPU cores assigned to L1 uplink tasks");
-
-  add_option_function<std::string>(
-      app,
-      "--l1_dl_pinning",
-      [&config](const std::string& value) {
-        config.l1_dl_cpu_cfg.pinning_policy = to_affinity_mask_policy(value);
-        if (config.l1_dl_cpu_cfg.pinning_policy == sched_affinity_mask_policy::last) {
-          report_error("Incorrect value={} used in {} property", value, "l1_dl_pinning");
-        }
-      },
-      "Policy used for assigning CPU cores to L1 downlink tasks");
-
-  add_option_function<std::string>(
-      app,
-      "--l1_ul_pinning",
-      [&config](const std::string& value) {
-        config.l1_ul_cpu_cfg.pinning_policy = to_affinity_mask_policy(value);
-        if (config.l1_ul_cpu_cfg.pinning_policy == sched_affinity_mask_policy::last) {
-          report_error("Incorrect value={} used in {} property", value, "l1_ul_pinning");
-        }
-      },
-      "Policy used for assigning CPU cores to L1 uplink tasks");
-
   add_option_function<std::string>(
       app,
       "--ru_cpus",
@@ -205,28 +203,31 @@ static void configure_cli11_lower_phy_threads_args(CLI::App& app, lower_phy_thre
           execution_profile = lower_phy_thread_profile::single;
         } else if (value == "dual") {
           execution_profile = lower_phy_thread_profile::dual;
-        } else if (value == "quad") {
-          execution_profile = lower_phy_thread_profile::quad;
+        } else if (value == "triple") {
+          execution_profile = lower_phy_thread_profile::triple;
         }
       },
-      "Lower physical layer executor profile [single, dual, quad].")
+      "Lower physical layer executor profile [single, dual, triple].\n"
+      " - single: one task worker for all the lower physical layer task executors.\n"
+      " - dual: two task workers - one for the downlink and one for the uplink.\n"
+      " - triple: dedicated task workers for each of the subtasks (demodulation, reception and transmission).")
       ->check([](const std::string& value) -> std::string {
-        if ((value == "single") || (value == "dual") || (value == "quad")) {
+        if ((value == "single") || (value == "dual") || (value == "triple")) {
           return "";
         }
 
-        return "Invalid executor profile. Valid profiles are: single, dual and quad.";
+        return "Invalid executor profile. Valid profiles are: single, dual, and triple.";
       })
       ->default_function([&execution_profile]() -> std::string {
         switch (execution_profile) {
           case lower_phy_thread_profile::blocking:
             return "blocking";
-          case lower_phy_thread_profile::dual:
-            return "dual";
-          case lower_phy_thread_profile::quad:
-            return "quad";
           case lower_phy_thread_profile::single:
             return "single";
+          case lower_phy_thread_profile::dual:
+            return "dual";
+          case lower_phy_thread_profile::triple:
+            return "triple";
           default:
             break;
         }
@@ -265,6 +266,12 @@ static void configure_cli11_expert_execution_args(CLI::App& app, ru_sdr_unit_exp
       "Sets the cell CPU affinities configuration on a per cell basis");
 }
 
+static void configure_cli11_metrics_args(CLI::App& app, ru_sdr_unit_metrics_config& config)
+{
+  CLI::App* layers_subcmd = add_subcommand(app, "layers", "Layer basis metrics configuration")->configurable();
+  add_option(*layers_subcmd, "--enable_ru", config.enable_ru_metrics, "Enable Radio Unit metrics");
+}
+
 void srsran::configure_cli11_with_ru_sdr_config_schema(CLI::App& app, srsran::ru_sdr_unit_config& parsed_cfg)
 {
   /// RU SDR section.
@@ -278,6 +285,11 @@ void srsran::configure_cli11_with_ru_sdr_config_schema(CLI::App& app, srsran::ru
   // Expert execution section.
   CLI::App* expert_subcmd = add_subcommand(app, "expert_execution", "Expert execution configuration")->configurable();
   configure_cli11_expert_execution_args(*expert_subcmd, parsed_cfg.expert_execution_cfg);
+
+  // Metrics section.
+  app_helpers::configure_cli11_with_metrics_appconfig_schema(app, parsed_cfg.metrics_cfg.metrics_cfg);
+  CLI::App* metrics_subcmd = add_subcommand(app, "metrics", "Metrics configuration")->configurable();
+  configure_cli11_metrics_args(*metrics_subcmd, parsed_cfg.metrics_cfg);
 }
 
 void srsran::autoderive_ru_sdr_parameters_after_parsing(CLI::App&           app,

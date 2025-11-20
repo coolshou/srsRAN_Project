@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,14 +22,63 @@
 
 #pragma once
 
+#include "apps/helpers/metrics/metrics_config.h"
 #include "apps/services/worker_manager/os_sched_affinity_manager.h"
+#include "srsran/ofh/receiver/ofh_receiver_configuration.h"
+#include "srsran/ofh/serdes/ofh_cplane_message_properties.h"
 #include "srsran/ran/bs_channel_bandwidth.h"
 #include "srsran/support/units.h"
 #include <chrono>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace srsran {
+
+/// Configuration parameters related to the scaling of the IQ symbols in the DL OFH resource grid.
+struct ru_ofh_scaling_config {
+  /// \brief RU reference level in dBFS.
+  ///
+  /// This parameter must be set to the magnitude that is required for a single subcarrier to reach the nominal RF power
+  /// of the RU. Some RUs specify their IQ reference level in their documentation. It is referenced to the full scale
+  /// value of the selected OFH compression scheme.
+  ///
+  /// \warning Check the RU documentation before settings this parameter, as incorrect values may damage the RU.
+  float ru_reference_level_dBFS = -12.0f;
+  /// \brief Attenuation of the subcarrier IQ data as a back-off to \ref ru_reference_level_dBFS.
+  ///
+  /// Set this parameter to the desired RMS power attenuation of the IQ symbols in the resource grid. It acts as a
+  /// back-off applied to the RU reference level. Its intended use is to prevent the sum of the power contributions of
+  /// each subcarrier in the signal from exceeding the RU reference level. Some RUs specify the expected subcarrier
+  /// magnitude in their documentation. If no expected subcarrier magnitude is stated on the RU documentation, it is
+  /// recommended to start with a large back-off (e.g., 30 dB), and decrease gradually until the desired RF power is
+  /// reached.
+  ///
+  /// Some RUs that support multiple channel bandwidths normalize their internal gain according to the selected RU
+  /// bandwidth. This makes the subcarrier RMS power valid for all supported bandwidth settings. For RUs that don't
+  /// normalize based on channel bandwidth, a subcarrier RMS power for a new BW can be derived from a subcarrier RMS
+  /// power calibrated for a previous BW by applying the following expression:
+  ///
+  /// \f$ $$P_{BW2}\text{ [dBFS]}=P_{BW1}\text{ [dBFS]} - 10\log_{10}{\bigg(\frac{BW2}{BW1}\bigg)}\f$
+  ///
+  /// If no value is specified, then the bandwidth is normalized based on the number of subcarriers, i.e.,
+  /// the back-off is set to \f$10\log_{10}(12 N_{RB})}\f$.
+  ///
+  /// \warning Check the RU documentation before settings this parameter, as incorrect values may damage the RU.
+  std::optional<float> subcarrier_rms_backoff_dB;
+};
+
+/// Configuration parameters related to the scaling of the IQ symbols in the DL OFH resource grid (legacy version).
+struct ru_ofh_legacy_scaling_config {
+  /// \brief IQ data scaling to be applied prior to Downlink data compression.
+  ///
+  /// If configured, it overrides the other power configuration parameters \ref ru_reference_level_dBFS and \ref
+  /// subcarrier_rms_backoff_dB. To preserve backwards-compatibility with older configs, the IQ scaling factor applied
+  /// to the OFH symbols will include \f$ G_{iq}=\frac{\text{iq\_scaling}}{\sqrt{12 N_{RB}}} \f$.
+  ///
+  /// \warning Check the RU documentation before settings this parameter, as incorrect values may damage the RU.
+  float iq_scaling = 0.1f;
+};
 
 /// gNB app Open Fronthaul base cell configuration.
 struct ru_ofh_unit_base_cell_config {
@@ -55,16 +104,16 @@ struct ru_ofh_unit_base_cell_config {
   std::chrono::microseconds Ta4_min{85};
   /// Enables the Control-Plane PRACH message signalling.
   bool is_prach_control_plane_enabled = true;
-  /// \brief Downlink broadcast flag.
-  ///
-  /// If enabled, broadcasts the contents of a single antenna port to all downlink RU eAxCs.
-  bool is_downlink_broadcast_enabled = false;
+  /// Ignore the start symbol value received in the PRACH U-Plane packets.
+  bool ignore_prach_start_symbol = false;
   /// If set to true, the payload size encoded in a eCPRI header is ignored.
   bool ignore_ecpri_payload_size_field = false;
   /// If set to true, the sequence id encoded in a eCPRI packet is ignored.
   bool ignore_ecpri_seq_id_field = false;
-  /// If set to true, warn of unreceived Radio Unit frames.
-  bool warn_unreceived_ru_frames = true;
+  /// If set to true, logs late events as warnings, otherwise as info.
+  bool enable_log_warnings_for_lates = true;
+  /// Warn of unreceived Radio Unit frames status.
+  ofh::warn_unreceived_ru_frames log_unreceived_ru_frames = ofh::warn_unreceived_ru_frames::after_traffic_detection;
   /// Uplink compression method.
   std::string compression_method_ul = "bfp";
   /// Uplink compression bitwidth.
@@ -81,8 +130,10 @@ struct ru_ofh_unit_base_cell_config {
   bool is_downlink_static_comp_hdr_enabled = true;
   /// Uplink static compression header flag.
   bool is_uplink_static_comp_hdr_enabled = true;
-  /// IQ data scaling to be applied prior to Downlink data compression.
-  float iq_scaling = 0.35F;
+  /// Scaling configuration parameters.
+  std::variant<std::monostate, ru_ofh_scaling_config, ru_ofh_legacy_scaling_config> iq_scaling_config;
+  /// PRACH FFT size (to be used in the C-plane Type 3 messages).
+  ofh::cplane_fft_size c_plane_prach_fft_len = ofh::cplane_fft_size::fft_4096;
 };
 
 /// gNB app Open Fronthaul cell configuration.
@@ -124,24 +175,10 @@ struct ru_ofh_unit_cpu_affinities_cell_config {
   os_sched_affinity_config ru_cpu_cfg = {sched_affinity_mask_types::ru, {}, sched_affinity_mask_policy::mask};
 };
 
-/// Expert threads configuration.
-struct ru_ofh_unit_expert_threads_config {
-  ru_ofh_unit_expert_threads_config()
-  {
-    unsigned nof_threads     = cpu_architecture_info::get().get_host_nof_available_cpus();
-    is_downlink_parallelized = nof_threads > 3;
-  }
-
-  /// Open Fronthaul thread configuration.
-  bool is_downlink_parallelized = true;
-};
-
 /// Expert configuration.
 struct ru_ofh_unit_expert_execution_config {
   /// RU timing thread.
   os_sched_affinity_bitmask ru_timing_cpu;
-  /// Expert thread configuration of the Open Fronthaul Radio Unit.
-  ru_ofh_unit_expert_threads_config threads;
   /// CPU affinities per RU txrx thread.
   std::vector<os_sched_affinity_bitmask> txrx_affinities;
   /// CPU affinities per cell.
@@ -154,6 +191,14 @@ struct ru_ofh_unit_hal_config {
   std::string eal_args;
 };
 
+/// Metrics configuration.
+struct ru_ofh_unit_metrics_config {
+  /// Metrics configuration.
+  app_helpers::metrics_config metrics_cfg;
+  /// Flag that control RU metrics.
+  bool enable_ru_metrics = false;
+};
+
 /// gNB app Open Fronthaul Radio Unit configuration.
 struct ru_ofh_unit_config {
   /// GPS Alpha - Valid value range: [0, 1.2288e7].
@@ -162,6 +207,8 @@ struct ru_ofh_unit_config {
   int gps_Beta = 0;
   /// Downlink processing time in microseconds.
   unsigned dl_processing_time = 400U;
+  /// Uplink request processing time in microseconds.
+  unsigned ul_processing_time = 30U;
   /// Loggers.
   ru_ofh_unit_logger_config loggers;
   /// \brief Individual Open Fronthaul cells configurations.
@@ -174,6 +221,8 @@ struct ru_ofh_unit_config {
   ru_ofh_unit_expert_execution_config expert_execution_cfg;
   /// HAL configuration.
   std::optional<ru_ofh_unit_hal_config> hal_config;
+  /// Metrics configuration.
+  ru_ofh_unit_metrics_config metrics_cfg;
 };
 
 /// gNB app Open Fronthaul Radio Unit configuration.

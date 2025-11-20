@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,10 +27,12 @@ using namespace ofh;
 
 void receiver_controller::start()
 {
-  msg_receiver.get_ethernet_receiver().start(msg_receiver);
+  msg_receiver.get_operation_controller().start();
+  window_handler.start();
 }
 
 void receiver_controller::stop()
 {
-  msg_receiver.get_ethernet_receiver().stop();
+  window_handler.stop();
+  msg_receiver.get_operation_controller().stop();
 }

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,6 +23,7 @@
 #pragma once
 
 #include "srsran/gtpu/gtpu_teid.h"
+#include "srsran/support/rate_limiting/token_bucket.h"
 #include "fmt/format.h"
 #include <chrono>
 #include <cstdint>
@@ -38,9 +39,11 @@ constexpr unsigned GTPU_PORT = 2152;
 struct gtpu_tunnel_ngu_config {
   struct gtpu_tunnel_ngu_rx_config {
     gtpu_teid_t               local_teid;
-    std::chrono::milliseconds t_reordering              = {};
-    bool                      warn_expired_t_reordering = false;
-    bool                      test_mode                 = false;
+    std::chrono::milliseconds t_reordering    = {};
+    token_bucket*             ue_ambr_limiter = nullptr;
+    bool                      warn_on_drop    = false;
+    bool                      ignore_ue_ambr  = false;
+    bool                      test_mode       = false;
   } rx;
   struct gtpu_tunnel_ngu_tx_config {
     gtpu_teid_t peer_teid;
@@ -81,10 +84,14 @@ struct formatter<srsran::gtpu_tunnel_ngu_config::gtpu_tunnel_ngu_rx_config> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::gtpu_tunnel_ngu_config::gtpu_tunnel_ngu_rx_config& cfg, FormatContext& ctx)
-
+  auto format(const srsran::gtpu_tunnel_ngu_config::gtpu_tunnel_ngu_rx_config& cfg, FormatContext& ctx) const
   {
-    return format_to(ctx.out(), "local_teid={} t_reordering={}", cfg.local_teid, cfg.t_reordering);
+    return format_to(ctx.out(),
+                     "node=ngu local_teid={} t_reordering={} warn_on_drop={} ignore_ue_ambr={}",
+                     cfg.local_teid,
+                     cfg.t_reordering,
+                     cfg.warn_on_drop,
+                     cfg.ignore_ue_ambr);
   }
 };
 
@@ -98,8 +105,7 @@ struct formatter<srsran::gtpu_tunnel_ngu_config::gtpu_tunnel_ngu_tx_config> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::gtpu_tunnel_ngu_config::gtpu_tunnel_ngu_tx_config& cfg, FormatContext& ctx)
-
+  auto format(const srsran::gtpu_tunnel_ngu_config::gtpu_tunnel_ngu_tx_config& cfg, FormatContext& ctx) const
   {
     return format_to(ctx.out(), "peer_teid={} peer_addr={} peer_port={}", cfg.peer_teid, cfg.peer_addr, cfg.peer_port);
   }
@@ -115,8 +121,7 @@ struct formatter<srsran::gtpu_tunnel_ngu_config> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::gtpu_tunnel_ngu_config& cfg, FormatContext& ctx)
-
+  auto format(const srsran::gtpu_tunnel_ngu_config& cfg, FormatContext& ctx) const
   {
     return format_to(ctx.out(), "{} {}", cfg.rx, cfg.tx);
   }
@@ -132,7 +137,7 @@ struct formatter<srsran::nru_node> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::nru_node& node, FormatContext& ctx)
+  auto format(const srsran::nru_node& node, FormatContext& ctx) const
   {
     switch (node) {
       case srsran::nru_node::du:
@@ -155,8 +160,7 @@ struct formatter<srsran::gtpu_tunnel_nru_config::gtpu_tunnel_nru_rx_config> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::gtpu_tunnel_nru_config::gtpu_tunnel_nru_rx_config& cfg, FormatContext& ctx)
-
+  auto format(const srsran::gtpu_tunnel_nru_config::gtpu_tunnel_nru_rx_config& cfg, FormatContext& ctx) const
   {
     return format_to(ctx.out(), "node={} local_teid={}", cfg.node, cfg.local_teid);
   }
@@ -172,8 +176,7 @@ struct formatter<srsran::gtpu_tunnel_nru_config::gtpu_tunnel_nru_tx_config> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::gtpu_tunnel_nru_config::gtpu_tunnel_nru_tx_config& cfg, FormatContext& ctx)
-
+  auto format(const srsran::gtpu_tunnel_nru_config::gtpu_tunnel_nru_tx_config& cfg, FormatContext& ctx) const
   {
     return format_to(ctx.out(), "peer_teid={} peer_addr={} peer_port={}", cfg.peer_teid, cfg.peer_addr, cfg.peer_port);
   }
@@ -189,8 +192,7 @@ struct formatter<srsran::gtpu_tunnel_nru_config> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::gtpu_tunnel_nru_config& cfg, FormatContext& ctx)
-
+  auto format(const srsran::gtpu_tunnel_nru_config& cfg, FormatContext& ctx) const
   {
     return format_to(ctx.out(), "{} {}", cfg.rx, cfg.tx);
   }

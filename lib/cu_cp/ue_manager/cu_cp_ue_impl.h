@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,12 +23,14 @@
 #pragma once
 
 #include "../adapters/ngap_adapters.h"
+#include "../adapters/nrppa_adapters.h"
 #include "../adapters/rrc_ue_adapters.h"
 #include "../cell_meas_manager/measurement_context.h"
 #include "../ue_security_manager/ue_security_manager_impl.h"
 #include "../up_resource_manager/up_resource_manager_impl.h"
 #include "cu_cp_ue_impl_interface.h"
 #include "ue_task_scheduler_impl.h"
+#include "srsran/cu_cp/cu_cp_types.h"
 #include "srsran/ran/plmn_identity.h"
 #include <optional>
 #include <unordered_map>
@@ -39,14 +41,20 @@ namespace srs_cu_cp {
 
 /// \brief Context of a CU-CP UE.
 struct cu_cp_ue_context {
-  du_index_t    du_idx   = du_index_t::invalid;
-  plmn_identity plmn     = plmn_identity::test_value();
-  gnb_du_id_t   du_id    = gnb_du_id_t::invalid;
-  ue_index_t    ue_index = ue_index_t::invalid;
-  rnti_t        crnti    = rnti_t::INVALID_RNTI;
+  du_index_t    du_idx    = du_index_t::invalid;
+  cu_up_index_t cu_up_idx = cu_up_index_t::invalid;
+  plmn_identity plmn      = plmn_identity::test_value();
+  gnb_du_id_t   du_id     = gnb_du_id_t::invalid;
+  ue_index_t    ue_index  = ue_index_t::invalid;
+  rnti_t        crnti     = rnti_t::INVALID_RNTI;
   /// \brief Flag to disable new UE reconfigurations. This can be used, for instance, to reconfigure UE contexts
   /// that are in the process of handover.
   bool reconfiguration_disabled = false;
+};
+
+struct cu_cp_ue_handover_context {
+  ue_index_t target_ue_index = ue_index_t::invalid;
+  uint8_t    rrc_reconfig_transaction_id;
 };
 
 class cu_cp_ue : public cu_cp_ue_impl_interface
@@ -54,10 +62,11 @@ class cu_cp_ue : public cu_cp_ue_impl_interface
 public:
   cu_cp_ue(ue_index_t                     ue_index_,
            du_index_t                     du_index_,
+           timer_manager&                 timers_,
+           task_executor&                 task_exec_,
            const up_resource_manager_cfg& up_cfg,
            const security_manager_config& sec_cfg,
            ue_task_scheduler_impl         task_sched_,
-           plmn_identity                  plmn_,
            std::optional<gnb_du_id_t>     du_id_       = std::nullopt,
            std::optional<pci_t>           pci_         = std::nullopt,
            std::optional<rnti_t>          c_rnti_      = std::nullopt,
@@ -67,10 +76,10 @@ public:
   void stop();
 
   /// \brief Get the UE index of the UE.
-  ue_index_t get_ue_index() override { return ue_index; }
+  ue_index_t get_ue_index() const override { return ue_index; }
 
   /// \brief Get the PCI of the UE.
-  [[nodiscard]] pci_t get_pci() const { return pci; };
+  [[nodiscard]] pci_t get_pci() const { return pci; }
 
   /// \brief Get the C-RNTI of the UE.
   [[nodiscard]] rnti_t get_c_rnti() const { return ue_ctxt.crnti; }
@@ -78,7 +87,10 @@ public:
   [[nodiscard]] gnb_du_id_t get_du_id() const { return ue_ctxt.du_id; }
 
   /// \brief Get the DU index of the UE.
-  [[nodiscard]] du_index_t get_du_index() const { return ue_ctxt.du_idx; }
+  [[nodiscard]] du_index_t get_du_index() const override { return ue_ctxt.du_idx; }
+
+  /// \brief Get the CU-UP index of the UE.
+  [[nodiscard]] cu_up_index_t get_cu_up_index() const override { return ue_ctxt.cu_up_idx; }
 
   /// \brief Get the PCell index of the UE.
   du_cell_index_t get_pcell_index() { return pcell_index; }
@@ -114,11 +126,17 @@ public:
   /// \brief Set the RRC UE of the UE.
   void set_rrc_ue(rrc_ue_interface& rrc_ue_);
 
+  /// \brief Set the CU-UP index of the UE.
+  void set_cu_up_index(cu_up_index_t cu_up_idx) { ue_ctxt.cu_up_idx = cu_up_idx; }
+
   /// \brief Get the RRC UE notifier of the UE.
   ngap_rrc_ue_notifier& get_ngap_rrc_ue_notifier() override;
 
   /// \brief Get the NGAP CU-CP UE notifier of the UE.
   ngap_cu_cp_ue_notifier& get_ngap_cu_cp_ue_notifier() { return ngap_cu_cp_ue_ev_notifier; }
+
+  /// \brief Get the NRPPA CU-CP UE notifier of the UE.
+  nrppa_cu_cp_ue_notifier& get_nrppa_cu_cp_ue_notifier() { return nrppa_cu_cp_ue_ev_notifier; }
 
   /// \brief Get the RRC UE CU-CP UE notifier of the UE.
   rrc_ue_cu_cp_ue_notifier& get_rrc_ue_cu_cp_ue_notifier() { return rrc_ue_cu_cp_ue_ev_notifier; }
@@ -140,31 +158,45 @@ public:
   /// \brief Get the RRC UE of the UE.
   rrc_ue_interface* get_rrc_ue() const { return rrc_ue; }
 
+  /// \brief Get the measurement results of the UE.
+  std::optional<cell_measurement_positioning_info>& get_measurement_results() override
+  {
+    return meas_context.meas_results;
+  }
+
+  unique_timer& get_handover_ue_release_timer() { return handover_ue_release_timer; }
+
+  std::optional<cu_cp_ue_handover_context>& get_ho_context() { return ho_context; }
+
 private:
-  // common context
+  // Common context.
   ue_index_t             ue_index = ue_index_t::invalid;
   ue_task_scheduler_impl task_sched;
   up_resource_manager    up_mng;
   ue_security_manager    sec_mng;
 
-  // du ue context
+  // DU/CU-UP UE context.
   cu_cp_ue_context ue_ctxt;
   du_cell_index_t  pcell_index = du_cell_index_t::invalid;
   pci_t            pci         = INVALID_PCI;
 
+  // RRC UE context.
+  rrc_ue_interface*       rrc_ue = nullptr;
+  rrc_ue_ngap_adapter     rrc_ue_ngap_ev_notifier;
   rrc_ue_cu_cp_ue_adapter rrc_ue_cu_cp_ue_ev_notifier;
 
-  // rrc ue
-  rrc_ue_interface*   rrc_ue = nullptr;
-  rrc_ue_ngap_adapter rrc_ue_ngap_ev_notifier;
-
-  // ngap ue context
+  // NGAP UE context.
   ngap_cu_cp_ue_adapter ngap_cu_cp_ue_ev_notifier;
   ngap_rrc_ue_adapter   ngap_rrc_ue_ev_notifier;
 
-  // cu-cp ue context
-  rrc_ue_cu_cp_adapter         rrc_ue_cu_cp_ev_notifier;
-  cell_meas_manager_ue_context meas_context;
+  // NRPPA UE context.
+  nrppa_cu_cp_ue_adapter nrppa_cu_cp_ue_ev_notifier;
+
+  // CU-CP UE context.
+  rrc_ue_cu_cp_adapter                     rrc_ue_cu_cp_ev_notifier;
+  cell_meas_manager_ue_context             meas_context;
+  unique_timer                             handover_ue_release_timer = {};
+  std::optional<cu_cp_ue_handover_context> ho_context;
 };
 
 } // namespace srs_cu_cp

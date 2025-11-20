@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,7 +24,6 @@
 /// \brief Channel equalizer implementation for the Zero Forcing and the Minimum Mean Square Error.
 
 #include "channel_equalizer_generic_impl.h"
-#include "equalize_mmse_1xn.h"
 #include "equalize_zf_1xn.h"
 #include "equalize_zf_2xn.h"
 #include "srsran/adt/interval.h"
@@ -187,105 +186,97 @@ void equalize_zf_single_tx_layer_reduction(span<cf_t>                           
       nof_valid_noise_var, eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
 }
 
-/// Calls the equalizer function for receive spatial diversity with the appropriate number of receive ports.
-template <unsigned NOF_PORTS>
-void equalize_mmse_single_tx_layer(unsigned                              nof_ports,
-                                   span<cf_t>                            eq_symbols,
-                                   span<float>                           eq_noise_vars,
-                                   const re_buffer_reader<cbf16_t>&      ch_symbols,
-                                   const channel_equalizer::ch_est_list& ch_estimates,
-                                   span<const float>                     noise_var,
-                                   float                                 tx_scaling)
-{
-  if (NOF_PORTS != nof_ports) {
-    // Recursive call.
-    return equalize_mmse_single_tx_layer<NOF_PORTS - 1>(
-        nof_ports, eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
-  }
-
-  // Perform equalization.
-  equalize_mmse_1xn<NOF_PORTS>(eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
-}
-
-/// Specialization for a single receive port.
-template <>
-void equalize_mmse_single_tx_layer<1>(unsigned /**/,
-                                      span<cf_t>                            eq_symbols,
-                                      span<float>                           eq_noise_vars,
-                                      const re_buffer_reader<cbf16_t>&      ch_symbols,
-                                      const channel_equalizer::ch_est_list& ch_estimates,
-                                      span<const float>                     noise_var,
-                                      float                                 tx_scaling)
-{
-  // Perform equalization.
-  equalize_mmse_1xn<1>(eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var, tx_scaling);
-}
-
-SRSRAN_WEAK_SYMB void
-channel_equalizer_generic_impl::equalize_zf_3x4(span<srsran::cf_t> /* eq_symbols */,
-                                                span<float> /* noise_vars */,
-                                                const re_buffer_reader<srsran::cbf16_t>& /* ch_symbols */,
-                                                const channel_equalizer::ch_est_list& /* ch_estimates */,
-                                                float /* noise_var_est */,
-                                                float /* tx_scaling */)
+#ifndef SRSRAN_HAS_ENTERPRISE
+void channel_equalizer_generic_impl::equalize_zf_3x4(span<srsran::cf_t> /* eq_symbols */,
+                                                     span<float> /* noise_vars */,
+                                                     const re_buffer_reader<srsran::cbf16_t>& /* ch_symbols */,
+                                                     const channel_equalizer::ch_est_list& /* ch_estimates */,
+                                                     float /* noise_var_est */,
+                                                     float /* tx_scaling */)
 {
   srsran_assertion_failure("Equalizer not implemented for 3x4 ZF algorithm.");
 }
 
-SRSRAN_WEAK_SYMB void
-channel_equalizer_generic_impl::equalize_zf_4x4(span<srsran::cf_t> /* eq_symbols */,
-                                                span<float> /* noise_vars */,
-                                                const re_buffer_reader<srsran::cbf16_t>& /* ch_symbols */,
-                                                const channel_equalizer::ch_est_list& /* ch_estimates */,
-                                                float /* noise_var_est */,
-                                                float /* tx_scaling */)
+void channel_equalizer_generic_impl::equalize_zf_4x4(span<srsran::cf_t> /* eq_symbols */,
+                                                     span<float> /* noise_vars */,
+                                                     const re_buffer_reader<srsran::cbf16_t>& /* ch_symbols */,
+                                                     const channel_equalizer::ch_est_list& /* ch_estimates */,
+                                                     float /* noise_var_est */,
+                                                     float /* tx_scaling */)
 {
   srsran_assertion_failure("Equalizer not implemented for 4x4 ZF algorithm.");
 }
 
-SRSRAN_WEAK_SYMB void
-channel_equalizer_generic_impl::equalize_mmse_2x2(span<srsran::cf_t> /* eq_symbols */,
-                                                  span<float> /* noise_vars */,
-                                                  const re_buffer_reader<srsran::cbf16_t>& /* ch_symbols */,
-                                                  const channel_equalizer::ch_est_list& /* ch_estimates */,
-                                                  float /* noise_var_est */,
-                                                  float /* tx_scaling */)
+void channel_equalizer_generic_impl::equalize_mmse_2x2(span<srsran::cf_t> /* eq_symbols */,
+                                                       span<float> /* noise_vars */,
+                                                       const re_buffer_reader<srsran::cbf16_t>& /* ch_symbols */,
+                                                       const channel_equalizer::ch_est_list& /* ch_estimates */,
+                                                       float /* noise_var_est */,
+                                                       float /* tx_scaling */)
 {
   srsran_assertion_failure("Equalizer not implemented for 2x2 MMSE algorithm.");
 }
 
-SRSRAN_WEAK_SYMB void
-channel_equalizer_generic_impl::equalize_mmse_2x4(span<srsran::cf_t> /* eq_symbols */,
-                                                  span<float> /* noise_vars */,
-                                                  const re_buffer_reader<srsran::cbf16_t>& /* ch_symbols */,
-                                                  const channel_equalizer::ch_est_list& /* ch_estimates */,
-                                                  float /* noise_var_est */,
-                                                  float /* tx_scaling */)
+void channel_equalizer_generic_impl::equalize_mmse_2x4(span<srsran::cf_t> /* eq_symbols */,
+                                                       span<float> /* noise_vars */,
+                                                       const re_buffer_reader<srsran::cbf16_t>& /* ch_symbols */,
+                                                       const channel_equalizer::ch_est_list& /* ch_estimates */,
+                                                       float /* noise_var_est */,
+                                                       float /* tx_scaling */)
 {
   srsran_assertion_failure("Equalizer not implemented for 2x4 MMSE algorithm.");
 }
 
-SRSRAN_WEAK_SYMB void
-channel_equalizer_generic_impl::equalize_mmse_3x4(span<srsran::cf_t> /* eq_symbols */,
-                                                  span<float> /* noise_vars */,
-                                                  const re_buffer_reader<srsran::cbf16_t>& /* ch_symbols */,
-                                                  const channel_equalizer::ch_est_list& /* ch_estimates */,
-                                                  float /* noise_var_est */,
-                                                  float /* tx_scaling */)
+void channel_equalizer_generic_impl::equalize_mmse_3x4(span<srsran::cf_t> /* eq_symbols */,
+                                                       span<float> /* noise_vars */,
+                                                       const re_buffer_reader<srsran::cbf16_t>& /* ch_symbols */,
+                                                       const channel_equalizer::ch_est_list& /* ch_estimates */,
+                                                       float /* noise_var_est */,
+                                                       float /* tx_scaling */)
 {
   srsran_assertion_failure("Equalizer not implemented for 3x4 MMSE algorithm.");
 }
 
-SRSRAN_WEAK_SYMB void
-channel_equalizer_generic_impl::equalize_mmse_4x4(span<srsran::cf_t> /* eq_symbols */,
-                                                  span<float> /* noise_vars */,
-                                                  const re_buffer_reader<srsran::cbf16_t>& /* ch_symbols */,
-                                                  const channel_equalizer::ch_est_list& /* ch_estimates */,
-                                                  float /* noise_var_est */,
-                                                  float /* tx_scaling */)
+void channel_equalizer_generic_impl::equalize_mmse_4x4(span<srsran::cf_t> /* eq_symbols */,
+                                                       span<float> /* noise_vars */,
+                                                       const re_buffer_reader<srsran::cbf16_t>& /* ch_symbols */,
+                                                       const channel_equalizer::ch_est_list& /* ch_estimates */,
+                                                       float /* noise_var_est */,
+                                                       float /* tx_scaling */)
 {
   srsran_assertion_failure("Equalizer not implemented for 4x4 MMSE algorithm.");
 }
+
+bool channel_equalizer_generic_impl::is_supported(channel_equalizer_algorithm_type type,
+                                                  unsigned                         nof_ports,
+                                                  unsigned                         nof_layers)
+{
+  // Only one, two and four ports are currently supported.
+  if ((nof_ports != 1) && (nof_ports != 2) && (nof_ports != 4)) {
+    return false;
+  }
+
+  // The number of layers cannot be greater than the number of ports.
+  if (nof_ports < nof_layers) {
+    return false;
+  }
+
+  // ZF algorithm supports from one to two layers.
+  static constexpr interval<unsigned, true> zf_nof_layers_range(1, 2);
+  if ((type == channel_equalizer_algorithm_type::zf) && !zf_nof_layers_range.contains(nof_layers)) {
+    return false;
+  }
+
+  // MMSE algorithm supports only one layer.
+  if ((type == channel_equalizer_algorithm_type::mmse) && (nof_layers != 1)) {
+    return false;
+  }
+
+  // Otherwise it is supported.
+  return true;
+}
+
+#endif // SRSRAN_HAS_ENTERPRISE
 
 bool channel_equalizer_generic_impl::is_supported(unsigned nof_ports, unsigned nof_layers)
 {
@@ -349,8 +340,10 @@ void channel_equalizer_generic_impl::equalize(span<cf_t>                       e
   if (type == channel_equalizer_algorithm_type::mmse) {
     // Single transmit layer and any number of receive ports.
     if (nof_tx_layers == 1) {
-      equalize_mmse_single_tx_layer<max_nof_ports>(
-          nof_rx_ports, eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var_estimates, tx_scaling);
+      // For one Tx layer, and including scaling for better LLR calculation, the MMSE equalizer is equivalent to the ZF
+      // one.
+      equalize_zf_single_tx_layer_reduction<max_nof_ports>(
+          eq_symbols, eq_noise_vars, ch_symbols, ch_estimates, noise_var_estimates, tx_scaling);
       return;
     }
 
@@ -384,33 +377,4 @@ void channel_equalizer_generic_impl::equalize(span<cf_t>                       e
       ch_estimates.get_nof_rx_ports(),
       ch_estimates.get_nof_tx_layers(),
       to_string(type));
-}
-
-SRSRAN_WEAK_SYMB bool channel_equalizer_generic_impl::is_supported(channel_equalizer_algorithm_type type,
-                                                                   unsigned                         nof_ports,
-                                                                   unsigned                         nof_layers)
-{
-  // Only one, two and four ports are currently supported.
-  if ((nof_ports != 1) && (nof_ports != 2) && (nof_ports != 4)) {
-    return false;
-  }
-
-  // The number of layers cannot be greater than the number of ports.
-  if (nof_ports < nof_layers) {
-    return false;
-  }
-
-  // ZF algorithm supports from one to two layers.
-  static constexpr interval<unsigned, true> zf_nof_layers_range(1, 2);
-  if ((type == channel_equalizer_algorithm_type::zf) && !zf_nof_layers_range.contains(nof_layers)) {
-    return false;
-  }
-
-  // MMSE algorithm supports only one layer.
-  if ((type == channel_equalizer_algorithm_type::mmse) && (nof_layers != 1)) {
-    return false;
-  }
-
-  // Otherwise it is supported.
-  return true;
 }

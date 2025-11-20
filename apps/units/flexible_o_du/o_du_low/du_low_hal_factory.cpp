@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -33,17 +33,17 @@
 using namespace srsran;
 
 #ifdef DPDK_FOUND
-static std::shared_ptr<dpdk::bbdev_acc>
-init_bbdev_hwacc(const bbdev_appconfig& bbdev_app_cfg, srslog::basic_logger& logger, unsigned nof_hwacc_dus)
+static std::shared_ptr<dpdk::bbdev_acc> init_bbdev_hwacc(const bbdev_appconfig& bbdev_app_cfg,
+                                                         srslog::basic_logger&  logger)
 {
   // Intefacing to the bbdev-based hardware-accelerator.
   dpdk::bbdev_acc_configuration bbdev_config;
   bbdev_config.id = bbdev_app_cfg.id;
   if (bbdev_app_cfg.pdsch_enc && bbdev_app_cfg.pdsch_enc->nof_hwacc > 0) {
-    bbdev_config.nof_ldpc_enc_lcores = nof_hwacc_dus * bbdev_app_cfg.pdsch_enc->nof_hwacc;
+    bbdev_config.nof_ldpc_enc_lcores = bbdev_app_cfg.pdsch_enc->nof_hwacc;
   }
   if (bbdev_app_cfg.pusch_dec && bbdev_app_cfg.pusch_dec->nof_hwacc > 0) {
-    bbdev_config.nof_ldpc_dec_lcores = nof_hwacc_dus * bbdev_app_cfg.pusch_dec->nof_hwacc;
+    bbdev_config.nof_ldpc_dec_lcores = bbdev_app_cfg.pusch_dec->nof_hwacc;
   }
   // If no msg_mbuf size is defined, a worst-case value will be used.
   bbdev_config.msg_mbuf_size = bbdev_app_cfg.msg_mbuf_size.value_or(RTE_BBDEV_LDPC_E_MAX_MBUF);
@@ -58,8 +58,7 @@ init_bbdev_hwacc(const bbdev_appconfig& bbdev_app_cfg, srslog::basic_logger& log
 }
 #endif // DPDK_FOUND
 
-o_du_low_hal_dependencies srsran::make_du_low_hal_dependencies(const std::optional<du_low_unit_hal_config>& hal_config,
-                                                               unsigned                                     nof_cells)
+o_du_low_hal_dependencies srsran::make_du_low_hal_dependencies(const std::optional<du_low_unit_hal_config>& hal_config)
 {
   o_du_low_hal_dependencies hal_dependencies;
 
@@ -68,7 +67,7 @@ o_du_low_hal_dependencies srsran::make_du_low_hal_dependencies(const std::option
   if (hal_config && hal_config->bbdev_hwacc && !hal_config->bbdev_hwacc->hwacc_type.empty()) {
     const bbdev_appconfig& bbdev_app_cfg = hal_config->bbdev_hwacc.value();
     srslog::basic_logger&  hwacc_logger  = srslog::fetch_basic_logger("HWACC");
-    auto                   accelerator   = init_bbdev_hwacc(bbdev_app_cfg, hwacc_logger, nof_cells);
+    auto                   accelerator   = init_bbdev_hwacc(bbdev_app_cfg, hwacc_logger);
 
     // Create a hardware-accelerated PDSCH encoder factory (only if needed).
     if (bbdev_app_cfg.pdsch_enc && bbdev_app_cfg.pdsch_enc->nof_hwacc > 0) {
@@ -88,19 +87,17 @@ o_du_low_hal_dependencies srsran::make_du_low_hal_dependencies(const std::option
       std::shared_ptr<hal::ext_harq_buffer_context_repository> harq_buffer_context = nullptr;
       hwacc_pusch_dec_cfg.acc_type                                                 = bbdev_app_cfg.hwacc_type;
       hwacc_pusch_dec_cfg.bbdev_accelerator                                        = accelerator;
-      hwacc_pusch_dec_cfg.ext_softbuffer = bbdev_app_cfg.pusch_dec->ext_softbuffer;
-      if (hwacc_pusch_dec_cfg.ext_softbuffer) {
-        // Set up an external HARQ buffer context repository.
-        unsigned nof_cbs            = bbdev_app_cfg.pusch_dec->harq_context_size.value_or(MAX_NOF_SEGMENTS);
-        uint64_t ext_harq_buff_size = hwacc_pusch_dec_cfg.bbdev_accelerator->get_harq_buff_size_bytes();
-        harq_buffer_context = hal::create_ext_harq_buffer_context_repository(nof_cbs, ext_harq_buff_size, false);
-        report_error_if_not(harq_buffer_context,
-                            "Unable to create the external HARQ buffer context for the {} hardware-accelerator.",
-                            bbdev_app_cfg.hwacc_type);
-        hwacc_pusch_dec_cfg.harq_buffer_context = harq_buffer_context;
-      }
-      hwacc_pusch_dec_cfg.dedicated_queue = bbdev_app_cfg.pusch_dec->dedicated_queue;
-      hal_dependencies.hw_decoder_factory = hal::create_bbdev_pusch_dec_acc_factory(hwacc_pusch_dec_cfg);
+      uint64_t ext_harq_buff_size          = hwacc_pusch_dec_cfg.bbdev_accelerator->get_harq_buff_size_bytes();
+      hwacc_pusch_dec_cfg.force_local_harq = bbdev_app_cfg.pusch_dec->force_local_harq;
+      // Set up an external HARQ buffer context repository.
+      unsigned nof_cbs    = bbdev_app_cfg.pusch_dec->harq_context_size.value_or(MAX_NOF_SEGMENTS);
+      harq_buffer_context = hal::create_ext_harq_buffer_context_repository(nof_cbs, ext_harq_buff_size, false);
+      report_error_if_not(harq_buffer_context,
+                          "Unable to create the external HARQ buffer context for the {} hardware-accelerator.",
+                          bbdev_app_cfg.hwacc_type);
+      hwacc_pusch_dec_cfg.harq_buffer_context = harq_buffer_context;
+      hwacc_pusch_dec_cfg.dedicated_queue     = bbdev_app_cfg.pusch_dec->dedicated_queue;
+      hal_dependencies.hw_decoder_factory     = hal::create_bbdev_pusch_dec_acc_factory(hwacc_pusch_dec_cfg);
     }
   }
 #endif // DPDK_FOUND

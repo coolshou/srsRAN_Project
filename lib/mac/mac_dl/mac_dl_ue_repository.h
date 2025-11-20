@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,20 +23,18 @@
 #pragma once
 
 #include "../rnti_value_table.h"
-#include "cell_dl_harq_buffer_pool.h"
-#include "srsran/mac/mac.h"
 #include "srsran/mac/mac_config.h"
+#include "srsran/mac/mac_ue_configurator.h"
 #include "srsran/ran/du_types.h"
 #include "srsran/ran/du_ue_list.h"
-#include "srsran/scheduler/harq_id.h"
 
 namespace srsran {
 
-// Array of bytes used to store the UE Contention Resolution Id.
-static constexpr size_t UE_CON_RES_ID_LEN = 6;
-using ue_con_res_id_t                     = std::array<uint8_t, UE_CON_RES_ID_LEN>;
+/// Array of bytes used to store the UE Contention Resolution Id.
+constexpr size_t UE_CON_RES_ID_LEN = 6;
+using ue_con_res_id_t              = std::array<uint8_t, UE_CON_RES_ID_LEN>;
 
-// Table for conversion between RNTI and ue indexes.
+/// Table for conversion between RNTI and ue indexes.
 using du_rnti_table = rnti_value_table<du_ue_index_t, du_ue_index_t::INVALID_DU_UE_INDEX>;
 
 /// Context of a UE in the MAC DL.
@@ -53,23 +51,23 @@ public:
   du_ue_index_t get_ue_index() const { return ue_index; }
 
   // DL Logical Channel methods.
-  const slotted_id_vector<lcid_t, mac_sdu_tx_builder*>& logical_channels() const { return dl_bearers; }
+  const slotted_id_table<lcid_t, mac_sdu_tx_builder*, MAX_NOF_RB_LCIDS>& logical_channels() const { return dl_bearers; }
   void addmod_logical_channels(span<const mac_logical_channel_config> dl_logical_channels);
-  void remove_logical_channels(span<const lcid_t> lcids_to_remove);
+  void remove_logical_channels(const bounded_bitset<MAX_NOF_RB_LCIDS>& lcids_to_remove);
 
   const ue_con_res_id_t& get_con_res_id() const { return msg3_subpdu; }
 
 private:
-  du_ue_index_t                                  ue_index;
-  slotted_id_vector<lcid_t, mac_sdu_tx_builder*> dl_bearers;
-  ue_con_res_id_t                                msg3_subpdu = {};
+  du_ue_index_t                                                   ue_index;
+  slotted_id_table<lcid_t, mac_sdu_tx_builder*, MAX_NOF_RB_LCIDS> dl_bearers;
+  ue_con_res_id_t                                                 msg3_subpdu = {};
 };
 
 /// Repository used to map upper layer bearers to MAC DL-SCH logical channels.
 class mac_dl_ue_repository
 {
 public:
-  mac_dl_ue_repository(du_rnti_table& rnti_table_);
+  explicit mac_dl_ue_repository(du_rnti_table& rnti_table_);
 
   /// Lookup UE index based on RNTI.
   du_ue_index_t get_ue_index(rnti_t rnti) const
@@ -118,7 +116,7 @@ public:
   /// \param[in] ue_index UE index for which to remove bearers.
   /// \param[in] lcids LCIDs of the bearers to remove.
   /// \return true if successfully removed. False, if the UE or bearers do not exist.
-  bool remove_bearers(du_ue_index_t ue_index, span<const lcid_t> lcids);
+  bool remove_bearers(du_ue_index_t ue_index, const bounded_bitset<MAX_NOF_RB_LCIDS>& lcids_to_rem);
 
   /// \brief Returns UE Contention Resolution Id, which is derived from Msg3 bytes.
   ue_con_res_id_t get_con_res_id(rnti_t rnti);
@@ -144,6 +142,9 @@ public:
     }
     return false;
   }
+
+  /// Remove all UEs.
+  void clear();
 
 private:
   du_rnti_table& rnti_table;

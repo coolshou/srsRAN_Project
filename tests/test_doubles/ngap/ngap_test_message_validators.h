@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -37,6 +37,8 @@ namespace test_helpers {
 
 bool is_valid_init_ue_message(const srs_cu_cp::ngap_message& msg);
 
+bool is_valid_ul_nas_transport_message(const srs_cu_cp::ngap_message& msg);
+
 bool is_valid_initial_context_setup_response(const srs_cu_cp::ngap_message& msg);
 
 bool is_valid_initial_context_setup_failure(const srs_cu_cp::ngap_message& msg);
@@ -62,6 +64,14 @@ bool is_valid_handover_notify(const srs_cu_cp::ngap_message& msg);
 bool is_valid_handover_required(const srs_cu_cp::ngap_message& msg);
 
 bool is_valid_handover_cancel(const srs_cu_cp::ngap_message& msg);
+
+bool is_valid_ul_ran_status_transfer(const srs_cu_cp::ngap_message& msg);
+
+bool is_valid_ng_reset(const srs_cu_cp::ngap_message& msg);
+
+bool is_valid_ul_ue_associated_nrppa_transport(const srs_cu_cp::ngap_message& msg);
+
+bool is_valid_ul_non_ue_associated_nrppa_transport(const srs_cu_cp::ngap_message& msg);
 
 // Check if the NGAP PDU contains the expected PDU session setup response.
 bool is_expected_pdu_session_resource_setup_response(

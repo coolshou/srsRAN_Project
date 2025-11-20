@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -32,11 +32,13 @@ using namespace srsran;
 
 sctp_network_gateway_impl::sctp_network_gateway_impl(const sctp_network_connector_config&   config_,
                                                      sctp_network_gateway_control_notifier& ctrl_notfier_,
-                                                     network_gateway_data_notifier&         data_notifier_) :
+                                                     network_gateway_data_notifier&         data_notifier_,
+                                                     task_executor&                         io_rx_executor_) :
   sctp_network_gateway_common_impl(config_),
   config(config_),
   ctrl_notifier(ctrl_notfier_),
-  data_notifier(data_notifier_)
+  data_notifier(data_notifier_),
+  io_rx_executor(io_rx_executor_)
 {
 }
 
@@ -85,7 +87,8 @@ bool sctp_network_gateway_impl::create_and_connect()
 
     if (not socket.connect(*result->ai_addr, result->ai_addrlen)) {
       // connection failed, try next address
-      close_socket();
+      io_sub.reset();
+      socket.close();
       continue;
     }
 
@@ -98,12 +101,12 @@ bool sctp_network_gateway_impl::create_and_connect()
     fmt::print("Failed to connect SCTP socket to {}:{}. error=\"{}\" timeout={}ms\n",
                config.connect_address,
                config.connect_port,
-               strerror(errno),
+               ::strerror(errno),
                now_ms.count());
     logger.error("Failed to connect SCTP socket to {}:{}. error=\"{}\" timeout={}ms",
                  config.connect_address,
                  config.connect_port,
-                 strerror(errno),
+                 ::strerror(errno),
                  now_ms.count());
     return false;
   }
@@ -125,11 +128,10 @@ void sctp_network_gateway_impl::receive()
   struct sctp_sndrcvinfo sri       = {};
   int                    msg_flags = 0;
 
-  // Fixme: consider class member on heap when sequential access is guaranteed
-  std::array<uint8_t, network_gateway_sctp_max_len> tmp_mem; // no init
+  std::array<uint8_t, network_gateway_sctp_max_len> temp_recv_buffer;
 
   int rx_bytes = ::sctp_recvmsg(socket.fd().value(),
-                                tmp_mem.data(),
+                                temp_recv_buffer.data(),
                                 network_gateway_sctp_max_len,
                                 (struct sockaddr*)&msg_src_addr,
                                 &msg_src_addrlen,
@@ -137,14 +139,14 @@ void sctp_network_gateway_impl::receive()
                                 &msg_flags);
 
   if (rx_bytes == -1 && errno != EAGAIN) {
-    logger.error("Error reading from SCTP socket: {}", strerror(errno));
+    logger.error("Error reading from SCTP socket: {}", ::strerror(errno));
   } else if (rx_bytes == -1 && errno == EAGAIN) {
     if (!config.non_blocking_mode) {
       logger.debug("Socket timeout reached");
     }
   } else {
     logger.debug("Received {} bytes on SCTP socket", rx_bytes);
-    span<socket_buffer_type> payload(tmp_mem.data(), rx_bytes);
+    span<socket_buffer_type> payload(temp_recv_buffer.data(), rx_bytes);
     if (msg_flags & MSG_NOTIFICATION) {
       // Received notification
       handle_notification(payload);
@@ -268,18 +270,18 @@ void sctp_network_gateway_impl::handle_pdu(const byte_buffer& pdu)
     msg_dst_addrlen = msg_src_addrlen;
   }
 
-  int bytes_sent = sctp_sendmsg(socket.fd().value(),
-                                pdu_span.data(),
-                                pdu_span.size_bytes(),
-                                (struct sockaddr*)&msg_dst_addr,
-                                msg_dst_addrlen,
-                                htonl(config.ppid),
-                                0,
-                                stream_no,
-                                0,
-                                0);
+  int bytes_sent = ::sctp_sendmsg(socket.fd().value(),
+                                  pdu_span.data(),
+                                  pdu_span.size_bytes(),
+                                  (struct sockaddr*)&msg_dst_addr,
+                                  msg_dst_addrlen,
+                                  htonl(config.ppid),
+                                  0,
+                                  stream_no,
+                                  0,
+                                  0);
   if (bytes_sent == -1) {
-    logger.error("Couldn't send {} B of data on SCTP socket: {}", pdu_span.size_bytes(), strerror(errno));
+    logger.error("Couldn't send {} B of data on SCTP socket: {}", pdu_span.size_bytes(), ::strerror(errno));
     return;
   }
 }
@@ -287,7 +289,8 @@ void sctp_network_gateway_impl::handle_pdu(const byte_buffer& pdu)
 bool sctp_network_gateway_impl::subscribe_to(io_broker& broker)
 {
   io_sub = broker.register_fd(
-      socket.fd().value(),
+      unique_fd(socket.fd().value(), false),
+      io_rx_executor,
       [this]() { receive(); },
       [this](io_broker::error_code code) {
         logger.info("Connection loss due to IO error code={}.", (int)code);

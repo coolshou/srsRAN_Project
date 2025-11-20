@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -80,7 +80,11 @@ public:
   std::optional<unsigned> reserve()
   {
     // Try to get an available codeblock.
-    return free_list.try_pop();
+    unsigned obj;
+    if (free_list.try_pop(obj)) {
+      return obj;
+    }
+    return std::nullopt;
   }
 
   /// \brief Frees a codeblock buffer.

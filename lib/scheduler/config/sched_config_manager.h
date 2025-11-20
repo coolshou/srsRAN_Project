@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,8 +22,8 @@
 
 #pragma once
 
+#include "du_cell_group_config_pool.h"
 #include "ue_configuration.h"
-#include "srsran/adt/concurrent_queue.h"
 #include "srsran/adt/mpmc_queue.h"
 #include "srsran/adt/noop_functor.h"
 #include "srsran/scheduler/config/scheduler_config.h"
@@ -41,8 +41,10 @@ public:
   ue_config_update_event() = default;
   ue_config_update_event(du_ue_index_t                     ue_index_,
                          sched_config_manager&             parent_,
-                         std::unique_ptr<ue_configuration> next_cfg     = nullptr,
-                         const std::optional<bool>&        set_fallback = {});
+                         std::unique_ptr<ue_configuration> next_cfg         = nullptr,
+                         const std::optional<bool>&        set_fallback     = {},
+                         slot_point                        ul_ccch_slot_rx_ = slot_point(),
+                         bool                              reestablished_   = false);
   ue_config_update_event(ue_config_update_event&&) noexcept            = default;
   ue_config_update_event& operator=(ue_config_update_event&&) noexcept = default;
   ~ue_config_update_event();
@@ -53,6 +55,7 @@ public:
   const ue_configuration& next_config() const { return *next_ded_cfg; }
   std::optional<bool>     get_fallback_command() const { return set_fallback_mode; }
   slot_point              get_ul_ccch_slot_rx() const { return ul_ccch_slot_rx; }
+  bool                    is_reestablished() const { return reestablished; }
 
   void notify_completion();
 
@@ -63,6 +66,7 @@ private:
   std::unique_ptr<ue_configuration>                     next_ded_cfg;
   std::optional<bool>                                   set_fallback_mode;
   slot_point                                            ul_ccch_slot_rx;
+  bool                                                  reestablished;
 };
 
 /// Event to delete a UE in the scheduler.
@@ -70,7 +74,7 @@ class ue_config_delete_event
 {
 public:
   ue_config_delete_event() = default;
-  ue_config_delete_event(du_ue_index_t ue_index_, sched_config_manager& parent_);
+  ue_config_delete_event(du_ue_index_t ue_index_, du_cell_index_t pcell_index, sched_config_manager& parent_);
   ue_config_delete_event(ue_config_delete_event&&) noexcept            = default;
   ue_config_delete_event& operator=(ue_config_delete_event&&) noexcept = default;
   ~ue_config_delete_event();
@@ -79,10 +83,15 @@ public:
 
   void reset();
 
-  du_ue_index_t ue_index() const { return ue_idx; }
+  /// Called when notifying the sched_config_manager is not desired.
+  void release() { parent = nullptr; }
+
+  du_ue_index_t   ue_index() const { return ue_idx; }
+  du_cell_index_t pcell_index() const { return pcell_idx; }
 
 private:
-  du_ue_index_t                                         ue_idx = INVALID_DU_UE_INDEX;
+  du_ue_index_t                                         ue_idx    = INVALID_DU_UE_INDEX;
+  du_cell_index_t                                       pcell_idx = INVALID_DU_CELL_INDEX;
   std::unique_ptr<sched_config_manager, noop_operation> parent;
 };
 
@@ -102,7 +111,7 @@ public:
   virtual void handle_ue_deletion(ue_config_delete_event ev) = 0;
 
   /// Called when the UE applied the last sent RRC configuration.
-  virtual void handle_ue_config_applied(du_ue_index_t ue_idx) = 0;
+  virtual void handle_ue_config_applied(du_cell_index_t cell_index, du_ue_index_t ue_idx) = 0;
 };
 
 /// Class that handles the creation/reconfiguration/deletion of cell and UE configurations in the scheduler.
@@ -118,6 +127,10 @@ public:
 
   const cell_configuration* add_cell(const sched_cell_configuration_request_message& msg);
 
+  void update_cell(const sched_cell_reconfiguration_request_message& msg);
+
+  void rem_cell(du_cell_index_t cell_index);
+
   ue_config_update_event add_ue(const sched_ue_creation_request_message& cfg_req);
 
   ue_config_update_event update_ue(const sched_ue_reconfiguration_message& cfg_req);
@@ -131,17 +144,30 @@ public:
     return added_cells.contains(cell_index) ? added_cells[cell_index]->cell_group_index : INVALID_DU_CELL_GROUP_INDEX;
   }
 
+  du_cell_index_t get_pcell_index(du_ue_index_t ue_index) const
+  {
+    srsran_assert(ue_index < MAX_NOF_DU_UES, "Invalid ue_index={}", fmt::underlying(ue_index));
+    return ue_to_pcell_index[ue_index].load(std::memory_order_relaxed);
+  }
+
   du_cell_group_index_t get_cell_group_index(du_ue_index_t ue_index) const
   {
-    srsran_assert(ue_index < MAX_NOF_DU_UES, "Invalid ue_index={}", ue_index);
-    return ue_to_cell_group_index[ue_index].load(std::memory_order_relaxed);
+    srsran_assert(ue_index < MAX_NOF_DU_UES, "Invalid ue_index={}", fmt::underlying(ue_index));
+    return get_cell_group_index(get_pcell_index(ue_index));
   }
 
   const cell_common_configuration_list& common_cell_list() const { return added_cells; }
 
 private:
+  friend class cell_removal_event;
   friend class ue_config_update_event;
   friend class ue_config_delete_event;
+
+  static du_cell_group_index_t unpack_cell_group(uint32_t val)
+  {
+    return static_cast<du_cell_group_index_t>(val >> 16U);
+  }
+  static du_cell_index_t unpack_pcell(uint32_t val) { return to_du_cell_index(val & (0xffffU)); }
 
   void flush_ues_to_rem();
 
@@ -158,8 +184,11 @@ private:
 
   std::array<std::unique_ptr<ue_configuration>, MAX_NOF_DU_UES> ue_cfg_list;
 
+  // Config Resources associated with this cell group.
+  slotted_vector<std::unique_ptr<du_cell_group_config_pool>> group_cfg_pool;
+
   // Mapping of UEs to DU Cell Groups.
-  std::array<std::atomic<du_cell_group_index_t>, MAX_NOF_DU_UES> ue_to_cell_group_index;
+  std::array<std::atomic<du_cell_index_t>, MAX_NOF_DU_UES> ue_to_pcell_index;
 
   // Cached UE configurations to be reused.
   concurrent_queue<std::unique_ptr<ue_configuration>,

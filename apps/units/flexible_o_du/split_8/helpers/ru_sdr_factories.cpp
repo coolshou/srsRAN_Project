@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,30 +24,37 @@
 #include "apps/services/worker_manager/worker_manager.h"
 #include "apps/units/flexible_o_du/split_helpers/flexible_o_du_configs.h"
 #include "ru_sdr_config_translator.h"
-#include "srsran/ru/ru_generic_factory.h"
+#include "srsran/ru/generic/ru_generic_factory.h"
 
 using namespace srsran;
 
-std::unique_ptr<radio_unit> srsran::create_sdr_radio_unit(const ru_sdr_unit_config&            ru_cfg,
-                                                          const flexible_o_du_ru_config&       ru_config,
-                                                          const flexible_o_du_ru_dependencies& ru_dependencies)
+std::unique_ptr<radio_unit>
+srsran::create_sdr_radio_unit(const ru_sdr_unit_config&                            ru_cfg,
+                              const flexible_o_du_ru_config&                       ru_config,
+                              const flexible_o_du_ru_dependencies&                 ru_dependencies,
+                              std::optional<std::chrono::system_clock::time_point> start_time)
 {
-  ru_generic_configuration config = generate_ru_sdr_config(ru_cfg, ru_config.du_cells, ru_config.max_processing_delay);
+  ru_generic_configuration config = generate_ru_sdr_config(ru_cfg, ru_config.cells, ru_config.max_processing_delay);
 
-  config.rf_logger                   = &srslog::fetch_basic_logger("RF");
-  config.radio_exec                  = ru_dependencies.workers.radio_exec;
-  config.statistics_printer_executor = ru_dependencies.workers.ru_printer_exec;
-  config.timing_notifier             = &ru_dependencies.timing_notifier;
-  config.symbol_notifier             = &ru_dependencies.symbol_notifier;
+  ru_generic_executor_mapper& exec_map = ru_dependencies.workers.get_sdr_ru_executor_mapper();
+
+  config.rf_logger       = &srslog::fetch_basic_logger("RF");
+  config.radio_exec      = &exec_map.asynchronous_radio_executor();
+  config.timing_notifier = &ru_dependencies.timing_notifier;
+  config.symbol_notifier = &ru_dependencies.symbol_notifier;
+  config.error_notifier  = &ru_dependencies.error_notifier;
+  config.start_time      = start_time;
 
   for (unsigned i = 0, e = config.lower_phy_config.size(); i != e; ++i) {
+    ru_sdr_sector_executor_mapper& sector_exec_map = exec_map[i];
+
     lower_phy_configuration& low_phy_cfg = config.lower_phy_config[i];
     low_phy_cfg.logger                   = &srslog::fetch_basic_logger("PHY");
-    low_phy_cfg.tx_task_executor         = ru_dependencies.workers.lower_phy_tx_exec[i];
-    low_phy_cfg.rx_task_executor         = ru_dependencies.workers.lower_phy_rx_exec[i];
-    low_phy_cfg.dl_task_executor         = ru_dependencies.workers.lower_phy_dl_exec[i];
-    low_phy_cfg.ul_task_executor         = ru_dependencies.workers.lower_phy_ul_exec[i];
-    low_phy_cfg.prach_async_executor     = ru_dependencies.workers.lower_prach_exec[i];
+    low_phy_cfg.tx_task_executor         = &sector_exec_map.transmitter_executor();
+    low_phy_cfg.rx_task_executor         = &sector_exec_map.receiver_executor();
+    low_phy_cfg.dl_task_executor         = &sector_exec_map.downlink_executor();
+    low_phy_cfg.ul_task_executor         = &sector_exec_map.uplink_executor();
+    low_phy_cfg.prach_async_executor     = &sector_exec_map.prach_executor();
 
     low_phy_cfg.logger->set_level(ru_cfg.loggers.phy_level);
   }

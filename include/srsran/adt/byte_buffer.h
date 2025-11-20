@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -54,6 +54,10 @@ byte_buffer_memory_resource& get_default_byte_buffer_segment_pool();
 
 /// \brief Default byte buffer segment pool with fallback to the heap on failure to allocate.
 byte_buffer_memory_resource& get_default_fallback_byte_buffer_segment_pool();
+
+/// \brief Preinitialize the byte buffer segment pool thread-local storage.
+/// This method is useful to avoid the overhead of thread_local initialization in latency-critical parts of the code.
+void init_byte_buffer_segment_pool_tls();
 
 class byte_buffer_slice;
 
@@ -518,7 +522,7 @@ public:
   byte_buffer_view view() const { return *buffer; }
 
   /// Appends bytes.
-  [[nodiscard]] bool append(byte_buffer_view bytes) { return buffer->append(bytes); }
+  [[nodiscard]] bool append(const byte_buffer_view& bytes) { return buffer->append(bytes); }
 
   /// Appends initializer list of bytes.
   [[nodiscard]] bool append(const std::initializer_list<uint8_t>& bytes)
@@ -611,7 +615,7 @@ struct formatter<srsran::byte_buffer> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::byte_buffer& buf, FormatContext& ctx)
+  auto format(const srsran::byte_buffer& buf, FormatContext& ctx) const
   {
     if (mode == hexadecimal) {
       return format_to(ctx.out(), "{:0>2x}", fmt::join(buf.begin(), buf.end(), " "));
@@ -624,7 +628,7 @@ struct formatter<srsran::byte_buffer> {
 template <>
 struct formatter<srsran::byte_buffer_slice> : public formatter<srsran::byte_buffer_view> {
   template <typename FormatContext>
-  auto format(const srsran::byte_buffer_slice& buf, FormatContext& ctx)
+  auto format(const srsran::byte_buffer_slice& buf, FormatContext& ctx) const
   {
     return formatter<srsran::byte_buffer_view>::format(buf.view(), ctx);
   }

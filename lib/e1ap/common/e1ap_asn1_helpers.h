@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -72,7 +72,7 @@ inline void fill_e1ap_cu_up_e1_setup_request(cu_up_e1_setup_request&            
 
         if (asn1_qos_support_item.non_dyn_5qi_descriptor.qos_prio_level_present) {
           qos_support_item.non_dyn_5qi_desc.qos_prio_level =
-              uint_to_qos_prio_level(asn1_qos_support_item.non_dyn_5qi_descriptor.qos_prio_level);
+              qos_prio_level_t{asn1_qos_support_item.non_dyn_5qi_descriptor.qos_prio_level};
         }
         if (asn1_qos_support_item.non_dyn_5qi_descriptor.averaging_win_present) {
           qos_support_item.non_dyn_5qi_desc.averaging_win = asn1_qos_support_item.non_dyn_5qi_descriptor.averaging_win;

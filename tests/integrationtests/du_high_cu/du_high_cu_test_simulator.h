@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,9 +25,6 @@
 #include "tests/test_doubles/du/test_du_high_worker_manager.h"
 #include "tests/test_doubles/f1ap/f1c_test_local_gateway.h"
 #include "tests/test_doubles/mac/dummy_mac_result_notifier.h"
-#include "tests/test_doubles/mac/dummy_scheduler_ue_metric_notifier.h"
-#include "tests/unittests/f1ap/common/test_helpers.h"
-#include "tests/unittests/f1ap/cu_cp/f1ap_cu_test_helpers.h"
 #include "tests/unittests/ngap/test_helpers.h"
 #include "srsran/cu_cp/cu_cp.h"
 #include "srsran/du/du_high/du_high.h"
@@ -37,10 +34,12 @@
 
 namespace srsran {
 
+class io_broker;
+
 class du_high_cu_cp_worker_manager
 {
 public:
-  explicit du_high_cu_cp_worker_manager(unsigned nof_dus);
+  explicit du_high_cu_cp_worker_manager(unsigned nof_dus, timer_manager& timers);
   ~du_high_cu_cp_worker_manager();
 
   void stop();
@@ -58,12 +57,11 @@ class du_high_cu_test_simulator
 {
 public:
   struct du_sim {
-    srs_du::du_high_configuration       du_high_cfg;
-    phy_test_dummy                      phy;
-    null_mac_pcap                       mac_pcap;
-    null_rlc_pcap                       rlc_pcap;
-    dummy_scheduler_ue_metrics_notifier ue_metrics_notifier;
-    std::unique_ptr<srs_du::du_high>    du_high_inst;
+    srs_du::du_high_configuration    du_high_cfg;
+    phy_test_dummy                   phy;
+    null_mac_pcap                    mac_pcap;
+    null_rlc_pcap                    rlc_pcap;
+    std::unique_ptr<srs_du::du_high> du_high_inst;
 
     slot_point next_slot;
 
@@ -83,11 +81,13 @@ public:
 
   const du_high_cu_cp_test_simulator_config cfg;
 
-  srslog::basic_logger&        logger;
-  timer_manager                timers;
-  du_high_cu_cp_worker_manager workers;
-  srs_cu_cp::dummy_n2_gateway  n2_gw;
-  f1c_test_local_gateway       f1c_gw;
+  srslog::basic_logger&                 logger;
+  timer_manager                         timers;
+  du_high_cu_cp_worker_manager          workers;
+  std::unique_ptr<io_broker>            broker;
+  std::unique_ptr<mac_clock_controller> timer_ctrl;
+  srs_cu_cp::dummy_n2_gateway           n2_gw;
+  f1c_test_local_gateway                f1c_gw;
 
   std::unique_ptr<srs_cu_cp::cu_cp>    cu_cp_inst;
   std::vector<std::unique_ptr<du_sim>> dus;

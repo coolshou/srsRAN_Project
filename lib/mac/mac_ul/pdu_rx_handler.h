@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,12 +22,9 @@
 
 #pragma once
 
-#include "../rnti_value_table.h"
 #include "mac_scheduler_ce_info_handler.h"
 #include "mac_ul_sch_pdu.h"
 #include "mac_ul_ue_manager.h"
-#include "ul_bsr.h"
-#include "srsran/adt/slotted_array.h"
 #include "srsran/du/du_high/du_high_executor_mapper.h"
 #include "srsran/mac/mac.h"
 #include "srsran/pcap/mac_pcap.h"
@@ -132,7 +129,7 @@ private:
   bool handle_crnti_ce(const decoded_mac_rx_pdu& pdu, const mac_ul_sch_subpdu& subpdu);
 
   /// Handle PDU to PCAP file
-  void write_pcap_rx_pdu(const slot_point& sl_rx, const mac_rx_pdu& pdu);
+  void write_pcap_rx_pdu(slot_point sl_rx, const mac_rx_pdu& pdu);
 
   mac_ul_ccch_notifier&               ccch_notifier;
   srs_du::du_high_ue_executor_mapper& ue_exec_mapper;

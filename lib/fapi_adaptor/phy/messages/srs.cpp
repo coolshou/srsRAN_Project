@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,19 +25,25 @@
 using namespace srsran;
 using namespace fapi_adaptor;
 
-void srsran::fapi_adaptor::convert_srs_fapi_to_phy(uplink_processor::srs_pdu& pdu,
-                                                   const fapi::ul_srs_pdu&    fapi_pdu,
-                                                   unsigned                   nof_rx_antennas,
-                                                   uint16_t                   sfn,
-                                                   uint16_t                   slot)
+void srsran::fapi_adaptor::convert_srs_fapi_to_phy(uplink_pdu_slot_repository::srs_pdu& pdu,
+                                                   const fapi::ul_srs_pdu&              fapi_pdu,
+                                                   unsigned                             sector_id,
+                                                   unsigned                             nof_rx_antennas,
+                                                   uint16_t                             sfn,
+                                                   uint16_t                             slot)
 {
   // Fill main context fields.
   ul_srs_context& context = pdu.context;
   context.slot            = slot_point(fapi_pdu.scs, sfn, slot);
   context.rnti            = fapi_pdu.rnti;
+  context.is_normalized_channel_iq_matrix_report_requested =
+      fapi_pdu.srs_params_v4.report_type.test(to_value(fapi::srs_report_type::normalized_channel_iq_matrix));
+  context.is_positioning_report_requested =
+      fapi_pdu.srs_params_v4.report_type.test(to_value(fapi::srs_report_type::positioning));
 
   // Fill SRS resource configuration.
-  pdu.config.slot = slot_point(fapi_pdu.scs, sfn, slot);
+  pdu.config.context = srs_context(sector_id, fapi_pdu.rnti);
+  pdu.config.slot    = slot_point(fapi_pdu.scs, sfn, slot);
   pdu.config.resource.nof_antenna_ports =
       static_cast<srs_resource_configuration::one_two_four_enum>(fapi_pdu.num_ant_ports);
   pdu.config.resource.nof_symbols  = static_cast<srs_resource_configuration::one_two_four_enum>(fapi_pdu.num_symbols);

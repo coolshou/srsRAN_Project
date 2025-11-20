@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,8 +25,9 @@
 #include "srsran/adt/byte_buffer.h"
 #include "srsran/f1ap/ue_context_management_configs.h"
 #include "srsran/ran/du_types.h"
-#include "srsran/ran/qos/qos_parameters.h"
+#include "srsran/ran/nr_cgi.h"
 #include "srsran/ran/rnti.h"
+#include "srsran/ran/serv_cell_index.h"
 
 namespace srsran {
 namespace srs_du {
@@ -51,10 +52,17 @@ struct f1ap_scell_to_setup {
   du_cell_index_t   cell_index;
 };
 
+struct f1ap_serving_cell_mo_list_item {
+  uint8_t  serving_cell_mo;
+  uint32_t ssb_freq;
+};
+
 /// \brief Request from DU F1AP to DU manager to modify existing UE configuration.
 struct f1ap_ue_context_update_request {
-  du_ue_index_t                      ue_index;
-  std::optional<nr_cell_global_id_t> spcell_id;
+  du_ue_index_t                                              ue_index;
+  std::optional<nr_cell_global_id_t>                         spcell_id;
+  std::optional<uint8_t>                                     serving_cell_mo;
+  std::optional<std::vector<f1ap_serving_cell_mo_list_item>> serving_cell_mo_list;
   /// New SRBs to setup.
   std::vector<srb_id_t> srbs_to_setup;
   /// List of new DRBs to setup.
@@ -79,6 +87,8 @@ struct f1ap_ue_context_update_request {
   byte_buffer source_cell_group_cfg;
   /// Container with the UE-CapabilityRAT-ContainerList, as per TS 38.331.
   byte_buffer ue_cap_rat_list;
+  /// Indiction that the CU-CP has received the RRC reconfiguration complete.
+  bool rrc_recfg_complete_ind;
 };
 
 /// \brief Response from DU manager to DU F1AP with the result of the UE context update.
@@ -92,18 +102,19 @@ struct f1ap_ue_context_update_response {
   std::vector<f1ap_drb_failed_to_setupmod> failed_drbs_setups;
   /// List of DRBs that failed to be modified.
   std::vector<f1ap_drb_failed_to_setupmod> failed_drb_mods;
-  byte_buffer                              cell_group_cfg;
-  byte_buffer                              meas_gap_cfg;
-  bool                                     full_config_present = false;
+  /// List of servingCellMOs that have been encoded in CellGroupConfig IE.
+  std::vector<uint8_t> serving_cell_mo_encoded_in_cgc_list;
+  byte_buffer          cell_group_cfg;
+  byte_buffer          meas_gap_cfg;
+  bool                 full_config_present = false;
 };
-
-/// \brief Handled causes for RLF.
-enum class rlf_cause { max_mac_kos_reached, max_rlc_retxs_reached, rlc_protocol_failure };
 
 /// \brief Request Command for F1AP UE CONTEXT Release Request.
 struct f1ap_ue_context_release_request {
+  enum class cause_type { rlf_mac, rlf_rlc, other };
+
   du_ue_index_t ue_index;
-  rlf_cause     cause;
+  cause_type    cause;
 };
 
 /// \brief Request Command for F1AP UE CONTEXT Modification Required.

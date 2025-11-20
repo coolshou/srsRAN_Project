@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,18 +22,14 @@
 
 #pragma once
 
-#include "lib/pdcp/pdcp_entity_tx.h"
-#include "pdcp_test_vectors.h"
 #include "pdcp_tx_test_helpers.h"
-#include "srsran/pdcp/pdcp_config.h"
 #include <gtest/gtest.h>
-#include <queue>
 
 namespace srsran {
 
 /// Fixture class for PDCP tests
 /// It requires TEST_P() and INSTANTIATE_TEST_SUITE_P() to create/spawn tests for each supported SN size
-class pdcp_tx_metrics_test : public pdcp_tx_test_helper,
+class pdcp_tx_metrics_test : public pdcp_tx_test_helper_default_crypto,
                              public ::testing::Test,
                              public ::testing::WithParamInterface<std::tuple<pdcp_sn_size, unsigned>>
 {
@@ -55,4 +51,22 @@ protected:
     srslog::flush();
   }
 };
+
+class pdcp_tx_metrics_container_test : public pdcp_tx_test_helper_default_crypto, public ::testing::Test
+{
+protected:
+  void SetUp() override
+  {
+    // init test's logger
+    srslog::init();
+    logger.set_level(srslog::basic_levels::debug);
+  }
+
+  void TearDown() override
+  {
+    // flush logger after each test
+    srslog::flush();
+  }
+};
+
 } // namespace srsran

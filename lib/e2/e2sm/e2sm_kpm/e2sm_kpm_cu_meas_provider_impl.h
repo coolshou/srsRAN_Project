@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -30,6 +30,7 @@
 #include "srsran/e2/e2sm/e2sm.h"
 #include "srsran/e2/e2sm/e2sm_kpm.h"
 #include "srsran/pdcp/pdcp_entity.h"
+#include <deque>
 #include <map>
 #include <numeric>
 
@@ -97,6 +98,7 @@ protected:
 
   // Measurement getter functions.
   metric_meas_getter_func_t get_pdcp_reordering_delay_ul;
+  metric_meas_getter_func_t get_packet_success_rate_ul_gnb_uu;
 
   srslog::basic_logger& logger;
 

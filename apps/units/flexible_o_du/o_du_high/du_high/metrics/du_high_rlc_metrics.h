@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,6 +27,8 @@
 #include "apps/services/metrics/metrics_set.h"
 #include "srsran/adt/span.h"
 #include "srsran/rlc/rlc_metrics.h"
+#include "srsran/srslog/logger.h"
+#include "srsran/support/synchronization/stop_event.h"
 
 namespace srsran {
 
@@ -55,10 +57,11 @@ public:
 inline auto rlc_metrics_callback = [](const app_services::metrics_set&      report,
                                       span<app_services::metrics_consumer*> consumers,
                                       task_executor&                        executor,
-                                      srslog::basic_logger&                 logger) {
+                                      srslog::basic_logger&                 logger,
+                                      stop_event_token                      token) {
   const auto& metric = static_cast<const rlc_metrics_impl&>(report);
 
-  if (!executor.defer([metric, consumers]() {
+  if (!executor.defer([metric, consumers, stop_token = std::move(token)]() {
         for (auto& consumer : consumers) {
           consumer->handle_metric(metric);
         }

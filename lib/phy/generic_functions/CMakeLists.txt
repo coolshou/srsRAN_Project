@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -22,13 +22,14 @@ add_subdirectory(precoding)
 add_subdirectory(transform_precoding)
 
 # Initialise DFT sources and definitions for DFT libraries.
-set(SRSRAN_DFT_SOURCES dft_processor_generic_impl.cpp dft_processor_fftw_impl.cpp)
+set(SRSRAN_DFT_SOURCES dft_processor_generic_impl.cpp generic_functions_factories.cpp)
 set(SRSRAN_DFT_LIBRARIES "")
 set(SRSRAN_DFT_INCLUDE_DIRS "")
 set(SRSRAN_DFT_LIBRARY_DIRS "")
+set(SRSRAN_DFT_DEFINITIONS "")
 
-# If MKL is enabled and found, then compile DFT FFTW API based and link it to MKL.
 if (ENABLE_MKL AND MKL_FOUND)
+    # If MKL is enabled and found, then compile DFT FFTW API based and link it to MKL.
     list(APPEND SRSRAN_DFT_LIBRARIES ${MKL_LIBRARIES})
     list(APPEND SRSRAN_DFT_INCLUDE_DIRS ${MKL_INCLUDE_DIRS})
     list(APPEND SRSRAN_DFT_LIBRARY_DIRS ${MKL_LIBRARY_DIRS})
@@ -42,17 +43,22 @@ elseif (ENABLE_FFTW AND FFTW3F_FOUND)
     list(APPEND SRSRAN_DFT_LIBRARIES ${FFTW3F_LIBRARIES})
     list(APPEND SRSRAN_DFT_INCLUDE_DIRS ${FFTW3F_INCLUDE_DIRS})
     list(APPEND SRSRAN_DFT_LIBRARY_DIRS ${FFTW3F_LIBRARY_DIRS})
-else (ENABLE_MKL AND MKL_FOUND)
-    message(FATAL_ERROR "Missing FFTW library. Please install libfftw3, MKL or ARMPL.")
 endif (ENABLE_MKL AND MKL_FOUND)
 
-include_directories(${SRSRAN_DFT_INCLUDE_DIRS})
-link_directories(${SRSRAN_DFT_LIBRARY_DIRS})
+if ((ENABLE_MKL AND MKL_FOUND) OR (ENABLE_ARMPL AND ARMPL_FOUND) OR (ENABLE_FFTW AND FFTW3F_FOUND))
+    list(APPEND SRSRAN_DFT_SOURCES dft_processor_fftw_impl.cpp)
+    list(APPEND SRSRAN_DFT_DEFINITIONS "HAVE_FFTW")
+endif ((ENABLE_MKL AND MKL_FOUND) OR (ENABLE_ARMPL AND ARMPL_FOUND) OR (ENABLE_FFTW AND FFTW3F_FOUND))
 
-add_library(srsran_generic_funcs_dft STATIC ${SRSRAN_DFT_SOURCES})
-target_link_libraries(srsran_generic_funcs_dft ${SRSRAN_DFT_LIBRARIES} srsvec srslog)
+if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "x86_64")
+    list(APPEND SRSRAN_DFT_SOURCES dft_processor_ci16_avx2.cpp)
+    set_source_files_properties(dft_processor_ci16_avx2.cpp PROPERTIES COMPILE_OPTIONS "-mavx2;")
+endif (${CMAKE_SYSTEM_PROCESSOR} MATCHES "x86_64")
 
-add_library(srsran_generic_funcs STATIC generic_functions_factories.cpp)
-target_link_libraries(srsran_generic_funcs srsran_generic_funcs_dft srslog)
+add_library(srsran_dft STATIC ${SRSRAN_DFT_SOURCES})
+target_include_directories(srsran_dft PRIVATE ${SRSRAN_DFT_INCLUDE_DIRS})
+target_link_directories(srsran_dft PRIVATE ${SRSRAN_DFT_LIBRARY_DIRS})
+target_link_libraries(srsran_dft PRIVATE ${SRSRAN_DFT_LIBRARIES} srsvec srslog)
+target_compile_definitions(srsran_dft PRIVATE ${SRSRAN_DFT_DEFINITIONS})
 
-add_to_exported_libs(srsran_generic_funcs srsran_generic_funcs_dft)
+add_to_exported_libs(srsran_dft)

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,7 +21,8 @@
  */
 
 #include "cu_cp_unit_config_cli11_schema.h"
-#include "apps/services/logger/logger_appconfig_cli11_utils.h"
+#include "apps/helpers/logger/logger_appconfig_cli11_utils.h"
+#include "apps/helpers/metrics/metrics_config_cli11_schema.h"
 #include "cu_cp_unit_config.h"
 #include "srsran/ran/nr_cell_identity.h"
 #include "srsran/support/cli11_utils.h"
@@ -31,18 +32,24 @@ using namespace srsran;
 
 static void configure_cli11_log_args(CLI::App& app, cu_cp_unit_logger_config& log_params)
 {
-  app_services::add_log_option(app, log_params.pdcp_level, "--pdcp_level", "PDCP log level");
-  app_services::add_log_option(app, log_params.rrc_level, "--rrc_level", "RRC log level");
-  app_services::add_log_option(app, log_params.ngap_level, "--ngap_level", "NGAP log level");
-  app_services::add_log_option(app, log_params.f1ap_level, "--f1ap_level", "F1AP log level");
-  app_services::add_log_option(app, log_params.cu_level, "--cu_level", "Log level for the CU");
-  app_services::add_log_option(app, log_params.sec_level, "--sec_level", "Security functions log level");
+  app_helpers::add_log_option(app, log_params.pdcp_level, "--pdcp_level", "PDCP log level");
+  app_helpers::add_log_option(app, log_params.rrc_level, "--rrc_level", "RRC log level");
+  app_helpers::add_log_option(app, log_params.ngap_level, "--ngap_level", "NGAP log level");
+  app_helpers::add_log_option(app, log_params.nrppa_level, "--nrppa_level", "NRPPA log level")->group("");
+  app_helpers::add_log_option(app, log_params.e1ap_level, "--e1ap_level", "E1AP log level");
+  app_helpers::add_log_option(app, log_params.f1ap_level, "--f1ap_level", "F1AP log level");
+  app_helpers::add_log_option(app, log_params.cu_level, "--cu_level", "Log level for the CU");
+  app_helpers::add_log_option(app, log_params.sec_level, "--sec_level", "Security functions log level");
 
-  add_option(
-      app, "--hex_max_size", log_params.hex_max_size, "Maximum number of bytes to print in hex (zero for no hex dumps)")
+  add_option(app,
+             "--hex_max_size",
+             log_params.hex_max_size,
+             "Maximum number of bytes to print in hex (zero for no hex dumps, -1 for unlimited bytes)")
       ->capture_default_str()
-      ->check(CLI::Range(0, 1024));
+      ->check(CLI::Range(-1, 1024));
 
+  add_option(app, "--e1ap_json_enabled", log_params.e1ap_json_enabled, "Enable JSON logging of E1AP PDUs")
+      ->always_capture_default();
   add_option(app, "--f1ap_json_enabled", log_params.f1ap_json_enabled, "Enable JSON logging of F1AP PDUs")
       ->always_capture_default();
 }
@@ -127,20 +134,42 @@ static void configure_cli11_amf_item_args(CLI::App& app, cu_cp_unit_amf_config_i
   add_option(app, "--bind_addr", config.bind_addr, "Local IP address to bind for N2 interface")->check(CLI::ValidIPV4);
   add_option(app, "--bind_interface", config.bind_interface, "Network device to bind for N2 interface")
       ->capture_default_str();
-  add_option(app, "--sctp_rto_initial", config.sctp_rto_initial, "SCTP initial RTO value");
-  add_option(app, "--sctp_rto_min", config.sctp_rto_min, "SCTP RTO min");
-  add_option(app, "--sctp_rto_max", config.sctp_rto_max, "SCTP RTO max");
-  add_option(app, "--sctp_init_max_attempts", config.sctp_init_max_attempts, "SCTP init max attempts");
-  add_option(app, "--sctp_max_init_timeo", config.sctp_max_init_timeo, "SCTP max init timeout ");
+  add_option(app,
+             "--sctp_rto_initial",
+             config.sctp_rto_initial_ms,
+             "SCTP initial RTO value in milliseconds (-1 to use system default)");
+  add_option(app, "--sctp_rto_min", config.sctp_rto_min_ms, "SCTP RTO min in milliseconds (-1 to use system default)");
+  add_option(app, "--sctp_rto_max", config.sctp_rto_max_ms, "SCTP RTO max in milliseconds (-1 to use system default)");
+  add_option(app,
+             "--sctp_init_max_attempts",
+             config.sctp_init_max_attempts,
+             "SCTP init max attempts (-1 to use system default)");
+  add_option(app,
+             "--sctp_max_init_timeo",
+             config.sctp_max_init_timeo_ms,
+             "SCTP max init timeout in milliseconds (-1 to use system default)");
+  add_option(app,
+             "--sctp_hb_interval",
+             config.sctp_hb_interval_ms,
+             "SCTP heartbeat interval in milliseconds (-1 to use system default)")
+      ->capture_default_str();
+  add_option(app,
+             "--sctp_assoc_max_retx",
+             config.sctp_assoc_max_retx,
+             "SCTP assocination max retransmissions (-1 to use system default)")
+      ->capture_default_str();
   add_option(app,
              "--sctp_nodelay",
              config.sctp_nodelay,
              "Send SCTP messages as soon as possible without any Nagle-like algorithm");
 
-  // supported tracking areas configuration parameters.
+  // Supported tracking areas configuration parameters.
   app.add_option_function<std::vector<std::string>>(
       "--supported_tracking_areas",
       [&config](const std::vector<std::string>& values) {
+        // If supported tracking areas are configured clear default values.
+        config.supported_tas.clear();
+        config.is_default_supported_tas = false;
         config.supported_tas.resize(values.size());
 
         for (unsigned i = 0, e = values.size(); i != e; ++i) {
@@ -158,7 +187,11 @@ static void configure_cli11_amf_item_args(CLI::App& app, cu_cp_unit_amf_config_i
 static void configure_cli11_amf_args(CLI::App& app, cu_cp_unit_amf_config& config)
 {
   add_option(app, "--no_core", config.no_core, "Allow CU-CP to run without a core")->capture_default_str();
-
+  add_option(app,
+             "--amf_reconnection_retry_time",
+             config.amf_reconnection_retry_time,
+             "Time to wait after a failed AMF reconnection attempt in ms")
+      ->capture_default_str();
   // AMF parameters.
   configure_cli11_amf_item_args(app, config.amf);
 }
@@ -177,6 +210,14 @@ static void configure_cli11_report_args(CLI::App& app, cu_cp_unit_report_config&
   add_option(app, "--report_interval_ms", report_params.report_interval_ms, "Report interval in ms")
       ->check(
           CLI::IsMember({120, 240, 480, 640, 1024, 2048, 5120, 10240, 20480, 40960, 60000, 360000, 720000, 1800000}));
+  add_option(app,
+             "--periodic_ho_rsrp_offset_db",
+             report_params.periodic_ho_rsrp_offset,
+             "Measurement trigger quantity offset in dB used to trigger handovers by periodic measurement reports. "
+             "When set to -1 no handover will be triggered from periodical measurements. Note the "
+             "actual value is field value * 0.5 dB")
+      ->check(CLI::Range(-1, 30))
+      ->capture_default_str();
   add_option(app,
              "--meas_trigger_quantity",
              report_params.meas_trigger_quantity,
@@ -314,12 +355,10 @@ static void configure_cli11_rrc_args(CLI::App& app, cu_cp_unit_rrc_config& confi
              "Force RRC re-establishment fallback to RRC setup")
       ->capture_default_str();
 
-  add_option(
-      app,
-      "--rrc_procedure_timeout_ms",
-      config.rrc_procedure_timeout_ms,
-      "Timeout in ms used for RRC message exchange with UE. It needs to suit the expected communication delay and "
-      "account for potential retransmissions UE processing delays, SR delays, etc.")
+  add_option(app,
+             "--rrc_procedure_guard_time_ms",
+             config.rrc_procedure_guard_time_ms,
+             "Guard time in ms used for RRC message exchange with UE. This is added to the RRC procedure timeout.")
       ->capture_default_str();
 }
 
@@ -361,6 +400,15 @@ static void configure_cli11_f1ap_args(CLI::App& app, cu_cp_unit_f1ap_config& f1a
              "--procedure_timeout",
              f1ap_params.procedure_timeout,
              "Time that the F1AP waits for a DU response in milliseconds")
+      ->capture_default_str();
+}
+
+static void configure_cli11_e1ap_args(CLI::App& app, cu_cp_unit_e1ap_config& e1ap_params)
+{
+  add_option(app,
+             "--procedure_timeout",
+             e1ap_params.procedure_timeout,
+             "Time that the E1AP waits for a CU-UP response in milliseconds")
       ->capture_default_str();
 }
 
@@ -423,6 +471,9 @@ static void configure_cli11_cu_cp_args(CLI::App& app, cu_cp_unit_config& cu_cp_p
 
   CLI::App* f1ap_subcmd = add_subcommand(app, "f1ap", "F1AP configuration parameters");
   configure_cli11_f1ap_args(*f1ap_subcmd, cu_cp_params.f1ap_config);
+
+  CLI::App* e1ap_subcmd = add_subcommand(app, "e1ap", "E1AP configuration parameters");
+  configure_cli11_e1ap_args(*e1ap_subcmd, cu_cp_params.e1ap_config);
 }
 
 static void configure_cli11_rlc_um_args(CLI::App& app, cu_cp_unit_rlc_um_config& rlc_um_params)
@@ -523,13 +574,24 @@ static void configure_cli11_qos_args(CLI::App& app, cu_cp_unit_qos_config& qos_p
   app.needs(pdcp_subcmd);
 }
 
+static void configure_cli11_metrics_layers_args(CLI::App& app, cu_cp_unit_metrics_layer_config& metrics_params)
+{
+  add_option(app, "--enable_ngap", metrics_params.enable_ngap, "Enable NGAP metrics")->capture_default_str();
+  add_option(app, "--enable_pdcp", metrics_params.enable_pdcp, "Enable PDCP metrics")->capture_default_str();
+  add_option(app, "--enable_rrc", metrics_params.enable_rrc, "Enable CU-CP RRC metrics")->capture_default_str();
+}
+
 static void configure_cli11_metrics_args(CLI::App& app, cu_cp_unit_metrics_config& metrics_params)
 {
-  add_option(app,
-             "--cu_cp_statistics_report_period",
-             metrics_params.cu_cp_statistics_report_period,
-             "CU-CP statistics report period in seconds. Set this value to 0 to disable this feature")
+  auto* periodicity_subcmd = add_subcommand(app, "periodicity", "Metrics periodicity configuration")->configurable();
+  add_option(*periodicity_subcmd,
+             "--cu_cp_report_period",
+             metrics_params.cu_cp_report_period,
+             "CU-CP metrics report period in milliseconds")
       ->capture_default_str();
+
+  auto* layers_subcmd = add_subcommand(app, "layers", "Layer basis metrics configuration")->configurable();
+  configure_cli11_metrics_layers_args(*layers_subcmd, metrics_params.layers_cfg);
 }
 
 void srsran::configure_cli11_with_cu_cp_unit_config_schema(CLI::App& app, cu_cp_unit_config& unit_cfg)
@@ -555,6 +617,7 @@ void srsran::configure_cli11_with_cu_cp_unit_config_schema(CLI::App& app, cu_cp_
   // Metrics section.
   CLI::App* metrics_subcmd = add_subcommand(app, "metrics", "Metrics configuration")->configurable();
   configure_cli11_metrics_args(*metrics_subcmd, unit_cfg.metrics);
+  app_helpers::configure_cli11_with_metrics_appconfig_schema(app, unit_cfg.metrics.common_metrics_cfg);
 
   // QoS section.
   auto qos_lambda = [&unit_cfg](const std::vector<std::string>& values) {

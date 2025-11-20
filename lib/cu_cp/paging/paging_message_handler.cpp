@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,6 +23,7 @@
 #include "paging_message_handler.h"
 #include "../du_processor/du_processor_repository.h"
 #include "srsran/cu_cp/cu_cp_types.h"
+#include "srsran/ran/tac.h"
 
 using namespace srsran;
 using namespace srs_cu_cp;
@@ -36,8 +37,8 @@ void paging_message_handler::handle_paging_message(const cu_cp_paging_message& m
 {
   // Forward paging message to all DU processors
   bool paging_sent = false;
-  for (unsigned i = 0; i != dus.get_nof_dus(); ++i) {
-    paging_sent |= handle_du_paging_message(uint_to_du_index(i), msg);
+  for (const auto& du_idx : dus.get_du_processor_indexes()) {
+    paging_sent |= handle_du_paging_message(du_idx, msg);
   }
 
   if (not paging_sent) {
@@ -45,7 +46,7 @@ void paging_message_handler::handle_paging_message(const cu_cp_paging_message& m
   }
 }
 
-static bool is_tac_in_list(span<const cu_cp_tai_list_for_paging_item> tai_list, unsigned tac)
+static bool is_tac_in_list(span<const cu_cp_tai_list_for_paging_item> tai_list, tac_t tac)
 {
   return std::any_of(tai_list.begin(), tai_list.end(), [&tac](const auto& tai) { return tai.tai.tac == tac; });
 }

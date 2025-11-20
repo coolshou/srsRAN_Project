@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -31,8 +31,8 @@ extern "C" {
 #define TESTASSERT(COND)                                                                                               \
   do {                                                                                                                 \
     if (!(COND)) {                                                                                                     \
-      std::cerr << "Error in " << __FILE__ << ":" << __LINE__ << ":"                                                   \
-                << ": unmet condition '" << #COND << "'" << std::endl;                                                 \
+      std::cerr << "Error in " << __FILE__ << ":" << __LINE__ << ":" << ": unmet condition '" << #COND << "'"          \
+                << std::endl;                                                                                          \
       std::abort();                                                                                                    \
     }                                                                                                                  \
   } while (false)
@@ -57,7 +57,7 @@ int main(int argc, char** argv)
 {
   void* handle;
   char* error;
-  int (*driver_init)(TRXState * s);
+  int (*driver_init)(TRXState* s);
 
   // Check number of inputs
   if (argc != 2) {
@@ -68,7 +68,7 @@ int main(int argc, char** argv)
   handle = dlopen(argv[1], RTLD_NOW);
   if (handle == nullptr) {
     std::cerr << "Error: " << dlerror() << std::endl;
-    exit(EXIT_FAILURE);
+    std::exit(EXIT_FAILURE);
   }
 
   // Clear any existing error.
@@ -80,7 +80,7 @@ int main(int argc, char** argv)
   error = dlerror();
   if (error != nullptr) {
     std::cerr << "Error: " << error << std::endl;
-    exit(EXIT_FAILURE);
+    std::exit(EXIT_FAILURE);
   }
   std::cout << "Dynamic library loaded." << std::endl;
 
@@ -126,5 +126,5 @@ int main(int argc, char** argv)
   dlclose(handle);
 
   std::cout << "Successful." << std::endl;
-  exit(EXIT_SUCCESS);
+  std::exit(EXIT_SUCCESS);
 }

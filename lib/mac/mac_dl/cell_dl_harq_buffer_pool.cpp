@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -64,6 +64,22 @@ cell_dl_harq_buffer_pool::cell_dl_harq_buffer_pool(unsigned       cell_nof_prbs,
   }
 }
 
+cell_dl_harq_buffer_pool::~cell_dl_harq_buffer_pool()
+{
+  // Cancel any pending background task to grow the pool.
+  *pool_growth_cancelled = true;
+}
+
+void cell_dl_harq_buffer_pool::clear()
+{
+  *pool_growth_cancelled = true;
+  pool_growth_cancelled  = std::make_shared<bool>(false);
+
+  for (unsigned i = 0; i != cell_buffers.size(); ++i) {
+    deallocate_ue_buffers(to_du_ue_index(i));
+  }
+}
+
 void cell_dl_harq_buffer_pool::allocate_ue_buffers(du_ue_index_t ue_index, unsigned nof_harqs)
 {
   srsran_sanity_check(is_du_ue_index_valid(ue_index), "Invalid UE index");
@@ -72,7 +88,7 @@ void cell_dl_harq_buffer_pool::allocate_ue_buffers(du_ue_index_t ue_index, unsig
   ue_dl_harq_buffer_list& ue_harqs = cell_buffers[ue_index];
 
   if (not ue_harqs.empty()) {
-    logger.error("ue={}: HARQ buffers already allocated for new UE", ue_index);
+    logger.error("ue={}: HARQ buffers already allocated for new UE", fmt::underlying(ue_index));
     return;
   }
 
@@ -93,7 +109,7 @@ void cell_dl_harq_buffer_pool::allocate_ue_buffers(du_ue_index_t ue_index, unsig
     // Reuse a HARQ buffer from the cache.
     auto* buffer = allocate_from_cache();
     if (not buffer) {
-      logger.warning("ue={}: No HARQ buffers available for new UE", ue_index);
+      logger.warning("ue={}: No HARQ buffers available for new UE", fmt::underlying(ue_index));
       return;
     }
     ue_harqs.emplace_back(buffer);
@@ -126,7 +142,11 @@ void cell_dl_harq_buffer_pool::grow_cache_in_background()
     return;
   }
 
-  if (not ctrl_exec.defer([this]() {
+  if (not ctrl_exec.defer([this, cancel_flag_cpy = pool_growth_cancelled]() {
+        if (cancel_flag_cpy) {
+          // Task cancelled.
+          return;
+        }
         // Allocate minibatch of DL HARQ buffers and save them in cache.
         for (unsigned i = 0; i != DL_HARQ_ALLOC_MINIBATCH; ++i) {
           if (auto* buffer = allocate_from_pool()) {
@@ -151,14 +171,14 @@ cell_dl_harq_buffer_pool::dl_harq_buffer_storage* cell_dl_harq_buffer_pool::allo
     return nullptr;
   }
 
-  return &(*pool)[pool_elem_index-- - 1];
+  return &(*pool)[--pool_elem_index];
 }
 
 cell_dl_harq_buffer_pool::dl_harq_buffer_storage* cell_dl_harq_buffer_pool::allocate_from_cache()
 {
   // Some buffers may be still in flight after user removal.
   auto it = std::find_if(buffer_cache.rbegin(), buffer_cache.rend(), [](const dl_harq_buffer_storage* buffer) {
-    return buffer->ref_cnt.load(std::memory_order_acquire) == 0;
+    return buffer->ref_cnt.load(std::memory_order_relaxed) == 0;
   });
   if (it == buffer_cache.rend()) {
     return nullptr;

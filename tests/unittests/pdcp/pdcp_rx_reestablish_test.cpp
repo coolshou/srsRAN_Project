@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -52,14 +52,14 @@ TEST_P(pdcp_rx_reestablish_test, when_srb_reestablish_then_sdus_dropped)
   pdcp_rx->handle_pdu(byte_buffer_chain::create(std::move(test_pdu2)).value());
 
   // Wait for crypto and reordering
-  crypto_worker_pool.wait_pending_tasks();
+  wait_pending_crypto();
   worker.run_pending_tasks();
   ASSERT_EQ(0, test_frame->sdu_queue.size());
 
   pdcp_rx->handle_pdu(byte_buffer_chain::create(std::move(test_pdu3)).value());
 
   // Wait for crypto and reordering
-  crypto_worker_pool.wait_pending_tasks();
+  wait_pending_crypto();
   worker.run_pending_tasks();
   ASSERT_EQ(0, test_frame->sdu_queue.size());
 
@@ -85,7 +85,7 @@ TEST_P(pdcp_rx_reestablish_test, when_srb_reestablish_then_sdus_dropped)
   pdcp_rx->handle_pdu(byte_buffer_chain::create(std::move(test_pdu_nxa3)).value());
 
   // Wait for crypto and reordering
-  crypto_worker_pool.wait_pending_tasks();
+  wait_pending_crypto();
   worker.run_pending_tasks();
   ASSERT_EQ(1, test_frame->sdu_queue.size());
 }
@@ -112,13 +112,13 @@ TEST_P(pdcp_rx_reestablish_test, when_drb_um_reestablish_then_pdus_forwared)
   pdcp_rx->handle_pdu(byte_buffer_chain::create(std::move(test_pdu2)).value());
 
   // Wait for crypto and reordering
-  crypto_worker_pool.wait_pending_tasks();
+  wait_pending_crypto();
   worker.run_pending_tasks();
   ASSERT_EQ(0, test_frame->sdu_queue.size());
   pdcp_rx->handle_pdu(byte_buffer_chain::create(std::move(test_pdu3)).value());
 
   // Wait for crypto and reordering
-  crypto_worker_pool.wait_pending_tasks();
+  wait_pending_crypto();
   worker.run_pending_tasks();
   ASSERT_EQ(0, test_frame->sdu_queue.size());
 
@@ -167,13 +167,13 @@ TEST_P(pdcp_rx_reestablish_test, when_drb_am_reestablish_then_state_preserved)
   pdcp_rx->handle_pdu(byte_buffer_chain::create(std::move(test_pdu2)).value());
 
   // Wait for crypto and reordering
-  crypto_worker_pool.wait_pending_tasks();
+  wait_pending_crypto();
   worker.run_pending_tasks();
   ASSERT_EQ(0, test_frame->sdu_queue.size());
   pdcp_rx->handle_pdu(byte_buffer_chain::create(std::move(test_pdu3)).value());
 
   // Wait for crypto and reordering
-  crypto_worker_pool.wait_pending_tasks();
+  wait_pending_crypto();
   worker.run_pending_tasks();
   ASSERT_EQ(0, test_frame->sdu_queue.size());
 
@@ -201,7 +201,7 @@ TEST_P(pdcp_rx_reestablish_test, when_drb_am_reestablish_then_state_preserved)
   pdcp_rx->handle_pdu(byte_buffer_chain::create(std::move(test_pdu1)).value());
 
   // Wait for crypto and reordering
-  crypto_worker_pool.wait_pending_tasks();
+  wait_pending_crypto();
   worker.run_pending_tasks();
   ASSERT_EQ(3, test_frame->sdu_queue.size());
 }
@@ -209,10 +209,10 @@ TEST_P(pdcp_rx_reestablish_test, when_drb_am_reestablish_then_state_preserved)
 ///////////////////////////////////////////////////////////////////
 // Finally, instantiate all testcases for each supported SN size //
 ///////////////////////////////////////////////////////////////////
-std::string test_param_info_to_string(const ::testing::TestParamInfo<std::tuple<pdcp_sn_size, unsigned>>& info)
+static std::string test_param_info_to_string(const ::testing::TestParamInfo<std::tuple<pdcp_sn_size, unsigned>>& info)
 {
   fmt::memory_buffer buffer;
-  fmt::format_to(buffer,
+  fmt::format_to(std::back_inserter(buffer),
                  "{}bit_nia{}_nea{}",
                  pdcp_sn_size_to_uint(std::get<pdcp_sn_size>(info.param)),
                  std::get<unsigned>(info.param),

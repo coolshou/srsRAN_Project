@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -20,7 +20,8 @@
 
 set(SOURCES
         worker_manager.cpp
-        worker_manager_cli11_schema.cpp)
+        worker_manager_cli11_schema.cpp
+        worker_manager_appconfig_validator.cpp)
 
 add_library(srsran_cpu_affinities_helper STATIC cli11_cpu_affinities_parser_helper.cpp)
 
@@ -28,5 +29,10 @@ add_library(srsran_worker_manager_app_service STATIC ${SOURCES})
 target_include_directories(srsran_worker_manager_app_service PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(srsran_worker_manager_app_service
         srsran_cpu_affinities_helper
-        srsran_du_high # TODO: Temp
-        srsran_cu_up) # TODO: Temp
+        srsran_cu_up      # TODO: Temp
+        srsran_du_high    # TODO: Temp
+        srsran_cu_cp      # TODO: Temp
+        srsran_o_du_low   # TODO: Temp
+        srsran_ru_dummy   # TODO: Temp
+        srsran_ru_generic # TODO: Temp
+        srsran_ru_ofh)    # TODO: Temp

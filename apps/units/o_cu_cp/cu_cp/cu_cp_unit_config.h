@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "apps/helpers/metrics/metrics_config.h"
 #include "apps/units/o_cu_cp/cu_cp/cu_cp_unit_pcap_config.h"
 #include "cu_cp_unit_logger_config.h"
 #include "srsran/ran/gnb_id.h"
@@ -29,6 +30,7 @@
 #include "srsran/ran/pci.h"
 #include "srsran/ran/qos/five_qi.h"
 #include "srsran/ran/s_nssai.h"
+#include "srsran/ran/tac.h"
 #include <vector>
 
 namespace srsran {
@@ -45,35 +47,35 @@ struct cu_cp_unit_plmn_item {
 };
 
 struct cu_cp_unit_supported_ta_item {
-  unsigned                          tac;
+  tac_t                             tac;
   std::vector<cu_cp_unit_plmn_item> plmn_list;
 };
 
-/// All tracking area related configuration parameters.
-struct cu_cp_unit_ta_config {
-  /// List of all tracking areas supported by the CU-CP.
-  std::vector<cu_cp_unit_supported_ta_item> supported_tas;
-};
-
 struct cu_cp_unit_amf_config_item {
-  std::string ip_addr                = "127.0.0.1";
+  std::string ip_addr                = "127.0.1.100";
   uint16_t    port                   = 38412;
   std::string bind_addr              = "127.0.0.1";
   std::string bind_interface         = "auto";
-  int         sctp_rto_initial       = 120;
-  int         sctp_rto_min           = 120;
-  int         sctp_rto_max           = 500;
+  int         sctp_rto_initial_ms    = 120;
+  int         sctp_rto_min_ms        = 120;
+  int         sctp_rto_max_ms        = 500;
   int         sctp_init_max_attempts = 3;
-  int         sctp_max_init_timeo    = 500;
+  int         sctp_max_init_timeo_ms = 500;
+  int         sctp_hb_interval_ms    = 30000;
+  int         sctp_assoc_max_retx    = 10;
   bool        sctp_nodelay           = false;
+
   /// List of all tracking areas supported by the AMF.
-  std::vector<cu_cp_unit_supported_ta_item> supported_tas;
+  std::vector<cu_cp_unit_supported_ta_item> supported_tas = {{7, {{"00101", {cu_cp_unit_plmn_item::tai_slice_t{1}}}}}};
+  bool                                      is_default_supported_tas = true;
 };
 
 struct cu_cp_unit_amf_config {
   cu_cp_unit_amf_config_item amf;
   /// Allow CU-CP to run without a core, e.g. for test mode.
   bool no_core = false;
+  /// Time to wait after a failed AMF reconnection attempt in ms.
+  unsigned amf_reconnection_retry_time = 1000;
 };
 
 /// Report configuration, for now only supporting the A3 event.
@@ -90,6 +92,9 @@ struct cu_cp_unit_report_config {
                                                       ///< putting a value of -6 here results in -3dB offset.
   std::optional<unsigned> hysteresis_db;
   std::optional<unsigned> time_to_trigger_ms;
+  int                     periodic_ho_rsrp_offset =
+      -1; ///< -1 disables handovers from periodic measurements. [0..30] Note the actual value is field value * 0.5 dB.
+          ///< E.g. putting a value of -6 here results in -3dB offset.
 };
 
 struct cu_cp_unit_neighbor_cell_config_item {
@@ -140,9 +145,10 @@ struct cu_cp_unit_mobility_config {
 /// RRC specific configuration parameters.
 struct cu_cp_unit_rrc_config {
   bool force_reestablishment_fallback = false;
-  /// Timeout for RRC procedures (2 * default SRB maxRetxThreshold * t-PollRetransmit = 2 * 8 * 45ms = 720ms, see
-  /// TS 38.331 Sec 9.2.1).
-  unsigned rrc_procedure_timeout_ms = 720;
+  /// Guard time in ms that is added to the RRC procedure timeout.
+  /// NOTE: Guard time needs to be larger then SRB max retx thres * t-PollRetransmit.
+  /// (2 * default SRB maxRetxThreshold * t-PollRetransmit = 2 * 8 * 45ms = 720ms, see TS 38.331 Sec 9.2.1)
+  unsigned rrc_procedure_guard_time_ms = 1000;
 };
 
 /// Security configuration parameters.
@@ -156,6 +162,12 @@ struct cu_cp_unit_security_config {
 /// F1AP-CU configuration parameters.
 struct cu_cp_unit_f1ap_config {
   /// Timeout for the F1AP procedures in milliseconds.
+  unsigned procedure_timeout = 1000;
+};
+
+/// E1AP-CU-CP configuration parameters.
+struct cu_cp_unit_e1ap_config {
+  /// Timeout for the E1AP procedures in milliseconds.
   unsigned procedure_timeout = 1000;
 };
 
@@ -257,16 +269,29 @@ struct cu_cp_unit_qos_config {
   cu_cp_unit_pdcp_config pdcp;
 };
 
+/// Configuration to enable/disable metrics per layer.
+struct cu_cp_unit_metrics_layer_config {
+  bool enable_ngap           = false;
+  bool enable_pdcp           = false;
+  bool enable_rrc            = false;
+  bool enable_cu_cp_executor = false;
+
+  /// Returns true if one or more layers are enabled, false otherwise.
+  bool are_metrics_enabled() const { return enable_ngap || enable_pdcp || enable_rrc; }
+};
+
 /// Metrics configuration.
 struct cu_cp_unit_metrics_config {
-  /// Statistics report period in seconds
-  unsigned cu_cp_statistics_report_period = 1;
+  /// CU-CP statistics report period in milliseconds.
+  unsigned                        cu_cp_report_period = 1000;
+  app_helpers::metrics_config     common_metrics_cfg;
+  cu_cp_unit_metrics_layer_config layers_cfg;
 };
 
 /// CU-CP application unit configuration.
 struct cu_cp_unit_config {
   /// Node name.
-  std::string ran_node_name = "cu_cp_01";
+  std::string ran_node_name = "srscucp01";
   /// gNB identifier.
   gnb_id_t gnb_id = {411, 22};
   /// Maximum number of DUs.
@@ -297,8 +322,10 @@ struct cu_cp_unit_config {
   cu_cp_unit_rrc_config rrc_config;
   /// Security configuration.
   cu_cp_unit_security_config security_config;
-  /// F1-AP configuration.
+  /// F1AP configuration.
   cu_cp_unit_f1ap_config f1ap_config;
+  /// E1AP configuration.
+  cu_cp_unit_e1ap_config e1ap_config;
   /// QoS configuration.
   std::vector<cu_cp_unit_qos_config> qos_cfg;
   /// Network slice configuration.

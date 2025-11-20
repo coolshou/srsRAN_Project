@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,10 +27,11 @@ using namespace srs_cu_cp;
 
 cu_cp_ue::cu_cp_ue(ue_index_t                     ue_index_,
                    du_index_t                     du_index_,
+                   timer_manager&                 timers_,
+                   task_executor&                 task_exec_,
                    const up_resource_manager_cfg& up_cfg,
                    const security_manager_config& sec_cfg,
                    ue_task_scheduler_impl         task_sched_,
-                   plmn_identity                  plmn_,
                    std::optional<gnb_du_id_t>     du_id_,
                    std::optional<pci_t>           pci_,
                    std::optional<rnti_t>          c_rnti_,
@@ -58,10 +59,12 @@ cu_cp_ue::cu_cp_ue(ue_index_t                     ue_index_,
   }
 
   ue_ctxt.du_idx = du_index_;
-  ue_ctxt.plmn   = plmn_;
 
   rrc_ue_cu_cp_ue_ev_notifier.connect_ue(*this);
   ngap_cu_cp_ue_ev_notifier.connect_ue(*this);
+  nrppa_cu_cp_ue_ev_notifier.connect_ue(*this);
+
+  handover_ue_release_timer = timers_.create_unique_timer(task_exec_);
 }
 
 /// \brief Update a UE with PCI and/or C-RNTI.

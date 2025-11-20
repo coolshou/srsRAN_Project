@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,11 +22,10 @@
 
 #pragma once
 
-#include "srsran/adt/static_vector.h"
 #include "srsran/du/du_high/du_high_executor_mapper.h"
 #include "srsran/support/executors/manual_task_worker.h"
-#include "srsran/support/executors/task_worker.h"
 #include "srsran/support/executors/task_worker_pool.h"
+#include "srsran/support/synchronization/sync_event.h"
 #include <array>
 
 namespace srsran {
@@ -38,6 +37,7 @@ struct du_high_worker_manager {
   ~du_high_worker_manager();
   void stop();
   void flush_pending_dl_pdus();
+  void flush_pending_control_tasks();
 
   manual_task_worker        test_worker{task_worker_queue_size};
   priority_task_worker_pool worker_pool{
@@ -49,6 +49,10 @@ struct du_high_worker_manager {
   priority_task_worker_pool_executor               high_prio_exec{enqueue_priority::max, worker_pool};
   priority_task_worker_pool_executor               low_prio_exec{enqueue_priority::max - 1, worker_pool};
   std::unique_ptr<srs_du::du_high_executor_mapper> exec_mapper;
+  std::unique_ptr<task_executor>                   time_exec;
+
+private:
+  sync_event ev;
 };
 
 } // namespace srsran

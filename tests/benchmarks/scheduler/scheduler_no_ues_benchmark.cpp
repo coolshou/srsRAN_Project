@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,6 +25,7 @@
 #include "tests/test_doubles/scheduler/scheduler_config_helper.h"
 #include "tests/unittests/scheduler/test_utils/config_generators.h"
 #include "tests/unittests/scheduler/test_utils/indication_generators.h"
+#include "srsran/scheduler/result/sched_result.h"
 #include "srsran/scheduler/scheduler_factory.h"
 #include "srsran/srslog/srslog.h"
 #include "srsran/support/benchmark_utils.h"
@@ -54,7 +55,7 @@ static void parse_args(int argc, char** argv, bench_params& params)
       case 'h':
       default:
         usage(argv[0], params);
-        exit(0);
+        std::exit(0);
     }
   }
 }
@@ -65,8 +66,8 @@ void benchmark_sib_scheduling()
 {
   sched_cfg_dummy_notifier       cfg_notif;
   sched_dummy_metric_notifier    metric_notif;
-  std::unique_ptr<mac_scheduler> sch = create_scheduler(
-      scheduler_config{config_helpers::make_default_scheduler_expert_config(), cfg_notif, metric_notif});
+  std::unique_ptr<mac_scheduler> sch =
+      create_scheduler(scheduler_config{config_helpers::make_default_scheduler_expert_config(), cfg_notif});
 
   // Add Cell.
   scheduler_expert_config                  sched_cfg = config_helpers::make_default_scheduler_expert_config();
@@ -90,8 +91,8 @@ void benchmark_rach_scheduling()
 {
   sched_cfg_dummy_notifier       cfg_notif;
   sched_dummy_metric_notifier    metric_notif;
-  std::unique_ptr<mac_scheduler> sch = create_scheduler(
-      scheduler_config{config_helpers::make_default_scheduler_expert_config(), cfg_notif, metric_notif});
+  std::unique_ptr<mac_scheduler> sch =
+      create_scheduler(scheduler_config{config_helpers::make_default_scheduler_expert_config(), cfg_notif});
 
   // Add Cell.
   scheduler_expert_config                  sched_cfg = config_helpers::make_default_scheduler_expert_config();
@@ -136,7 +137,8 @@ void benchmark_rach_scheduling()
 
 int main(int argc, char** argv)
 {
-  srslog::fetch_basic_logger("MAC", true).set_level(srslog::basic_levels::error);
+  srslog::fetch_basic_logger("MAC", true).set_level(srslog::basic_levels::warning);
+  srslog::fetch_basic_logger("SCHED", true).set_level(srslog::basic_levels::warning);
 
   srslog::init();
 

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,12 +22,15 @@
 
 #pragma once
 
+#include "srsran/instrumentation/traces/critical_traces.h"
+#include "srsran/instrumentation/traces/du_traces.h"
 #include "srsran/phy/support/prach_buffer_context.h"
 #include "srsran/phy/support/shared_resource_grid.h"
 #include "srsran/phy/upper/upper_phy_error_handler.h"
 #include "srsran/phy/upper/upper_phy_rg_gateway.h"
 #include "srsran/phy/upper/upper_phy_rx_symbol_handler.h"
 #include "srsran/phy/upper/upper_phy_rx_symbol_request_notifier.h"
+#include "srsran/phy/upper/upper_phy_timing_context.h"
 #include "srsran/phy/upper/upper_phy_timing_handler.h"
 #include "srsran/ru/ru_downlink_plane.h"
 #include "srsran/ru/ru_error_notifier.h"
@@ -86,10 +89,12 @@ public:
   explicit upper_phy_ru_ul_adapter(unsigned nof_sectors) : handlers(nof_sectors) {}
 
   // See interface for documentation.
-  void on_new_uplink_symbol(const ru_uplink_rx_symbol_context& context, const shared_resource_grid& grid) override
+  void on_new_uplink_symbol(const ru_uplink_rx_symbol_context& context,
+                            const shared_resource_grid&        grid,
+                            bool                               is_valid) override
   {
     srsran_assert(context.sector < handlers.size(), "Unsupported sector {}", context.sector);
-    handlers[context.sector]->handle_rx_symbol({context.sector, context.slot, context.symbol_id}, grid);
+    handlers[context.sector]->handle_rx_symbol({context.sector, context.slot, context.symbol_id}, grid, is_valid);
   }
 
   // See interface for documentation.
@@ -118,11 +123,11 @@ public:
   explicit upper_phy_ru_timing_adapter(unsigned nof_sectors) : handlers(nof_sectors) {}
 
   // See interface for documentation.
-  void on_tti_boundary(slot_point slot) override
+  void on_tti_boundary(const tti_boundary_context& slot_context) override
   {
     srsran_assert(!handlers.empty(), "Adapter is not connected");
     for (auto& handler : handlers) {
-      handler->handle_tti_boundary({slot});
+      handler->handle_tti_boundary({slot_context.slot, slot_context.time_point});
     }
   }
 
@@ -169,6 +174,32 @@ public:
     srsran_assert(handlers[context.sector], "Adapter for sector '{}' is not connected", context.sector);
 
     handlers[context.sector]->handle_late_downlink_message(context.slot);
+    general_critical_tracer << instant_trace_event{
+        "handle_dl_data_late", instant_trace_event::cpu_scope::thread, instant_trace_event::event_criticality::severe};
+  }
+
+  // See interface for documentation.
+  void on_late_uplink_message(const ru_error_context& context) override
+  {
+    srsran_assert(context.sector < handlers.size(), "Invalid sector '{}'", context.sector);
+    srsran_assert(handlers[context.sector], "Adapter for sector '{}' is not connected", context.sector);
+
+    handlers[context.sector]->handle_late_uplink_message(context.slot);
+    general_critical_tracer << instant_trace_event{"handle_ul_request_late",
+                                                   instant_trace_event::cpu_scope::thread,
+                                                   instant_trace_event::event_criticality::severe};
+  }
+
+  // See interface for documentation.
+  void on_late_prach_message(const ru_error_context& context) override
+  {
+    srsran_assert(context.sector < handlers.size(), "Invalid sector '{}'", context.sector);
+    srsran_assert(handlers[context.sector], "Adapter for sector '{}' is not connected", context.sector);
+
+    handlers[context.sector]->handle_late_prach_message(context.slot);
+    general_critical_tracer << instant_trace_event{"handle_late_prach_message",
+                                                   instant_trace_event::cpu_scope::thread,
+                                                   instant_trace_event::event_criticality::severe};
   }
 
   /// Maps the given upper PHY error handler and sector to this adapter.

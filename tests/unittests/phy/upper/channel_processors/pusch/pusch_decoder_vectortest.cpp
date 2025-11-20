@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -57,12 +57,13 @@ static unsigned nof_ldpc_iterations = 6;
 static std::string decoder_type = "generic";
 
 #ifdef HWACC_PUSCH_ENABLED
-static bool                 dedicated_queue = true;
-static bool                 test_harq       = true;
-static bool                 ext_softbuffer  = true;
-static bool                 std_out_sink    = true;
-static srslog::basic_levels hal_log_level   = srslog::basic_levels::error;
-static std::string          eal_arguments   = "";
+static bool                 dedicated_queue  = true;
+static bool                 test_harq        = true;
+static bool                 force_local_harq = false;
+static bool                 external_harq    = false;
+static bool                 std_out_sink     = true;
+static srslog::basic_levels hal_log_level    = srslog::basic_levels::error;
+static std::string          eal_arguments    = "";
 #endif // HWACC_PUSCH_ENABLED
 
 static void usage(const char* prog)
@@ -74,9 +75,9 @@ static void usage(const char* prog)
 #ifdef HWACC_PUSCH_ENABLED
   fmt::print("\t-w       Force shared hardware-queue use [Default {}]\n",
              dedicated_queue ? "dedicated_queue" : "shared_queue");
-  fmt::print("\t-x       Use the host's memory for the soft-buffer [Default {}]\n", !ext_softbuffer);
+  fmt::print("\t-x       Force using the host memory to implement the soft-buffer [Default {}]\n", force_local_harq);
   fmt::print("\t-y       Force logging output written to a file [Default {}]\n", std_out_sink ? "std_out" : "file");
-  fmt::print("\t-z       Set logging level for the HAL [Default {}]\n", hal_log_level);
+  fmt::print("\t-z       Set logging level for the HAL [Default {}]\n", fmt::underlying(hal_log_level));
   fmt::print("\teal_args EAL arguments\n");
 #endif // HWACC_PUSCH_ENABLED
   fmt::print("\t-h       This help\n");
@@ -134,7 +135,7 @@ static void parse_args(int argc, char** argv)
         dedicated_queue = false;
         break;
       case 'x':
-        ext_softbuffer = false;
+        force_local_harq = true;
         break;
       case 'y':
         std_out_sink = false;
@@ -147,7 +148,7 @@ static void parse_args(int argc, char** argv)
       case 'h':
       default:
         usage(argv[0]);
-        exit(-1);
+        std::exit(-1);
     }
   }
 }
@@ -157,7 +158,8 @@ static std::shared_ptr<pusch_decoder_factory> create_generic_pusch_decoder_facto
   std::shared_ptr<crc_calculator_factory> crc_calculator_factory = create_crc_calculator_factory_sw("auto");
   TESTASSERT(crc_calculator_factory);
 
-  std::shared_ptr<ldpc_decoder_factory> ldpc_decoder_factory = create_ldpc_decoder_factory_sw("auto");
+  std::shared_ptr<ldpc_decoder_factory> ldpc_decoder_factory =
+      create_ldpc_decoder_factory_sw("auto", {.force_decoding = false});
   TESTASSERT(ldpc_decoder_factory);
 
   std::shared_ptr<ldpc_rate_dematcher_factory> ldpc_rate_dematcher_factory =
@@ -207,6 +209,9 @@ static std::shared_ptr<hal::hw_accelerator_pusch_dec_factory> create_hw_accelera
   // Interfacing to a shared external HARQ buffer context repository.
   unsigned nof_cbs                   = MAX_NOF_SEGMENTS;
   uint64_t acc100_ext_harq_buff_size = bbdev_accelerator->get_harq_buff_size_bytes();
+  if (acc100_ext_harq_buff_size > 0) {
+    external_harq = !force_local_harq;
+  }
   std::shared_ptr<hal::ext_harq_buffer_context_repository> harq_buffer_context =
       hal::create_ext_harq_buffer_context_repository(nof_cbs, acc100_ext_harq_buff_size, test_harq);
   TESTASSERT(harq_buffer_context);
@@ -215,7 +220,7 @@ static std::shared_ptr<hal::hw_accelerator_pusch_dec_factory> create_hw_accelera
   hal::bbdev_hwacc_pusch_dec_factory_configuration hw_decoder_config;
   hw_decoder_config.acc_type            = "acc100";
   hw_decoder_config.bbdev_accelerator   = bbdev_accelerator;
-  hw_decoder_config.ext_softbuffer      = ext_softbuffer;
+  hw_decoder_config.force_local_harq    = force_local_harq;
   hw_decoder_config.harq_buffer_context = harq_buffer_context;
   hw_decoder_config.dedicated_queue     = dedicated_queue;
 
@@ -306,7 +311,7 @@ int main(int argc, char** argv)
     pool_config.external_soft_bits   = false;
 #ifdef HWACC_PUSCH_ENABLED
     if (decoder_type == "acc100") {
-      pool_config.external_soft_bits = ext_softbuffer;
+      pool_config.external_soft_bits = external_harq;
     }
 #endif // HWACC_PUSCH_ENABLED
 

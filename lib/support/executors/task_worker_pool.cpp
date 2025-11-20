@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,7 +22,7 @@
 
 #include "srsran/support/executors/task_worker_pool.h"
 #include "execution_context_description_setup.h"
-#include <future>
+#include "srsran/support/synchronization/sync_event.h"
 
 using namespace srsran;
 
@@ -37,9 +37,10 @@ std::function<void()> worker_task_factory(Queue& queue, unsigned nof_workers, un
     execution_context::set_execution_context_description(nof_workers, worker_idx);
 
     // start worker pop loop.
+    auto consumer = queue.create_consumer();
     while (true) {
       unique_task job;
-      if (not queue.pop_blocking(job)) {
+      if (not consumer.pop_blocking(job)) {
         break;
       }
       job();
@@ -60,7 +61,7 @@ detail::base_worker_pool::base_worker_pool(unsigned                             
 
   if (cpu_masks.size() > 1) {
     // An array with a single mask is allowed, otherwise the number of masks must be equal to the number of workers.
-    report_error_if_not(cpu_masks.size() == nof_workers_, "Wrong array of CPU masks provided");
+    report_error_if_not(cpu_masks.size() == nof_workers_, "Wrong array of CPU masks provided for {}", worker_pool_name);
   }
 
   // Task dispatched to workers of the pool.
@@ -123,7 +124,7 @@ void priority_task_worker_pool::stop()
 void priority_task_worker_pool::wait_pending_tasks()
 {
   std::mutex              mutex;
-  std::condition_variable cvar_all_sync, cvar_caller_return;
+  std::condition_variable cvar_all_sync;
 
   // Check if there are workers still running.
   unsigned workers_running = 0;
@@ -138,36 +139,25 @@ void priority_task_worker_pool::wait_pending_tasks()
   }
 
   // This will block all workers until all of them are running the enqueued task.
-  unsigned count_workers_not_sync = workers_running;
-  unsigned counter_caller         = workers_running;
+  unsigned   count_workers_not_sync = workers_running;
+  sync_event wait_event;
   for (unsigned i = 0; i != workers_running; ++i) {
-    if (not this->queue.push_blocking(
-            enqueue_priority::min,
-            [&mutex, &cvar_all_sync, &cvar_caller_return, &count_workers_not_sync, &counter_caller]() {
-              std::unique_lock<std::mutex> lock(mutex);
+    this->queue.push_blocking(
+        enqueue_priority::min, [&mutex, &cvar_all_sync, &count_workers_not_sync, tk = wait_event.get_token()]() {
+          std::unique_lock<std::mutex> lock(mutex);
 
-              // Sync all workers. Only when all workers are in sync, we can carry on.
-              count_workers_not_sync--;
-              if (count_workers_not_sync > 0) {
-                cvar_all_sync.wait(lock, [&count_workers_not_sync]() { return count_workers_not_sync == 0; });
-              } else {
-                cvar_all_sync.notify_all();
-              }
-
-              // When all workers passed the condition variable, we can notify the caller.
-              if (--counter_caller == 0) {
-                cvar_caller_return.notify_one();
-              }
-            })) {
-      // Queue was deactivated.
-      std::unique_lock<std::mutex> lock(mutex);
-      count_workers_not_sync--;
-    }
+          // Sync all workers. Only when all workers are in sync, we can carry on.
+          count_workers_not_sync--;
+          if (count_workers_not_sync > 0) {
+            cvar_all_sync.wait(lock, [&count_workers_not_sync]() { return count_workers_not_sync == 0; });
+          } else {
+            cvar_all_sync.notify_all();
+          }
+        });
   }
 
   // Caller blocks waiting for all workers to sync.
-  std::unique_lock<std::mutex> lock(mutex);
-  cvar_caller_return.wait(lock, [&counter_caller]() { return counter_caller == 0; });
+  wait_event.wait();
 }
 
 // ---- non-prioritized task worker pool
@@ -177,9 +167,10 @@ task_worker_pool<QueuePolicy>::task_worker_pool(std::string                     
                                                 unsigned                              nof_workers_,
                                                 unsigned                              qsize_,
                                                 std::chrono::microseconds             wait_sleep_time,
+                                                unsigned                              nof_prereserved_producers,
                                                 os_thread_realtime_priority           prio,
                                                 span<const os_sched_affinity_bitmask> cpu_masks) :
-  detail::base_task_queue<QueuePolicy>(qsize_, wait_sleep_time),
+  detail::base_task_queue<QueuePolicy>(qsize_, wait_sleep_time, nof_prereserved_producers),
   detail::base_worker_pool(
       nof_workers_,
       std::move(worker_pool_name),
@@ -262,3 +253,5 @@ void task_worker_pool<QueuePolicy>::wait_pending_tasks()
 // Explicit specializations of the task_worker_pool.
 template class srsran::task_worker_pool<concurrent_queue_policy::lockfree_mpmc>;
 template class srsran::task_worker_pool<concurrent_queue_policy::locking_mpmc>;
+template class srsran::task_worker_pool<concurrent_queue_policy::moodycamel_lockfree_mpmc>;
+template class srsran::task_worker_pool<concurrent_queue_policy::moodycamel_lockfree_bounded_mpmc>;

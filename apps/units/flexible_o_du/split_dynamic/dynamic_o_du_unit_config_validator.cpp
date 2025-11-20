@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -39,7 +39,7 @@ static std::vector<du_low_prach_validation_config> get_du_low_validation_depende
 
     // Get PRACH info.
     subcarrier_spacing  common_scs = in_cell.common_scs;
-    prach_configuration prach_info = prach_configuration_get(frequency_range::FR1,
+    prach_configuration prach_info = prach_configuration_get(band_helper::get_freq_range(in_cell.band.value()),
                                                              band_helper::get_duplex_mode(in_cell.band.value()),
                                                              in_cell.prach_cfg.prach_config_index.value());
 
@@ -89,7 +89,7 @@ static std::vector<ru_sdr_cell_validation_config> get_ru_sdr_validation_dependen
 
     // Validates the sampling rate is compatible with the PRACH sequence.
     out_cell.common_scs            = in_cell.common_scs;
-    prach_configuration prach_info = prach_configuration_get(frequency_range::FR1,
+    prach_configuration prach_info = prach_configuration_get(band_helper::get_freq_range(in_cell.band.value()),
                                                              band_helper::get_duplex_mode(in_cell.band.value()),
                                                              in_cell.prach_cfg.prach_config_index.value());
     out_cell.prach_format          = prach_info.format;
@@ -104,54 +104,25 @@ static std::vector<ru_sdr_cell_validation_config> get_ru_sdr_validation_dependen
   return out_cfg;
 }
 
-static bool validate_expert_execution_unit_config(const ru_dummy_unit_config&      config,
-                                                  const os_sched_affinity_bitmask& available_cpus)
+bool srsran::validate_dynamic_o_du_unit_config(const dynamic_o_du_unit_config& config)
 {
-  auto validate_cpu_range = [](const os_sched_affinity_bitmask& allowed_cpus_mask,
-                               const os_sched_affinity_bitmask& mask,
-                               const std::string&               name) {
-    auto invalid_cpu_ids = mask.subtract(allowed_cpus_mask);
-    if (not invalid_cpu_ids.empty()) {
-      fmt::print("CPU cores {} selected in '{}' option doesn't belong to available cpuset.\n", invalid_cpu_ids, name);
-      return false;
-    }
-
-    return true;
-  };
-
-  for (const auto& cell : config.cell_affinities) {
-    if (!validate_cpu_range(available_cpus, cell.ru_cpu_cfg.mask, "ru_cpus")) {
-      return false;
-    }
-  }
-  return true;
-}
-
-bool srsran::validate_dynamic_o_du_unit_config(const dynamic_o_du_unit_config&  config,
-                                               const os_sched_affinity_bitmask& available_cpus)
-{
-  if (!validate_o_du_high_config(config.odu_high_cfg, available_cpus)) {
+  if (!validate_o_du_high_config(config.odu_high_cfg)) {
     return false;
   }
 
   auto du_low_dependencies = get_du_low_validation_dependencies(config.odu_high_cfg.du_high_cfg.config);
-  if (!validate_du_low_config(config.du_low_cfg, du_low_dependencies, available_cpus)) {
+  if (!validate_du_low_config(config.du_low_cfg, du_low_dependencies)) {
     return false;
   }
 
-  if (std::holds_alternative<ru_ofh_unit_parsed_config>(config.ru_cfg)) {
+  if (auto* ru_ofh = std::get_if<ru_ofh_unit_parsed_config>(&config.ru_cfg)) {
     auto ru_ofh_dependencies = get_ru_ofh_validation_dependencies(config.odu_high_cfg.du_high_cfg.config);
-    return validate_ru_ofh_config(
-        std::get<ru_ofh_unit_parsed_config>(config.ru_cfg).config, ru_ofh_dependencies, available_cpus);
+    return validate_ru_ofh_config(ru_ofh->config, ru_ofh_dependencies);
   }
 
-  if (std::holds_alternative<ru_sdr_unit_config>(config.ru_cfg)) {
+  if (auto* ru_sdr = std::get_if<ru_sdr_unit_config>(&config.ru_cfg)) {
     auto ru_sdr_dependencies = get_ru_sdr_validation_dependencies(config.odu_high_cfg.du_high_cfg.config);
-    return validate_ru_sdr_config(std::get<ru_sdr_unit_config>(config.ru_cfg), ru_sdr_dependencies, available_cpus);
-  }
-
-  if (!validate_expert_execution_unit_config(std::get<ru_dummy_unit_config>(config.ru_cfg), available_cpus)) {
-    return false;
+    return validate_ru_sdr_config(*ru_sdr, ru_sdr_dependencies);
   }
 
   return true;

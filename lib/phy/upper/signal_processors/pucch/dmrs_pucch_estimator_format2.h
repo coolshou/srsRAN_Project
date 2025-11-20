@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,8 +23,8 @@
 #pragma once
 
 #include "srsran/phy/upper/sequence_generators/pseudo_random_generator.h"
-#include "srsran/phy/upper/signal_processors/dmrs_pucch_estimator.h"
-#include "srsran/phy/upper/signal_processors/port_channel_estimator.h"
+#include "srsran/phy/upper/signal_processors/channel_estimator/port_channel_estimator.h"
+#include "srsran/phy/upper/signal_processors/pucch/dmrs_pucch_estimator.h"
 
 namespace srsran {
 

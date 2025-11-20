@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -77,6 +77,11 @@ protected:
   // PUCCH Demodulator.
   static std::unique_ptr<pucch_demodulator> demodulator;
 
+  // Default constructor - initializes the resource grid with the maximum size possible.
+  PucchDemodulatorFixture() : ::testing::TestWithParam<ParamType>(), rg_spy(MAX_PORTS, MAX_NSYMB_PER_SLOT, MAX_NOF_PRBS)
+  {
+  }
+
   static void SetUpTestSuite()
   {
     if (!demodulator) {
@@ -84,7 +89,7 @@ protected:
       std::shared_ptr<channel_equalizer_factory> equalizer_factory = create_channel_equalizer_generic_factory();
       ASSERT_NE(equalizer_factory, nullptr) << "Cannot create equalizer factory";
 
-      std::shared_ptr<channel_modulation_factory> demod_factory = create_channel_modulation_sw_factory();
+      std::shared_ptr<demodulation_mapper_factory> demod_factory = create_demodulation_mapper_factory();
       ASSERT_NE(demod_factory, nullptr) << "Cannot create channel modulation factory";
 
       std::shared_ptr<pseudo_random_generator_factory> prg_factory = create_pseudo_random_generator_sw_factory();

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -33,6 +33,8 @@
 namespace srsran {
 
 class timer_manager;
+class mac_metrics_notifier;
+class mac_clock_controller;
 
 /// \brief Implementation-specific parameters used to tune MAC operation.
 struct mac_expert_config {
@@ -52,6 +54,14 @@ struct mac_expert_config {
 
 /// \brief Configuration passed to MAC during its instantiation.
 struct mac_config {
+  struct metrics_config {
+    std::chrono::milliseconds period{1000};
+    bool                      mac_enabled;
+    bool                      sched_enabled;
+    unsigned                  max_nof_ue_events = 64;
+    mac_metrics_notifier&     notifier;
+  };
+
   mac_ul_ccch_notifier&                 ul_ccch_notifier;
   srs_du::du_high_ue_executor_mapper&   ue_exec_mapper;
   srs_du::du_high_cell_executor_mapper& cell_exec_mapper;
@@ -59,10 +69,10 @@ struct mac_config {
   mac_result_notifier&                  phy_notifier;
   mac_expert_config                     mac_cfg;
   mac_pcap&                             pcap;
+  mac_clock_controller&                 timers;
+  metrics_config                        metrics;
   // Parameters passed to MAC scheduler.
-  scheduler_expert_config     sched_cfg;
-  scheduler_metrics_notifier& metric_notifier;
-  timer_manager&              timers;
+  scheduler_expert_config sched_cfg;
 };
 
 } // namespace srsran

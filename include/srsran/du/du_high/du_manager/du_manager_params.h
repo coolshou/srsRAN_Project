@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -29,7 +29,8 @@
 #include "srsran/du/du_high/du_test_mode_config.h"
 #include "srsran/f1ap/du/f1ap_du.h"
 #include "srsran/f1u/du/f1u_gateway.h"
-#include "srsran/mac/mac.h"
+#include "srsran/mac/mac_manager.h"
+#include "srsran/mac/mac_ue_control_information_handler.h"
 #include "srsran/pcap/rlc_pcap.h"
 #include "srsran/ran/gnb_du_id.h"
 #include "srsran/rlc/rlc_metrics.h"
@@ -39,8 +40,12 @@
 namespace srsran {
 
 class timer_manager;
+class mac_metrics_notifier;
+class scheduler_metrics_notifier;
 
 namespace srs_du {
+
+class du_metrics_notifier;
 
 struct du_manager_params {
   struct ran_params {
@@ -62,6 +67,7 @@ struct du_manager_params {
   struct f1ap_config_params {
     f1ap_connection_manager& conn_mng;
     f1ap_ue_context_manager& ue_mng;
+    f1ap_metrics_collector&  metrics;
   };
 
   struct f1u_config_params {
@@ -77,18 +83,27 @@ struct du_manager_params {
   };
 
   struct mac_config_params {
-    mac_cell_manager&       cell_mng;
-    mac_ue_configurator&    ue_cfg;
+    /// Interface to configure the MAC layer.
+    mac_manager&            mgr;
     scheduler_expert_config sched_cfg;
   };
 
-  ran_params          ran;
-  service_params      services;
-  f1ap_config_params  f1ap;
-  f1u_config_params   f1u;
-  rlc_config_params   rlc;
-  mac_config_params   mac;
-  du_test_mode_config test_cfg;
+  struct metrics_config_params {
+    std::chrono::milliseconds period{1000};
+    du_metrics_notifier*      du_metrics    = nullptr;
+    bool                      f1ap_enabled  = false;
+    bool                      mac_enabled   = false;
+    bool                      sched_enabled = false;
+  };
+
+  ran_params            ran;
+  service_params        services;
+  f1ap_config_params    f1ap;
+  f1u_config_params     f1u;
+  rlc_config_params     rlc;
+  mac_config_params     mac;
+  metrics_config_params metrics;
+  du_test_mode_config   test_cfg;
 };
 
 } // namespace srs_du

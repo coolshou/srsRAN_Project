@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -45,7 +45,7 @@ public:
   /// The number of elements to deprecode \f$M_{sc}\f$ determines the number of resource blocks
   /// \f$M_{RB} = \frac{M_{sc}}{N_{sc}^{RB}}\f$.
   ///
-  /// The function \ref is_transform_precoding_nof_prb_valid determines whether a number of resource blocks is valid.
+  /// The function \ref transform_precoding::is_nof_prbs_valid determines whether a number of resource blocks is valid.
   ///
   /// \param[out] out Transform deprecoding output.
   /// \param[in]  in  Transform deprecoding input.

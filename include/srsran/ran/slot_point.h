@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -28,10 +28,10 @@
 
 namespace srsran {
 
-/// Number of subframers per frame. This constant doesn't depend on the numerology used.
+/// Number of subframes per frame. This constant doesn't depend on the numerology used.
 constexpr uint32_t NOF_SUBFRAMES_PER_FRAME = 10;
 
-/// Number of system Frame Number values.
+/// Number of System Frame Number (SFN) values.
 constexpr size_t NOF_SFNS = 1024;
 
 /// Duration of a subframe in milliseconds.
@@ -60,7 +60,7 @@ public:
   constexpr slot_point(uint32_t numerology, uint32_t count) : numerology_val(numerology), count_val(count)
   {
     srsran_assert(numerology < NOF_NUMEROLOGIES, "Invalid numerology idx={} passed", numerology);
-    srsran_assert(count < nof_slots_per_system_frame(), "Invalid slot count={} passed", count);
+    srsran_assert(count < nof_slots_per_hyper_system_frame(), "Invalid slot count={} passed", count);
   }
 
   /// Takes a SCS and total count value.
@@ -115,10 +115,10 @@ public:
   constexpr uint32_t slot_index() const { return static_cast<uint32_t>(count_val) % nof_slots_per_frame(); }
 
   /// Radio Frame Number. Value: (0..1023).
-  constexpr uint32_t sfn() const { return static_cast<uint32_t>(count_val) / nof_slots_per_frame(); }
+  constexpr uint32_t sfn() const { return (static_cast<uint32_t>(count_val) / nof_slots_per_frame()) % NOF_SFNS; }
 
-  /// Number of slots per system frame.
-  constexpr uint32_t nof_slots_per_system_frame() const { return nof_slots_per_frame() * NOF_SFNS; }
+  /// Number of slots per hyper system frame. Values: (0..1023).
+  constexpr uint32_t nof_slots_per_hyper_system_frame() const { return nof_slots_per_frame() * NOF_SFNS; }
 
   /// Number of slots present in a subframe. Depends on numerology.
   constexpr uint32_t nof_slots_per_subframe() const { return 1U << static_cast<uint32_t>(numerology_val); }
@@ -132,6 +132,7 @@ public:
   /// Conversion of slot_point to system slot.
   constexpr uint32_t system_slot() const { return count_val; }
   constexpr uint32_t to_uint() const { return count_val; }
+  constexpr uint32_t count() const { return count_val; }
   constexpr explicit operator uint32_t() const { return count_val; }
 
   /// Get Half Radio Frame size in number of slots.
@@ -148,42 +149,42 @@ public:
 
   /// Equality comparison of two slot_point objects. Two slot points are equal if their numerology, SFN and slot index
   /// have the same value.
-  constexpr bool operator==(const slot_point& other) const
+  constexpr bool operator==(slot_point other) const
   {
     return other.count_val == count_val and other.numerology_val == numerology_val;
   }
 
   /// Inequality comparison of two slot_point objects.
-  constexpr bool operator!=(const slot_point& other) const { return not(*this == other); }
+  constexpr bool operator!=(slot_point other) const { return not(*this == other); }
 
   /// Checks if "lhs" slot point is lower than "rhs". It assumes that both "lhs" and "rhs" use the same numerology
   /// This comparison accounts for the wrap-around of both slot index and SFNs. The ambiguity range of the comparison
   /// is equal to half of the total number of slots in a hyperframe.
-  constexpr bool operator<(const slot_point& other) const
+  constexpr bool operator<(slot_point other) const
   {
     srsran_assert(numerology() == other.numerology(), "Comparing slots of different numerologies");
     int v = static_cast<int>(other.count_val) - static_cast<int>(count_val);
     if (v > 0) {
-      return (v < (int)nof_slots_per_system_frame() / 2);
+      return (v < (int)nof_slots_per_hyper_system_frame() / 2);
     }
-    return (v < -(int)nof_slots_per_system_frame() / 2);
+    return (v < -(int)nof_slots_per_hyper_system_frame() / 2);
   }
 
   /// Other lower/higher comparisons that build on top of operator== and operator<.
-  constexpr bool operator<=(const slot_point& other) const { return (*this == other) or (*this < other); }
-  constexpr bool operator>=(const slot_point& other) const { return not(*this < other); }
-  constexpr bool operator>(const slot_point& other) const { return (*this != other) and *this >= other; }
+  constexpr bool operator<=(slot_point other) const { return (*this == other) or (*this < other); }
+  constexpr bool operator>=(slot_point other) const { return not(*this < other); }
+  constexpr bool operator>(slot_point other) const { return (*this != other) and *this >= other; }
 
   /// Implements the subtraction of two slot points.
   /// @return a signed integer that is positive if "lhs" is higher than "rhs", zero if equal, and negative otherwise.
-  constexpr slot_difference operator-(const slot_point& other) const
+  constexpr slot_difference operator-(slot_point other) const
   {
     int a = static_cast<int>(count_val) - static_cast<int>(other.count_val);
-    if (a >= (int)nof_slots_per_system_frame() / 2) {
-      return a - nof_slots_per_system_frame();
+    if (a >= (int)nof_slots_per_hyper_system_frame() / 2) {
+      return a - nof_slots_per_hyper_system_frame();
     }
-    if (a < -(int)nof_slots_per_system_frame() / 2) {
-      return a + nof_slots_per_system_frame();
+    if (a < -(int)nof_slots_per_hyper_system_frame() / 2) {
+      return a + nof_slots_per_hyper_system_frame();
     }
     return a;
   }
@@ -192,7 +193,7 @@ public:
   slot_point& operator++()
   {
     count_val++;
-    if (count_val == nof_slots_per_system_frame()) {
+    if (count_val == nof_slots_per_hyper_system_frame()) {
       count_val = 0;
     }
     return *this;
@@ -200,7 +201,7 @@ public:
   slot_point operator++(int)
   {
     slot_point ret{*this};
-    this->     operator++();
+    this->operator++();
     return ret;
   }
 
@@ -208,12 +209,12 @@ public:
   template <typename Unsigned, std::enable_if_t<std::is_unsigned<Unsigned>::value, int> = 0>
   slot_point& operator+=(Unsigned jump)
   {
-    count_val = (count_val + jump) % nof_slots_per_system_frame();
+    count_val = (count_val + jump) % nof_slots_per_hyper_system_frame();
     return *this;
   }
   slot_point& operator+=(int jump)
   {
-    const int nof_slots = static_cast<int>(nof_slots_per_system_frame());
+    const int nof_slots = static_cast<int>(nof_slots_per_hyper_system_frame());
     int       tmp       = (static_cast<int>(count_val) + jump) % nof_slots;
     count_val           = tmp + (tmp < 0 ? nof_slots : 0);
     return *this;
@@ -305,9 +306,10 @@ struct formatter<srsran::slot_point> {
     return ctx.begin();
   }
   template <typename FormatContext>
-  auto format(srsran::slot_point slot, FormatContext& ctx)
+  auto format(srsran::slot_point slot, FormatContext& ctx) const
   {
     return format_to(ctx.out(), "{}.{}", slot.sfn(), slot.slot_index());
   }
 };
+
 } // namespace fmt

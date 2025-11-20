@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -36,10 +36,20 @@ class dlt_pcap
 public:
   virtual ~dlt_pcap() = default;
 
-  virtual void close()                           = 0;
-  virtual bool is_write_enabled() const          = 0;
+  /// Flush all the pending writes to the PCAP file.
+  virtual void flush() = 0;
+
+  /// Close the PCAP file.
+  virtual void close() = 0;
+
+  /// Whether writing to the PCAP file is enabled.
+  virtual bool is_write_enabled() const = 0;
+
+  /// Push a PDU to be written to the PCAP file.
   virtual void push_pdu(const_span<uint8_t> pdu) = 0;
-  virtual void push_pdu(byte_buffer pdu)         = 0;
+
+  /// Push a PDU to be written to the PCAP file.
+  virtual void push_pdu(byte_buffer pdu) = 0;
 };
 
 /// \brief Creates a layer DLT PCAP sink that writes the incoming PDUs to a pcap file.
@@ -54,6 +64,7 @@ std::unique_ptr<dlt_pcap> create_e2ap_pcap(const std::string& filename, task_exe
 class null_dlt_pcap : public dlt_pcap
 {
 public:
+  void flush() override {}
   void close() override {}
   bool is_write_enabled() const override { return false; }
   void push_pdu(const_span<uint8_t> pdu) override {}

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -44,7 +44,8 @@ public:
                                               search_space_id               ss_id,
                                               aggregation_level             aggr_lvl) override
   {
-    TESTASSERT_EQ(ss_id, slot_alloc.cfg.dl_cfg_common.init_dl_bwp.pdcch_common.ra_search_space_id);
+    TESTASSERT_EQ(fmt::underlying(ss_id),
+                  fmt::underlying(slot_alloc.cfg.dl_cfg_common.init_dl_bwp.pdcch_common.ra_search_space_id));
     if (fail_pdcch_alloc_cond and fail_pdcch_alloc_cond(slot_alloc.slot)) {
       return nullptr;
     }
@@ -115,12 +116,11 @@ public:
 
   void slot_indication(slot_point sl_tx) override { next_uci_allocation.reset(); }
 
-  std::optional<uci_allocation> alloc_uci_harq_ue(cell_resource_allocator&     res_alloc,
-                                                  rnti_t                       crnti,
-                                                  const ue_cell_configuration& ue_cell_cfg,
-                                                  unsigned                     k0,
-                                                  span<const uint8_t>          k1_list,
-                                                  const pdcch_dl_information*  fallback_dci_info = nullptr) override
+  std::optional<uci_allocation> alloc_harq_ack(cell_resource_allocator&     res_alloc,
+                                               rnti_t                       crnti,
+                                               const ue_cell_configuration& ue_cell_cfg,
+                                               unsigned                     k0,
+                                               span<const uint8_t>          k1_list) override
   {
     return next_uci_allocation;
   }
@@ -132,40 +132,40 @@ public:
   {
   }
 
-  void uci_allocate_sr_opportunity(cell_slot_resource_allocator& slot_alloc,
-                                   rnti_t                        crnti,
-                                   const ue_cell_configuration&  ue_cell_cfg) override
+  void alloc_sr_opportunity(cell_slot_resource_allocator& slot_alloc,
+                            rnti_t                        crnti,
+                            const ue_cell_configuration&  ue_cell_cfg) override
   {
   }
 
-  void uci_allocate_csi_opportunity(cell_slot_resource_allocator& slot_alloc,
-                                    rnti_t                        crnti,
-                                    const ue_cell_configuration&  ue_cell_cfg) override
+  void alloc_csi_opportunity(cell_slot_resource_allocator& slot_alloc,
+                             rnti_t                        crnti,
+                             const ue_cell_configuration&  ue_cell_cfg) override
   {
   }
 
-  uint8_t get_scheduled_pdsch_counter_in_ue_uci(cell_slot_resource_allocator& slot_alloc, rnti_t crnti) override
-  {
-    return 0;
-  }
+  uint8_t get_scheduled_pdsch_counter_in_ue_uci(slot_point uci_slot, rnti_t crnti) override { return 0; }
 
-  bool has_uci_harq_on_common_pucch_res(rnti_t crnti, slot_point sl_tx) override { return false; }
+  bool has_harq_ack_on_common_pucch_res(rnti_t crnti, slot_point sl_tx) override { return false; }
 };
 
 class sched_cfg_dummy_notifier : public sched_configuration_notifier
 {
 public:
-  std::optional<du_ue_index_t> last_ue_index_cfg;
-  std::optional<du_ue_index_t> last_ue_index_deleted;
+  std::optional<du_cell_index_t> last_rem_cell;
+  std::optional<du_ue_index_t>   last_ue_index_cfg;
+  std::optional<du_ue_index_t>   last_ue_index_deleted;
 
   void on_ue_config_complete(du_ue_index_t ue_index, bool ue_creation_result) override { last_ue_index_cfg = ue_index; }
-  void on_ue_delete_response(du_ue_index_t ue_index) override { last_ue_index_deleted = ue_index; }
+  void on_ue_deletion_completed(du_ue_index_t ue_index) override { last_ue_index_deleted = ue_index; }
 };
 
 class scheduler_ue_metrics_dummy_notifier : public scheduler_metrics_notifier
 {
 public:
-  void report_metrics(const scheduler_cell_metrics& ue_metrics) override {}
+  std::optional<scheduler_cell_metrics> last_reported_metrics;
+
+  void report_metrics(const scheduler_cell_metrics& ue_metrics) override { last_reported_metrics = ue_metrics; }
 };
 
 class scheduler_harq_timeout_dummy_notifier : public harq_timeout_notifier

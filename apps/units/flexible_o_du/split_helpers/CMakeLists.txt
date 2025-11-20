@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -18,19 +18,21 @@
 # and at http://www.gnu.org/licenses/.
 #
 
+add_subdirectory(metrics)
+
 set(SOURCES
         flexible_o_du_factory.cpp
         flexible_o_du_impl.cpp
-        multicell_flexible_o_du_factory.cpp
-        multicell_flexible_o_du_impl.cpp
-        o_du_high_factory.cpp)
+        flexible_o_du_metrics_aggregator.cpp
+        flexible_o_du_ntn_configuration_manager_factory.cpp
+        commands/ntn_config_update_remote_command_factory.cpp)
 
-add_library(srsran_flexible_du_helpers STATIC ${SOURCES})
-target_include_directories(srsran_flexible_du_helpers PRIVATE ${CMAKE_SOURCE_DIR})
-
-target_link_libraries(srsran_flexible_du_helpers
+add_library(srsran_flexible_o_du_helpers STATIC ${SOURCES})
+target_include_directories(srsran_flexible_o_du_helpers PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(srsran_flexible_o_du_helpers
         srsran_o_du
         srsran_pcap
         srsran_app_services
         srsran_o_du_low_unit_helpers
-        srsran_o_du_high_unit_helpers)
+        srsran_o_du_high_unit_helpers
+        srsran_flexible_o_du_unit_metrics_helpers)

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -181,7 +181,7 @@ struct formatter<srsran::sampling_rate> {
     return ctx.begin();
   }
   template <typename FormatContext>
-  auto format(srsran::sampling_rate srate, FormatContext& ctx)
+  auto format(srsran::sampling_rate srate, FormatContext& ctx) const
   {
     return format_to(ctx.out(), "{:.2f}MHz", srate.to_MHz());
   }

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,15 +21,22 @@
  */
 
 #include "cu_appconfig_yaml_writer.h"
-#include "apps/services/logger/logger_appconfig_yaml_writer.h"
+#include "apps/helpers/f1u/f1u_config_yaml_writer.h"
+#include "apps/helpers/logger/logger_appconfig_yaml_writer.h"
+#include "apps/helpers/tracing/tracer_appconfig_yaml_writer.h"
+#include "apps/services/app_execution_metrics/executor_metrics_config_yaml_writer.h"
+#include "apps/services/app_resource_usage/app_resource_usage_config_yaml_writer.h"
+#include "apps/services/buffer_pool/buffer_pool_config_yaml_writer.h"
+#include "apps/services/metrics/metrics_config_yaml_writer.h"
 #include "cu_appconfig.h"
 
 using namespace srsran;
 
-static void fill_cu_appconfig_buffer_pool_section(YAML::Node node, const buffer_pool_appconfig& config)
+static void fill_cu_appconfig_remote_control_section(YAML::Node node, const remote_control_appconfig& config)
 {
-  node["nof_segments"] = config.nof_segments;
-  node["segment_size"] = config.segment_size;
+  node["enabled"]      = config.enabled;
+  node["bind_address"] = config.bind_addr;
+  node["port"]         = config.port;
 }
 
 static void fill_cu_appconfig_f1ap_section(YAML::Node node, const srs_cu::cu_f1ap_appconfig& config)
@@ -39,19 +46,21 @@ static void fill_cu_appconfig_f1ap_section(YAML::Node node, const srs_cu::cu_f1a
   f1ap_node["bind_address"] = config.bind_addr;
 }
 
-static void fill_cu_appconfig_nru_section(YAML::Node node, const srs_cu::cu_nru_appconfig& config)
+static void fill_cu_appconfig_f1u_section(YAML::Node& node, const f1u_sockets_appconfig& config)
 {
-  YAML::Node cu_up_node       = node["cu_up"];
-  YAML::Node nru_node         = cu_up_node["nru"];
-  nru_node["udp_max_rx_msgs"] = config.udp_rx_max_msgs;
-  nru_node["bind_addr"]       = config.bind_addr;
-  nru_node["ext_addr"]        = config.ext_addr;
+  YAML::Node cu_up_node = node["cu_up"];
+  fill_f1u_config_yaml_schema(cu_up_node, config);
 }
 
 void srsran::fill_cu_appconfig_in_yaml_schema(YAML::Node& node, const cu_appconfig& config)
 {
+  app_services::fill_app_resource_usage_config_in_yaml_schema(node, config.metrics_cfg.rusage_config);
+  app_services::fill_metrics_appconfig_in_yaml_schema(node, config.metrics_cfg.metrics_service_cfg);
+  app_services::fill_app_exec_metrics_config_in_yaml_schema(node, config.metrics_cfg.executors_metrics_cfg);
+  app_services::fill_buffer_pool_config_in_yaml_schema(node, config.buffer_pool_config);
   fill_logger_appconfig_in_yaml_schema(node, config.log_cfg);
-  fill_cu_appconfig_buffer_pool_section(node["buffer_pool"], config.buffer_pool_config);
+  fill_tracer_appconfig_in_yaml_schema(node, config.trace_cfg);
+  fill_cu_appconfig_remote_control_section(node["remote_control"], config.remote_control_config);
   fill_cu_appconfig_f1ap_section(node, config.f1ap_cfg);
-  fill_cu_appconfig_nru_section(node, config.nru_cfg);
+  fill_cu_appconfig_f1u_section(node, config.f1u_cfg);
 }

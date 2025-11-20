@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -40,6 +40,3 @@
 
 /// Ensures a function is always inlinable.
 #define SRSRAN_FORCE_INLINE __attribute__((always_inline)) inline
-
-/// Marks a symbol as weak.
-#define SRSRAN_WEAK_SYMB __attribute__((weak))

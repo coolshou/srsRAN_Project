@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -32,6 +32,7 @@
 #include "srsran/cu_cp/cu_cp_types.h"
 #include "srsran/cu_cp/du_processor_context.h"
 #include "srsran/f1ap/cu_cp/f1ap_cu.h"
+#include "srsran/f1ap/cu_cp/f1ap_cu_configuration_update.h"
 #include "srsran/ran/nr_cgi.h"
 #include "srsran/support/executors/task_executor.h"
 #include <string>
@@ -42,21 +43,20 @@ namespace srs_cu_cp {
 class du_processor_impl : public du_processor, public du_metrics_handler, public du_processor_mobility_handler
 {
 public:
-  du_processor_impl(du_processor_config_t               du_processor_config_,
-                    du_processor_cu_cp_notifier&        cu_cp_notifier_,
-                    f1ap_message_notifier&              f1ap_pdu_notifier_,
-                    rrc_du_measurement_config_notifier& rrc_du_cu_cp_notifier,
-                    common_task_scheduler&              common_task_sched_,
-                    ue_manager&                         ue_mng_);
+  du_processor_impl(du_processor_config_t        du_processor_config_,
+                    du_processor_cu_cp_notifier& cu_cp_notifier_,
+                    f1ap_message_notifier&       f1ap_pdu_notifier_,
+                    common_task_scheduler&       common_task_sched_,
+                    ue_manager&                  ue_mng_);
   ~du_processor_impl() override = default;
 
   // getter functions
 
-  f1ap_cu& get_f1ap_handler() override { return *f1ap; };
+  f1ap_cu& get_f1ap_handler() override { return *f1ap; }
 
-  rrc_du& get_rrc_du_handler() override { return *rrc; };
+  rrc_du& get_rrc_du_handler() override { return *rrc; }
 
-  size_t get_nof_ues() const { return ue_mng.get_nof_du_ues(cfg.du_index); };
+  size_t get_nof_ues() const { return ue_mng.get_nof_du_ues(cfg.du_index); }
 
   // du_processor_mobility_manager_interface
   std::optional<nr_cell_global_id_t> get_cgi(pci_t pci) override;
@@ -70,7 +70,11 @@ public:
     return cfg.du_cfg_hdlr->has_context() ? &cfg.du_cfg_hdlr->get_context() : nullptr;
   }
 
-  metrics_report::du_info handle_du_metrics_report_request() const override;
+  // du_processor_configuration_update_interface
+  async_task<f1ap_gnb_cu_configuration_update_response>
+  handle_configuration_update(const f1ap_gnb_cu_configuration_update& request) override;
+
+  cu_cp_metrics_report::du_info handle_du_metrics_report_request() const override;
 
   du_processor_mobility_handler& get_mobility_handler() override { return *this; }
   du_metrics_handler&            get_metrics_handler() override { return *this; }

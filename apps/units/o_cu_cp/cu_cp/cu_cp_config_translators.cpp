@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -60,6 +60,9 @@ static std::map<five_qi_t, srs_cu_cp::cu_cp_qos_config> generate_cu_cp_qos_confi
     } else {
       report_error("Invalid RLC mode: {}, mode={}\n", qos.five_qi, qos.rlc.mode);
     }
+
+    out_pdcp.integrity_protection_required = false;
+    out_pdcp.ciphering_required            = true;
 
     // > Tx
     // >> SN size
@@ -206,6 +209,8 @@ generate_cu_cp_periodical_report_config(const cu_cp_unit_report_config& report_c
   periodical.include_beam_meass          = true;
   periodical.use_allowed_cell_list       = false;
 
+  periodical.periodic_ho_rsrp_offset = report_cfg_item.periodic_ho_rsrp_offset;
+
   return periodical;
 }
 
@@ -336,6 +341,9 @@ srs_cu_cp::cu_cp_configuration srsran::generate_cu_cp_config(const cu_cp_unit_co
   out_cfg.node.gnb_id        = cu_cfg.gnb_id;
   out_cfg.node.ran_node_name = cu_cfg.ran_node_name;
 
+  out_cfg.ngap.amf_reconnection_retry_time = std::chrono::milliseconds{cu_cfg.amf_config.amf_reconnection_retry_time};
+  out_cfg.ngap.no_core                     = cu_cfg.amf_config.no_core;
+
   {
     std::vector<srs_cu_cp::supported_tracking_area> supported_tas;
     for (const auto& supported_ta : cu_cfg.amf_config.amf.supported_tas) {
@@ -351,9 +359,10 @@ srs_cu_cp::cu_cp_configuration srsran::generate_cu_cp_config(const cu_cp_unit_co
       }
       supported_tas.push_back({supported_ta.tac, plmn_list});
     }
-    out_cfg.ngaps.push_back(srs_cu_cp::cu_cp_configuration::ngap_params{nullptr, supported_tas});
+    out_cfg.ngap.ngaps.push_back(srs_cu_cp::cu_cp_configuration::ngap_config{nullptr, supported_tas});
   }
 
+#ifndef SRSRAN_HAS_ENTERPRISE
   for (const auto& cfg : cu_cfg.extra_amfs) {
     std::vector<srs_cu_cp::supported_tracking_area> supported_tas;
     for (const auto& supported_ta : cfg.supported_tas) {
@@ -369,11 +378,16 @@ srs_cu_cp::cu_cp_configuration srsran::generate_cu_cp_config(const cu_cp_unit_co
       }
       supported_tas.push_back({supported_ta.tac, plmn_list});
     }
-    out_cfg.ngaps.push_back(srs_cu_cp::cu_cp_configuration::ngap_params{nullptr, supported_tas});
+    out_cfg.ngap.ngaps.push_back(srs_cu_cp::cu_cp_configuration::ngap_config{nullptr, supported_tas});
   }
+#else
+  if (!cu_cfg.extra_amfs.empty()) {
+    report_error("Invalid CU-CP configuration. \"extra_amfs\" parameter is only supported in Enterprise version.\n");
+  }
+#endif // SRSRAN_HAS_ENTERPRISE
 
   out_cfg.rrc.force_reestablishment_fallback = cu_cfg.rrc_config.force_reestablishment_fallback;
-  out_cfg.rrc.rrc_procedure_timeout_ms       = std::chrono::milliseconds{cu_cfg.rrc_config.rrc_procedure_timeout_ms};
+  out_cfg.rrc.rrc_procedure_guard_time_ms    = std::chrono::milliseconds{cu_cfg.rrc_config.rrc_procedure_guard_time_ms};
 
   out_cfg.bearers.drb_config = generate_cu_cp_qos_config(cu_cfg);
 
@@ -381,26 +395,36 @@ srs_cu_cp::cu_cp_configuration srsran::generate_cu_cp_config(const cu_cp_unit_co
   out_cfg.security.enc_algo_pref_list = generate_preferred_ciphering_algorithms_list(cu_cfg);
   if (!from_string(out_cfg.security.default_security_indication.integrity_protection_ind,
                    cu_cfg.security_config.integrity_protection)) {
-    report_error("Invalid value for integrity_protection={}\n", cu_cfg.security_config.integrity_protection);
+    report_error("Invalid value for integrity_protection={}.\n", cu_cfg.security_config.integrity_protection);
   }
   if (!from_string(out_cfg.security.default_security_indication.confidentiality_protection_ind,
                    cu_cfg.security_config.confidentiality_protection)) {
-    report_error("Invalid value for confidentiality_protection={}\n",
+    report_error("Invalid value for confidentiality_protection={}.\n",
                  cu_cfg.security_config.confidentiality_protection);
   }
 
   // Timers
   out_cfg.ue.inactivity_timer              = std::chrono::seconds{cu_cfg.inactivity_timer};
   out_cfg.ue.request_pdu_session_timeout   = std::chrono::seconds{cu_cfg.request_pdu_session_timeout};
-  out_cfg.metrics.statistics_report_period = std::chrono::seconds{cu_cfg.metrics.cu_cp_statistics_report_period};
+  out_cfg.metrics.statistics_report_period = std::chrono::seconds{cu_cfg.metrics.cu_cp_report_period};
+
+  // Metrics
+  out_cfg.metrics.layers_cfg.enable_ngap = cu_cfg.metrics.layers_cfg.enable_ngap;
+  out_cfg.metrics.layers_cfg.enable_rrc  = cu_cfg.metrics.layers_cfg.enable_rrc;
 
   // Mobility
   out_cfg.mobility.mobility_manager_config.trigger_handover_from_measurements =
       cu_cfg.mobility_config.trigger_handover_from_measurements;
+  out_cfg.mobility.mobility_manager_config.enable_ngap_metrics = cu_cfg.metrics.layers_cfg.enable_ngap;
+  out_cfg.mobility.mobility_manager_config.enable_rrc_metrics  = cu_cfg.metrics.layers_cfg.enable_rrc;
 
   // F1AP-CU config.
   out_cfg.f1ap.proc_timeout     = std::chrono::milliseconds{cu_cfg.f1ap_config.procedure_timeout};
   out_cfg.f1ap.json_log_enabled = cu_cfg.loggers.f1ap_json_enabled;
+
+  // E1AP-CU-CP config.
+  out_cfg.e1ap.proc_timeout     = std::chrono::milliseconds{cu_cfg.e1ap_config.procedure_timeout};
+  out_cfg.e1ap.json_log_enabled = cu_cfg.loggers.e1ap_json_enabled;
 
   // Convert appconfig's cell list into cell manager type.
   for (const auto& app_cfg_item : cu_cfg.mobility_config.cells) {
@@ -466,33 +490,40 @@ srs_cu_cp::cu_cp_configuration srsran::generate_cu_cp_config(const cu_cp_unit_co
 srs_cu_cp::n2_connection_client_config srsran::generate_n2_client_config(bool                              no_core,
                                                                          const cu_cp_unit_amf_config_item& amf_cfg,
                                                                          dlt_pcap&                         pcap_writer,
-                                                                         io_broker&                        broker)
+                                                                         io_broker&                        broker,
+                                                                         task_executor& io_rx_executor)
 {
   using no_core_mode_t = srs_cu_cp::n2_connection_client_config::no_core;
   using network_mode_t = srs_cu_cp::n2_connection_client_config::network;
   using ngap_mode_t    = std::variant<no_core_mode_t, network_mode_t>;
 
-  ngap_mode_t mode = no_core ? ngap_mode_t{no_core_mode_t{}} : ngap_mode_t{network_mode_t{broker}};
+  ngap_mode_t mode = no_core ? ngap_mode_t{no_core_mode_t{}} : ngap_mode_t{network_mode_t{broker, io_rx_executor}};
   if (not no_core) {
     network_mode_t& nw_mode = std::get<network_mode_t>(mode);
     nw_mode.amf_address     = amf_cfg.ip_addr;
     nw_mode.amf_port        = amf_cfg.port;
     nw_mode.bind_address    = amf_cfg.bind_addr;
     nw_mode.bind_interface  = amf_cfg.bind_interface;
-    if (amf_cfg.sctp_rto_initial >= 0) {
-      nw_mode.rto_initial = amf_cfg.sctp_rto_initial;
+    if (amf_cfg.sctp_rto_initial_ms >= 0) {
+      nw_mode.rto_initial = std::chrono::milliseconds{amf_cfg.sctp_rto_initial_ms};
     }
-    if (amf_cfg.sctp_rto_min >= 0) {
-      nw_mode.rto_min = amf_cfg.sctp_rto_min;
+    if (amf_cfg.sctp_rto_min_ms >= 0) {
+      nw_mode.rto_min = std::chrono::milliseconds{amf_cfg.sctp_rto_min_ms};
     }
-    if (amf_cfg.sctp_rto_max >= 0) {
-      nw_mode.rto_max = amf_cfg.sctp_rto_max;
+    if (amf_cfg.sctp_rto_max_ms >= 0) {
+      nw_mode.rto_max = std::chrono::milliseconds{amf_cfg.sctp_rto_max_ms};
     }
     if (amf_cfg.sctp_init_max_attempts >= 0) {
       nw_mode.init_max_attempts = amf_cfg.sctp_init_max_attempts;
     }
-    if (amf_cfg.sctp_max_init_timeo >= 0) {
-      nw_mode.max_init_timeo = amf_cfg.sctp_max_init_timeo;
+    if (amf_cfg.sctp_max_init_timeo_ms >= 0) {
+      nw_mode.max_init_timeo = std::chrono::milliseconds{amf_cfg.sctp_max_init_timeo_ms};
+    }
+    if (amf_cfg.sctp_hb_interval_ms >= 0) {
+      nw_mode.hb_interval = std::chrono::milliseconds{amf_cfg.sctp_hb_interval_ms};
+    }
+    if (amf_cfg.sctp_assoc_max_retx >= 0) {
+      nw_mode.assoc_max_rxt = amf_cfg.sctp_assoc_max_retx;
     }
     nw_mode.nodelay = amf_cfg.sctp_nodelay;
   }
@@ -502,6 +533,10 @@ srs_cu_cp::n2_connection_client_config srsran::generate_n2_client_config(bool   
 
 void srsran::fill_cu_cp_worker_manager_config(worker_manager_config& config, const cu_cp_unit_config& unit_cfg)
 {
+  // CU-CP executors are needed.
+  config.cu_cp_cfg.emplace();
+
+  // Enable PCAPs.
   auto& pcap_cfg = config.pcap_cfg;
   if (unit_cfg.pcap_cfg.e1ap.enabled) {
     pcap_cfg.is_e1ap_enabled = true;

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -30,7 +30,7 @@
 #include "srsran/ran/bs_channel_bandwidth.h"
 #include "srsran/ran/n_ta_offset.h"
 #include "srsran/ran/nr_band.h"
-#include "srsran/ran/ssb_properties.h"
+#include "srsran/ran/ssb/ssb_properties.h"
 #include <cstdint>
 #include <optional>
 
@@ -54,12 +54,12 @@ const std::array<nr_band, 60> all_nr_bands_fr1 = std::array<nr_band, 60>{
      nr_band::n92,  nr_band::n93,  nr_band::n94,  nr_band::n95, nr_band::n96, nr_band::n97, nr_band::n98, nr_band::n99,
      nr_band::n100, nr_band::n101, nr_band::n102, nr_band::n104}};
 
-constexpr inline uint16_t nr_band_to_uint(nr_band band)
+constexpr uint16_t nr_band_to_uint(nr_band band)
 {
   return static_cast<uint16_t>(band);
 }
 
-constexpr inline nr_band uint_to_nr_band(unsigned band)
+constexpr nr_band uint_to_nr_band(unsigned band)
 {
   return static_cast<nr_band>(band);
 }
@@ -84,6 +84,9 @@ bool is_band_for_shared_spectrum(nr_band band);
 /// \brief     Returns true if the band should be considered as for 40MHz minimum channel BW.
 /// \remark    As per TS 38.101, Table 5.2-1, only bands where Note 17 applies.
 bool is_band_40mhz_min_ch_bw_equivalent(nr_band band);
+
+/// \brief     Returns true if the band is an NTN band.
+bool is_ntn_band(nr_band band);
 
 /// \brief     Checks whether a Downlink ARFCN is valid for a given band.
 /// \param[in] band Given NR band.
@@ -145,6 +148,26 @@ ssb_pattern_case get_ssb_pattern(nr_band band, subcarrier_spacing scs);
 /// \param[in] scs SSB Subcarrier spacing.
 /// \param[in] nr_arfcn The DL ARFCN of \c F_REF, as per TS 38.104, Section 5.4.2.1.
 uint8_t get_ssb_l_max(nr_band band, subcarrier_spacing scs, uint32_t nr_arfcn);
+
+/// \brief  Gets the SS/PBCH block reference subcarrier spacing from a given frequency range.
+///
+/// The reference subcarrier spacing is 15 kHz for frequency range 1 where the SS/PBCH block subcarrier spacing is
+/// either 15 kHz or 30 kHz.
+///
+/// The reference subcarrier spacing is 60 kHz for frequency range 2 where the SS/PBCH block subcarrier spacing is
+/// either 120 kHz or 240 kHz.
+///
+/// See TS 38.104 Table 5.4.3.3-1 and Table 5.4.3.3-2 for frequency range 1 and 2 respectively.
+inline subcarrier_spacing get_ssb_ref_scs(frequency_range freq_range)
+{
+  return (freq_range == frequency_range::FR2) ? subcarrier_spacing::kHz60 : subcarrier_spacing::kHz15;
+}
+
+/// \brief  Gets the SS/PBCH reference subcarrier spacing from a SS/PBCH block subcarrier spacing.
+inline subcarrier_spacing get_ssb_ref_scs(subcarrier_spacing scs_ssb)
+{
+  return get_ssb_ref_scs((scs_ssb >= subcarrier_spacing::kHz60) ? frequency_range::FR2 : frequency_range::FR1);
+}
 
 /// \brief Selects the most suitable SSB subcarrier spacing valid for this band.
 ///
@@ -336,6 +359,9 @@ unsigned get_nof_coreset0_rbs_not_intersecting_ssb(unsigned              cset0_i
 /// \param[in] band is <em>NR operating band<\em>, as per TS 38.104, Table 5.2-1. Only FR1 values are supported.
 /// \return Value of n_ta_offset.
 n_ta_offset get_ta_offset(nr_band band);
+
+/// Returns the n_ta_offset for a given frequency range.
+n_ta_offset get_ta_offset(frequency_range freq_range);
 
 /// \brief Returns SSB ARFCN for a given cell configuration.
 /// \param[in] dl_arfcn is <em>DL-ARFCN<\em> corresponding to \f$F_{REF}\f$, as per TS 38.104, Section 5.4.2.1.

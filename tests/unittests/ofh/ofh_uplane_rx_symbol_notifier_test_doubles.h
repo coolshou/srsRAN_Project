@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -37,7 +37,7 @@ class uplane_rx_symbol_notifier_spy : public uplane_rx_symbol_notifier
 
 public:
   // See interface for documentation.
-  void on_new_uplink_symbol(const uplane_rx_symbol_context& context, shared_resource_grid grid) override
+  void on_new_uplink_symbol(const uplane_rx_symbol_context& context, shared_resource_grid grid, bool is_valid) override
   {
     new_uplink_symbol_function_called = true;
   }

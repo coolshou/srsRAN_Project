@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -41,8 +41,6 @@ struct ru_ofh_cell_validation_config {
 };
 
 /// Validates the given Open Fronthaul Radio Unit configuration. Returns true on success, false otherwise.
-bool validate_ru_ofh_config(const ru_ofh_unit_config&                 config,
-                            span<const ru_ofh_cell_validation_config> cell_config,
-                            const os_sched_affinity_bitmask&          available_cpus);
+bool validate_ru_ofh_config(const ru_ofh_unit_config& config, span<const ru_ofh_cell_validation_config> cell_config);
 
 } // namespace srsran

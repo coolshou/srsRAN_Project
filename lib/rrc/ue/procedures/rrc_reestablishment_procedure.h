@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -28,6 +28,7 @@
 #include "srsran/rrc/rrc_ue.h"
 #include "srsran/support/async/async_task.h"
 #include "srsran/support/async/eager_async_task.h"
+#include <chrono>
 
 namespace srsran {
 namespace srs_cu_cp {
@@ -43,6 +44,7 @@ public:
                                 rrc_ue_control_message_handler&          srb_notifier_,
                                 rrc_ue_context_update_notifier&          cu_cp_notifier_,
                                 rrc_ue_cu_cp_ue_notifier&                cu_cp_ue_notifier_,
+                                rrc_ue_event_notifier&                   metrics_notifier_,
                                 rrc_ue_ngap_notifier&                    ngap_notifier_,
                                 rrc_ue_event_manager&                    event_mng_,
                                 rrc_ue_logger&                           logger_);
@@ -67,6 +69,9 @@ private:
   /// \remark Send RRC Reestablishment, see section 5.3.7 in TS 36.331.
   void send_rrc_reestablishment();
 
+  /// \brief Enable ciphering for SRB1.
+  void enable_srb1_ciphering();
+
   async_task<void> handle_rrc_reestablishment_fallback();
 
   void log_rejected_reestablishment(const char* cause_str);
@@ -79,11 +84,13 @@ private:
   rrc_ue_control_message_handler&          srb_notifier;          // for creating SRBs
   rrc_ue_context_update_notifier&          cu_cp_notifier;        // notifier to the CU-CP
   rrc_ue_cu_cp_ue_notifier&                cu_cp_ue_notifier;     // notifier to the CU-CP UE
+  rrc_ue_event_notifier&                   metrics_notifier;      // metrics notifier
   rrc_ue_ngap_notifier&                    ngap_notifier;         // notifier to the NGAP
   rrc_ue_event_manager&                    event_mng;             // event manager for the RRC UE entity
   rrc_ue_logger&                           logger;
 
   const asn1::rrc_nr::pdcp_cfg_s          srb1_pdcp_cfg;
+  std::chrono::milliseconds               procedure_timeout{0};
   rrc_transaction                         transaction;
   eager_async_task<rrc_outcome>           task;
   rrc_ue_reestablishment_context_response old_ue_reest_context;

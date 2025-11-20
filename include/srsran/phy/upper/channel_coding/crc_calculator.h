@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -28,8 +28,8 @@
 namespace srsran {
 
 /// CRC cyclic generator polynomials identifiers.
-enum class crc_generator_poly {
-  CRC24A,
+enum class crc_generator_poly : uint8_t {
+  CRC24A = 0,
   CRC24B,
   CRC24C,
   CRC16,
@@ -39,7 +39,7 @@ enum class crc_generator_poly {
 };
 
 /// Returns the CRC size from its identifier.
-inline constexpr unsigned get_crc_size(crc_generator_poly poly)
+constexpr unsigned get_crc_size(crc_generator_poly poly)
 {
   switch (poly) {
     case crc_generator_poly::CRC24A:

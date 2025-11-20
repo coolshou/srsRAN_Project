@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "srsran/pdcp/pdcp_config.h"
 #include "srsran/ran/nr_cgi.h"
 #include "srsran/ran/qos/five_qi.h"
 #include "srsran/ran/qos/qos_flow_id.h"
@@ -33,38 +34,38 @@
 
 namespace srsran {
 
-// See TS 38.463 Section 9.3.1.21: PDU Session ID valid values: (0..255)
-static constexpr uint16_t MAX_NOF_PDU_SESSIONS = 256;
+/// See TS 38.463 Section 9.3.1.21: PDU Session ID valid values: (0..255)
+constexpr uint16_t MAX_NOF_PDU_SESSIONS = 256;
 
 /// \brief PDU Session ID.
 /// \remark See TS 38.463 Section 9.3.1.21: PDU Session ID valid values: (0..255)
 enum class pdu_session_id_t : uint16_t { min = 0, max = MAX_NOF_PDU_SESSIONS - 1, invalid = MAX_NOF_PDU_SESSIONS };
 
 /// Convert PDU Session ID type to integer.
-constexpr inline uint16_t pdu_session_id_to_uint(pdu_session_id_t id)
+constexpr uint16_t pdu_session_id_to_uint(pdu_session_id_t id)
 {
   return static_cast<uint16_t>(id);
 }
 
 /// Convert integer to PDU Session ID type.
-constexpr inline pdu_session_id_t uint_to_pdu_session_id(uint16_t idx)
+constexpr pdu_session_id_t uint_to_pdu_session_id(uint16_t idx)
 {
   return static_cast<pdu_session_id_t>(idx);
 }
 
 /// \brief RAN_UE_ID (non ASN1 type of RAN_UE_NGAP_ID).
 /// \remark See TS 38.413 Section 9.3.3.2: RAN_UE_NGAP_ID valid values: (0..2^32-1)
-static constexpr uint64_t MAX_NOF_RAN_UES = ((uint64_t)1 << 32);
+constexpr uint64_t MAX_NOF_RAN_UES = ((uint64_t)1 << 32);
 enum class ran_ue_id_t : uint64_t { min = 0, max = MAX_NOF_RAN_UES - 1, invalid = 0x1ffffffff };
 
 /// Convert RAN_UE_ID type to integer.
-inline uint64_t ran_ue_id_to_uint(ran_ue_id_t id)
+constexpr uint64_t ran_ue_id_to_uint(ran_ue_id_t id)
 {
   return static_cast<uint64_t>(id);
 }
 
 /// Convert integer to RAN_UE_ID type.
-inline ran_ue_id_t uint_to_ran_ue_id(std::underlying_type_t<ran_ue_id_t> id)
+constexpr ran_ue_id_t uint_to_ran_ue_id(std::underlying_type_t<ran_ue_id_t> id)
 {
   return static_cast<ran_ue_id_t>(id);
 }
@@ -155,13 +156,16 @@ struct security_indication_t {
 ///
 /// \param security_indication The security_indication to be checked.
 /// \return True if either integrity or confidentiality are set to 'preferred'; False otherwise.
-inline bool security_result_required(const security_indication_t& security_indication)
+constexpr bool security_result_required(const security_indication_t& security_indication)
 {
   return security_indication.integrity_protection_ind == integrity_protection_indication_t::preferred ||
          security_indication.confidentiality_protection_ind == confidentiality_protection_indication_t::preferred;
 }
 
 enum class activity_notification_level_t : uint8_t { ue = 0, pdu_session = 1, drb = 2, invalid = 3 };
+
+/// Common type enum for PDU Session types.
+enum class pdu_session_type_t : uint8_t { ipv4 = 0, ipv6, ipv4v6, ethernet };
 
 } // namespace srsran
 
@@ -176,7 +180,7 @@ struct formatter<srsran::pdu_session_id_t> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::pdu_session_id_t& sid, FormatContext& ctx)
+  auto format(const srsran::pdu_session_id_t& sid, FormatContext& ctx) const
   {
     return format_to(ctx.out(), "psi={:#}", pdu_session_id_to_uint(sid));
   }
@@ -191,8 +195,7 @@ struct formatter<srsran::integrity_protection_indication_t> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::integrity_protection_indication_t& ind, FormatContext& ctx)
-
+  auto format(const srsran::integrity_protection_indication_t& ind, FormatContext& ctx) const
   {
     switch (ind) {
       case srsran::integrity_protection_indication_t::not_needed:
@@ -215,8 +218,7 @@ struct formatter<srsran::confidentiality_protection_indication_t> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::confidentiality_protection_indication_t& ind, FormatContext& ctx)
-
+  auto format(const srsran::confidentiality_protection_indication_t& ind, FormatContext& ctx) const
   {
     switch (ind) {
       case srsran::confidentiality_protection_indication_t::not_needed:
@@ -239,13 +241,37 @@ struct formatter<srsran::security_indication_t> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::security_indication_t& security_ind, FormatContext& ctx)
-
+  auto format(const srsran::security_indication_t& security_ind, FormatContext& ctx) const
   {
     return format_to(ctx.out(),
                      "integrity_ind={} confidentiality_ind={}",
                      security_ind.integrity_protection_ind,
                      security_ind.confidentiality_protection_ind);
+  }
+};
+
+template <>
+struct formatter<srsran::pdu_session_type_t> {
+  template <typename ParseContext>
+  auto parse(ParseContext& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(const srsran::pdu_session_type_t& type, FormatContext& ctx) const
+  {
+    switch (type) {
+      case srsran::pdu_session_type_t::ipv4:
+        return format_to(ctx.out(), "ipv4");
+      case srsran::pdu_session_type_t::ipv6:
+        return format_to(ctx.out(), "ipv6");
+      case srsran::pdu_session_type_t::ipv4v6:
+        return format_to(ctx.out(), "ipv4v6");
+      case srsran::pdu_session_type_t::ethernet:
+        return format_to(ctx.out(), "ethernet");
+    }
+    return format_to(ctx.out(), "invalid");
   }
 };
 

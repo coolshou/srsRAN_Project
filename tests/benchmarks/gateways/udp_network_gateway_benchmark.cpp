@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,6 +23,7 @@
 #include "udp_network_gateway_benchmark_helpers.h"
 #include "srsran/gateways/udp_network_gateway_factory.h"
 #include "srsran/srslog/srslog.h"
+#include "srsran/support/executors/inline_task_executor.h"
 #include "srsran/support/executors/manual_task_worker.h"
 #include "srsran/support/io/io_broker_factory.h"
 #include <arpa/inet.h>
@@ -78,7 +79,7 @@ static void parse_args(int argc, char** argv, bench_params& params)
       case 'h':
       default:
         usage(argv[0], params);
-        exit(0);
+        std::exit(0);
     }
   }
 }
@@ -112,17 +113,18 @@ int main(int argc, char** argv)
   std::unique_ptr<udp_network_gateway>              gw1;
   std::unique_ptr<udp_network_gateway>              gw2;
 
-  manual_task_worker io_tx_executor{128};
+  inline_task_executor io_rx_executor;
+  inline_task_executor io_tx_executor;
 
-  gw1 = create_udp_network_gateway({gw1_cfg, gw1_dn, io_tx_executor});
-  gw2 = create_udp_network_gateway({gw2_cfg, gw2_dn, io_tx_executor});
+  gw1 = create_udp_network_gateway({gw1_cfg, gw1_dn, io_tx_executor, io_rx_executor});
+  gw2 = create_udp_network_gateway({gw2_cfg, gw2_dn, io_tx_executor, io_rx_executor});
 
   gw1->create_and_bind();
   gw2->create_and_bind();
 
   std::unique_ptr<io_broker> epoll_broker;
 
-  epoll_broker = create_io_broker(io_broker_type::epoll);
+  epoll_broker = create_io_broker(io_broker_type::epoll, io_broker_config{os_thread_realtime_priority::min() + 5});
 
   if (not gw1->subscribe_to(*epoll_broker)) {
     report_fatal_error("Failed to register UDP network gateway 1 at IO broker. socket_fd={}", gw1->get_socket_fd());

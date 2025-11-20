@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -38,6 +38,7 @@
 #include "srsran/support/file_vector.h"
 #include "srsran/support/srsran_assert.h"
 #include "srsran/support/srsran_test.h"
+#include "fmt/std.h"
 #include <complex>
 #include <map>
 #include <mutex>
@@ -416,7 +417,7 @@ private:
 };
 
 /// Describes a resource grid spy.
-class resource_grid_spy : public resource_grid, private resource_grid_mapper
+class resource_grid_spy : public resource_grid
 {
 public:
   resource_grid_spy(resource_grid_reader& reader_, resource_grid_writer& writer_) : reader(reader_), writer(writer_)
@@ -441,24 +442,6 @@ public:
   /// Resets all counters.
   void clear() { set_all_zero_count = 0; }
 
-  void map(resource_grid_writer& grid,
-           const re_buffer_reader<>& /* input */,
-           const re_pattern& /* pattern */,
-           const precoding_configuration& /* precoding */) override
-  {
-    srsran_assertion_failure("Resource grid spy does not implement the resource grid mapper.");
-  }
-
-  void map(resource_grid_writer&          grid,
-           symbol_buffer&                 buffer,
-           const re_pattern_list&         pattern,
-           const re_pattern_list&         reserved,
-           const precoding_configuration& precoding,
-           unsigned                       re_skip) override
-  {
-    srsran_assertion_failure("Resource grid spy does not implement the resource grid mapper.");
-  }
-
 private:
   resource_grid_reader& reader;
   resource_grid_writer& writer;
@@ -469,27 +452,21 @@ private:
 class shared_resource_grid_spy : private shared_resource_grid::pool_interface
 {
 private:
-  static constexpr unsigned identifier = 0;
-  resource_grid&            grid;
-  std::atomic<unsigned>     ref_count = {};
+  resource_grid&        grid;
+  std::atomic<unsigned> ref_count = {};
 
-  resource_grid& get(unsigned identifier_) override
+  resource_grid& get() override
   {
     srsran_assert(ref_count > 0, "The grid must be reserved.");
-    srsran_assert(identifier == identifier_, "Identifier miss-match.");
     return grid;
   }
 
-  void notify_release_scope(unsigned identifier_) override
-  {
-    srsran_assert(ref_count == 0, "The grid must be reserved.");
-    srsran_assert(identifier == identifier_, "Identifier miss-match.");
-  }
+  void notify_release_scope() override { srsran_assert(ref_count == 0, "The grid must be reserved."); }
 
 public:
   explicit shared_resource_grid_spy(resource_grid& grid_) : grid(grid_) {}
 
-  ~shared_resource_grid_spy()
+  ~shared_resource_grid_spy() override
   {
     report_fatal_error_if_not(ref_count == 0, "A grid is still active in {} scopes.", ref_count);
   }
@@ -499,7 +476,7 @@ public:
     unsigned expected_available_ref_count = 0;
     bool     available                    = ref_count.compare_exchange_strong(expected_available_ref_count, 1);
     srsran_assert(available, "The grid must NOT be reserved.");
-    return {*this, ref_count, 0};
+    return {*this, ref_count};
   }
 };
 
@@ -507,16 +484,9 @@ public:
 /// interface.
 ///
 /// \note The test terminates if any component under test calls any method from the interface.
-class resource_grid_dummy : public resource_grid, private resource_grid_mapper
+class resource_grid_dummy : public resource_grid
 {
 private:
-  /// Throws a assertion failure due to an overridden method call.
-  void failure() const
-  {
-    srsran_assertion_failure(
-        "Components using resource grid dummy are not allowed to call any method from the interface.");
-  }
-
   resource_grid_reader_spy reader;
   resource_grid_writer_spy writer;
 
@@ -530,24 +500,6 @@ public:
   const resource_grid_reader& get_reader() const override { return reader; }
 
   void set_all_zero() override { ++set_all_zero_count; }
-
-  void map(resource_grid_writer&          grid,
-           const re_buffer_reader<>&      input,
-           const re_pattern&              pattern,
-           const precoding_configuration& precoding) override
-  {
-    failure();
-  }
-
-  void map(resource_grid_writer& grid,
-           symbol_buffer& /* buffer */,
-           const re_pattern_list& /* pattern */,
-           const re_pattern_list& /* reserved */,
-           const precoding_configuration& /* precoding */,
-           unsigned /* re_skip */) override
-  {
-    failure();
-  }
 
   unsigned get_reader_writer_count() const { return reader.get_count() + writer.get_count(); }
 

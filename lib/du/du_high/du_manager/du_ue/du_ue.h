@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -29,6 +29,9 @@
 #include "srsran/ran/rnti.h"
 
 namespace srsran {
+
+class mac_ue_radio_link_notifier;
+
 namespace srs_du {
 
 /// \brief This class holds the context of an UE in the DU.
@@ -49,6 +52,9 @@ struct du_ue_context {
   /// \brief The NR Cell Global Identity of the UE's serving cell.
   nr_cell_global_id_t nr_cgi;
 };
+
+/// \brief Handled causes for RLF.
+enum class rlf_cause { max_mac_kos_reached, max_rlc_retxs_reached, rlc_protocol_failure };
 
 /// The interface exposes the methods to interact with the state of a DU UE.
 class du_ue_controller
@@ -105,6 +111,7 @@ public:
   /// \brief Determines whether this UE is running the RRC Reestablishment procedure and which context was retrieved
   /// from the old UE.
   std::unique_ptr<du_ue_resource_config> reestablished_cfg_pending;
+  std::unique_ptr<ue_capability_summary> reestablished_ue_caps_summary;
 };
 
 } // namespace srs_du

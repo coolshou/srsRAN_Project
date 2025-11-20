@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -41,7 +41,7 @@ e2sm_kpm_asn1_packer::handle_packed_e2sm_action_definition(const srsran::byte_bu
   asn1::cbit_ref         bref(action_definition);
   action_def.service_model = e2sm_service_model_t::KPM;
   if (std::get<e2sm_kpm_action_definition_s>(action_def.action_definition).unpack(bref) != asn1::SRSASN_SUCCESS) {
-    printf("Failed to unpack E2SM KPM Action Definition\n");
+    fmt::println("Failed to unpack E2SM KPM Action Definition");
     action_def.service_model = e2sm_service_model_t::UNKNOWN_SM;
   }
   return action_def;
@@ -50,14 +50,14 @@ e2sm_kpm_asn1_packer::handle_packed_e2sm_action_definition(const srsran::byte_bu
 e2sm_ric_control_request
 e2sm_kpm_asn1_packer::handle_packed_ric_control_request(const asn1::e2ap::ric_ctrl_request_s& req)
 {
-  printf("Failure - RIC control not available in e2sm_kpm.\n");
+  fmt::println("Failure - RIC control not available in e2sm_kpm.");
   e2sm_ric_control_request control_request = {};
   return control_request;
 }
 
 e2_ric_control_response e2sm_kpm_asn1_packer::pack_ric_control_response(const e2sm_ric_control_response& e2sm_response)
 {
-  printf("Failure - RIC control not available in e2sm_kpm.\n");
+  fmt::println("Failure - RIC control not available in e2sm_kpm.");
   e2_ric_control_response control_response = {};
   return control_response;
 }
@@ -69,7 +69,7 @@ e2sm_kpm_asn1_packer::handle_packed_event_trigger_definition(const srsran::byte_
   e2sm_kpm_event_trigger_definition_s e2sm_kpm_event_trigger_def;
   asn1::cbit_ref                      bref(event_trigger_definition);
   if (e2sm_kpm_event_trigger_def.unpack(bref) != asn1::SRSASN_SUCCESS) {
-    printf("Failed to unpack E2SM KPM Event Trigger Definition\n");
+    fmt::println("Failed to unpack E2SM KPM Event Trigger Definition");
   }
 
   e2sm_event_trigger_def.ric_service_type = e2sm_event_trigger_definition::e2sm_ric_service_type_t::REPORT;
@@ -100,85 +100,93 @@ asn1::unbounded_octstring<true> e2sm_kpm_asn1_packer::pack_ran_function_descript
 
   // Addd Report Service Style Types, see O-RAN.WG3.E2SM-KPM-R003-v03.00.
   ric_report_style_item_s ric_report_style_item;
-  // RIC Report Style Type 1.
-  ric_report_style_item.ric_report_style_type = 1;
-  ric_report_style_item.ric_report_style_name.from_string("E2 Node Measurement");
-  ric_report_style_item.ric_action_format_type  = 1;
-  ric_report_style_item.ric_ind_hdr_format_type = 1;
-  ric_report_style_item.ric_ind_msg_format_type = 1;
-  ric_report_style_item.meas_info_action_list.clear();
-  for (const auto& metric : meas_provider.get_supported_metric_names(E2_NODE_LEVEL)) {
-    meas_info_action_item_s meas_info_action_item;
-    meas_info_action_item.meas_name.from_string(metric);
-    meas_info_action_item.meas_id_present = false;
-    ric_report_style_item.meas_info_action_list.push_back(meas_info_action_item);
-  }
-  ran_function_desc.ric_report_style_list.push_back(ric_report_style_item);
 
-  // RIC Report Style Type 2.
-  ric_report_style_item.ric_report_style_type = 2;
-  ric_report_style_item.ric_report_style_name.from_string("E2 Node Measurement for a single UE");
-  ric_report_style_item.ric_action_format_type  = 2;
-  ric_report_style_item.ric_ind_hdr_format_type = 1;
-  ric_report_style_item.ric_ind_msg_format_type = 1;
-  ric_report_style_item.meas_info_action_list.clear();
-  for (const auto& metric : meas_provider.get_supported_metric_names(UE_LEVEL)) {
-    meas_info_action_item_s meas_info_action_item;
-    meas_info_action_item.meas_name.from_string(metric);
-    meas_info_action_item.meas_id_present = false;
-    ric_report_style_item.meas_info_action_list.push_back(meas_info_action_item);
-  }
-  ran_function_desc.ric_report_style_list.push_back(ric_report_style_item);
+  std::vector<std::string> supported_e2_level_metrics = meas_provider.get_supported_metric_names(E2_NODE_LEVEL);
+  std::vector<std::string> supported_ue_level_metrics = meas_provider.get_supported_metric_names(UE_LEVEL);
 
-  // RIC Report Style Type 3.
-  ric_report_style_item.ric_report_style_type = 3;
-  ric_report_style_item.ric_report_style_name.from_string("Condition-based, UE-level E2 Node Measurement");
-  ric_report_style_item.ric_action_format_type  = 3;
-  ric_report_style_item.ric_ind_hdr_format_type = 1;
-  ric_report_style_item.ric_ind_msg_format_type = 2;
-  ric_report_style_item.meas_info_action_list.clear();
-  for (const auto& metric : meas_provider.get_supported_metric_names(UE_LEVEL)) {
-    meas_info_action_item_s meas_info_action_item;
-    meas_info_action_item.meas_name.from_string(metric);
-    meas_info_action_item.meas_id_present = false;
-    ric_report_style_item.meas_info_action_list.push_back(meas_info_action_item);
+  if (!supported_e2_level_metrics.empty()) {
+    // RIC Report Style Type 1.
+    ric_report_style_item.ric_report_style_type = 1;
+    ric_report_style_item.ric_report_style_name.from_string("E2 Node Measurement");
+    ric_report_style_item.ric_action_format_type  = 1;
+    ric_report_style_item.ric_ind_hdr_format_type = 1;
+    ric_report_style_item.ric_ind_msg_format_type = 1;
+    ric_report_style_item.meas_info_action_list.clear();
+    for (const auto& metric : supported_e2_level_metrics) {
+      meas_info_action_item_s meas_info_action_item;
+      meas_info_action_item.meas_name.from_string(metric);
+      meas_info_action_item.meas_id_present = false;
+      ric_report_style_item.meas_info_action_list.push_back(meas_info_action_item);
+    }
+    ran_function_desc.ric_report_style_list.push_back(ric_report_style_item);
   }
-  ran_function_desc.ric_report_style_list.push_back(ric_report_style_item);
 
-  // RIC Report Style Type 4.
-  ric_report_style_item.ric_report_style_type = 4;
-  ric_report_style_item.ric_report_style_name.from_string("Common Condition-based, UE-level Measurement");
-  ric_report_style_item.ric_action_format_type  = 4;
-  ric_report_style_item.ric_ind_hdr_format_type = 1;
-  ric_report_style_item.ric_ind_msg_format_type = 3;
-  ric_report_style_item.meas_info_action_list.clear();
-  for (const auto& metric : meas_provider.get_supported_metric_names(UE_LEVEL)) {
-    meas_info_action_item_s meas_info_action_item;
-    meas_info_action_item.meas_name.from_string(metric);
-    meas_info_action_item.meas_id_present = false;
-    ric_report_style_item.meas_info_action_list.push_back(meas_info_action_item);
-  }
-  ran_function_desc.ric_report_style_list.push_back(ric_report_style_item);
+  if (!supported_ue_level_metrics.empty()) {
+    // RIC Report Style Type 2.
+    ric_report_style_item.ric_report_style_type = 2;
+    ric_report_style_item.ric_report_style_name.from_string("E2 Node Measurement for a single UE");
+    ric_report_style_item.ric_action_format_type  = 2;
+    ric_report_style_item.ric_ind_hdr_format_type = 1;
+    ric_report_style_item.ric_ind_msg_format_type = 1;
+    ric_report_style_item.meas_info_action_list.clear();
+    for (const auto& metric : supported_ue_level_metrics) {
+      meas_info_action_item_s meas_info_action_item;
+      meas_info_action_item.meas_name.from_string(metric);
+      meas_info_action_item.meas_id_present = false;
+      ric_report_style_item.meas_info_action_list.push_back(meas_info_action_item);
+    }
+    ran_function_desc.ric_report_style_list.push_back(ric_report_style_item);
 
-  // RIC Report Style Type 5.
-  ric_report_style_item.ric_report_style_type = 5;
-  ric_report_style_item.ric_report_style_name.from_string("E2 Node Measurement for multiple UEs");
-  ric_report_style_item.ric_action_format_type  = 5;
-  ric_report_style_item.ric_ind_hdr_format_type = 1;
-  ric_report_style_item.ric_ind_msg_format_type = 3;
-  ric_report_style_item.meas_info_action_list.clear();
-  for (const auto& metric : meas_provider.get_supported_metric_names(UE_LEVEL)) {
-    meas_info_action_item_s meas_info_action_item;
-    meas_info_action_item.meas_name.from_string(metric);
-    meas_info_action_item.meas_id_present = false;
-    ric_report_style_item.meas_info_action_list.push_back(meas_info_action_item);
+    // RIC Report Style Type 3.
+    ric_report_style_item.ric_report_style_type = 3;
+    ric_report_style_item.ric_report_style_name.from_string("Condition-based, UE-level E2 Node Measurement");
+    ric_report_style_item.ric_action_format_type  = 3;
+    ric_report_style_item.ric_ind_hdr_format_type = 1;
+    ric_report_style_item.ric_ind_msg_format_type = 2;
+    ric_report_style_item.meas_info_action_list.clear();
+    for (const auto& metric : supported_ue_level_metrics) {
+      meas_info_action_item_s meas_info_action_item;
+      meas_info_action_item.meas_name.from_string(metric);
+      meas_info_action_item.meas_id_present = false;
+      ric_report_style_item.meas_info_action_list.push_back(meas_info_action_item);
+    }
+    ran_function_desc.ric_report_style_list.push_back(ric_report_style_item);
+
+    // RIC Report Style Type 4.
+    ric_report_style_item.ric_report_style_type = 4;
+    ric_report_style_item.ric_report_style_name.from_string("Common Condition-based, UE-level Measurement");
+    ric_report_style_item.ric_action_format_type  = 4;
+    ric_report_style_item.ric_ind_hdr_format_type = 1;
+    ric_report_style_item.ric_ind_msg_format_type = 3;
+    ric_report_style_item.meas_info_action_list.clear();
+    for (const auto& metric : supported_ue_level_metrics) {
+      meas_info_action_item_s meas_info_action_item;
+      meas_info_action_item.meas_name.from_string(metric);
+      meas_info_action_item.meas_id_present = false;
+      ric_report_style_item.meas_info_action_list.push_back(meas_info_action_item);
+    }
+    ran_function_desc.ric_report_style_list.push_back(ric_report_style_item);
+
+    // RIC Report Style Type 5.
+    ric_report_style_item.ric_report_style_type = 5;
+    ric_report_style_item.ric_report_style_name.from_string("E2 Node Measurement for multiple UEs");
+    ric_report_style_item.ric_action_format_type  = 5;
+    ric_report_style_item.ric_ind_hdr_format_type = 1;
+    ric_report_style_item.ric_ind_msg_format_type = 3;
+    ric_report_style_item.meas_info_action_list.clear();
+    for (const auto& metric : supported_ue_level_metrics) {
+      meas_info_action_item_s meas_info_action_item;
+      meas_info_action_item.meas_name.from_string(metric);
+      meas_info_action_item.meas_id_present = false;
+      ric_report_style_item.meas_info_action_list.push_back(meas_info_action_item);
+    }
+    ran_function_desc.ric_report_style_list.push_back(ric_report_style_item);
   }
-  ran_function_desc.ric_report_style_list.push_back(ric_report_style_item);
 
   srsran::byte_buffer buf;
   asn1::bit_ref       bref(buf);
   if (ran_function_desc.pack(bref) != asn1::SRSASN_SUCCESS) {
-    printf("Failed to pack E2SM KPM RAN Function Description\n");
+    fmt::println("Failed to pack E2SM KPM RAN Function Description");
     asn1::unbounded_octstring<true> err_buf;
     return err_buf;
   }

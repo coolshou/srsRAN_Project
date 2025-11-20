@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -34,10 +34,10 @@
 using namespace srsran;
 
 unique_rx_buffer
-rx_buffer_pool_impl::reserve(const slot_point& slot, trx_buffer_identifier id, unsigned nof_codeblocks, bool new_data)
+rx_buffer_pool_impl::reserve(slot_point slot, trx_buffer_identifier id, unsigned nof_codeblocks, bool new_data)
 {
   // No more reservations are allowed if the pool is stopped.
-  if (stopped.load(std::memory_order_acquire)) {
+  if (stopped.load(std::memory_order_relaxed)) {
     return unique_rx_buffer();
   }
 
@@ -101,7 +101,7 @@ rx_buffer_pool_impl::reserve(const slot_point& slot, trx_buffer_identifier id, u
   return unique_rx_buffer(buffer);
 }
 
-void rx_buffer_pool_impl::run_slot(const slot_point& slot)
+void rx_buffer_pool_impl::run_slot(slot_point slot)
 {
   // Predicate for finding available buffers.
   auto pred = [](trx_buffer_identifier id) { return id != trx_buffer_identifier::invalid(); };
@@ -115,6 +115,13 @@ void rx_buffer_pool_impl::run_slot(const slot_point& slot)
     // Get reference to the buffer.
     rx_buffer_impl& buffer = buffers[i_buffer];
 
+    // Skip checks if the buffer is locked.
+    if (buffer.is_locked()) {
+      // Extend expiration time.
+      expirations[i_buffer] = slot + expire_timeout_slots;
+      continue;
+    }
+
     // Determines whether the buffer is free.
     bool is_free = false;
 
@@ -122,12 +129,6 @@ void rx_buffer_pool_impl::run_slot(const slot_point& slot)
     if ((expirations[i_buffer] != null_expiration) && (expirations[i_buffer] <= slot)) {
       // Try to expire the buffer.
       is_free = buffer.expire();
-
-      // If the buffer is not available, increase the expiration time and continue to the next buffer.
-      if (!is_free) {
-        expirations[i_buffer] = slot + expire_timeout_slots;
-        continue;
-      }
     } else {
       // Check if the buffer is free before expiring.
       is_free = buffer.is_free();
@@ -149,7 +150,7 @@ rx_buffer_pool& rx_buffer_pool_impl::get_pool()
 void rx_buffer_pool_impl::stop()
 {
   // Signals the stop of the pool. No more reservation are allowed after this point.
-  stopped.store(true, std::memory_order_release);
+  stopped.store(true);
 
   // Makes sure all buffers are unlocked.
   for (const auto& buffer : buffers) {

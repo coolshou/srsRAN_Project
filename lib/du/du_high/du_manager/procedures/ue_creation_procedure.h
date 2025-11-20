@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,9 +25,8 @@
 #include "../du_ue/du_ue.h"
 #include "../du_ue/du_ue_manager_repository.h"
 #include "procedure_logger.h"
-#include "srsran/du/du_high/du_manager/du_manager_params.h"
-#include "srsran/mac/config/mac_config_helpers.h"
 #include "srsran/mac/mac.h"
+#include "srsran/mac/mac_ue_configurator.h"
 #include "srsran/support/async/async_task.h"
 
 namespace srsran {
@@ -78,7 +77,7 @@ public:
 
 private:
   /// Creates a UE object in the DU UE manager.
-  expected<du_ue*, std::string> create_du_ue_context();
+  expected<du_ue*, std::string> create_du_ue_context() const;
 
   /// Remove UE from DU Manager UE repository.
   async_task<void> clear_ue();

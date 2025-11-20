@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -47,7 +47,7 @@ srs_information srsran::get_srs_information(const srs_resource_configuration& re
 
   // Assert configuration parameters.
   srsran_assert(resource.hopping == srs_resource_configuration::group_or_sequence_hopping_enum::neither,
-                "No sequence nor group hopping supported");
+                "No sequence nor group hopping supported.");
   srsran_assert(!resource.has_frequency_hopping(), "Frequency hopping is not supported.");
 
   // Calculate sequence length.

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -49,7 +49,7 @@ TEST(fapi_to_phy_pdcch_conversion_test, valid_pdu_conversion_success)
   std::uniform_int_distribution<unsigned> nid_dmrs_dist(0, 65535);
   std::uniform_int_distribution<unsigned> nid_data_dist(0, 65535);
 
-  auto                               pm_tools = generate_precoding_matrix_tables(1);
+  auto                               pm_tools = generate_precoding_matrix_tables(1, 0);
   const precoding_matrix_repository& pm_repo  = *std::get<std::unique_ptr<precoding_matrix_repository>>(pm_tools);
 
   for (auto cp : {cyclic_prefix::NORMAL, cyclic_prefix::EXTENDED}) {
@@ -99,7 +99,7 @@ TEST(fapi_to_phy_pdcch_conversion_test, valid_pdu_conversion_success)
 
                   builder_dci.set_basic_parameters(to_rnti(0), nid_data, n_rnti, cce, aggregation);
 
-                  builder_dci.set_tx_power_info_parameter(power_nr);
+                  builder_dci.set_profile_nr_tx_power_info_parameters(power_nr);
                   builder_dci.get_tx_precoding_and_beamforming_pdu_builder().set_basic_parameters(275, 0).add_prg(0,
                                                                                                                   {});
 
@@ -153,8 +153,8 @@ TEST(fapi_to_phy_pdcch_conversion_test, valid_pdu_conversion_success)
                   ASSERT_EQ(nid_dmrs, proc_pdu.dci.n_id_pdcch_dmrs);
 
                   // Test powers.
-                  ASSERT_TRUE(std::fabs((power_nr - proc_pdu.dci.dmrs_power_offset_dB)) < 0.001F);
-                  ASSERT_TRUE(std::fabs((power_nr - proc_pdu.dci.data_power_offset_dB)) < 0.001F);
+                  ASSERT_TRUE(std::abs(power_nr - proc_pdu.dci.dmrs_power_offset_dB) < 0.001F);
+                  ASSERT_TRUE(std::abs(power_nr - proc_pdu.dci.data_power_offset_dB) < 0.001F);
 
                   // Test vectors.
                   for (unsigned i = 0, e = payload.size(); i != e; ++i) {

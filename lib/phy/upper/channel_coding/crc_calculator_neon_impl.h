@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -50,7 +50,7 @@ public:
   crc_calculator_checksum_t calculate(const bit_buffer& data) const override;
 
   // See interface for documentation.
-  crc_generator_poly get_generator_poly() const override { return poly; };
+  crc_generator_poly get_generator_poly() const override { return poly; }
 
 private:
   /// Polynomial selection.

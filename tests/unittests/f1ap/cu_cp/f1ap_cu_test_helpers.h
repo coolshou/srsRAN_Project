@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,7 +22,6 @@
 
 #pragma once
 
-#include "../common/f1ap_cu_test_messages.h"
 #include "../common/test_helpers.h"
 #include "tests/test_doubles/f1ap/f1c_test_local_gateway.h"
 #include "srsran/cu_cp/cu_cp_types.h"
@@ -120,7 +119,7 @@ public:
   {
     logger.info("Received UL DCCH RRC message");
     last_ul_dcch_pdu = std::move(pdu);
-  };
+  }
 
   byte_buffer last_ul_dcch_pdu;
 
@@ -186,7 +185,7 @@ public:
 
   bool schedule_async_task(async_task<void> task) override { return task_sched.schedule(std::move(task)); }
 
-  async_task<void> on_transaction_info_loss(const f1_ue_transaction_info_loss_event& ev) override
+  async_task<void> on_transaction_info_loss(const ue_transaction_info_loss_event& ev) override
   {
     return launch_async([](coro_context<async_task<void>>& ctx) {
       CORO_BEGIN(ctx);
@@ -217,6 +216,9 @@ private:
 
 /// \brief Creates a dummy UE CONTEXT SETUP REQUEST.
 f1ap_ue_context_setup_request create_ue_context_setup_request(const std::initializer_list<drb_id_t>& drbs_to_add);
+
+/// \brief Creates a dummy GNB-CU CONFIGURATION UPDATE.
+f1ap_gnb_cu_configuration_update create_gnb_cu_configuration_update();
 
 /// Fixture class for F1AP
 class f1ap_cu_test : public ::testing::Test

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,7 +25,7 @@
 #include "srsran/adt/span.h"
 #include "srsran/ofh/ethernet/ethernet_mac_address.h"
 #include "srsran/ran/bs_channel_bandwidth.h"
-#include "srsran/ru/ru_ofh_configuration.h"
+#include "srsran/ru/ofh/ru_ofh_configuration.h"
 
 namespace srsran {
 
@@ -33,9 +33,9 @@ namespace srsran {
 inline std::string port_ids_to_str(span<unsigned> ports)
 {
   fmt::memory_buffer str_buffer;
-  fmt::format_to(str_buffer, "{");
+  fmt::format_to(std::back_inserter(str_buffer), "{");
   for (unsigned i = 0, e = ports.size(); i != e; ++i) {
-    fmt::format_to(str_buffer, "{}{}", ports[i], (i == (e - 1)) ? "}" : ", ");
+    fmt::format_to(std::back_inserter(str_buffer), "{}{}", ports[i], (i == (e - 1)) ? "}" : ", ");
   }
   return to_string(str_buffer);
 }

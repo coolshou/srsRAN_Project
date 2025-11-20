@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -38,7 +38,7 @@ rlc_tx_am_entity::rlc_tx_am_entity(gnb_du_id_t                          gnb_du_i
                                    rlc_tx_upper_layer_data_notifier&    upper_dn_,
                                    rlc_tx_upper_layer_control_notifier& upper_cn_,
                                    rlc_tx_lower_layer_notifier&         lower_dn_,
-                                   rlc_metrics_aggregator&              metrics_agg_,
+                                   rlc_bearer_metrics_collector&        metrics_coll_,
                                    rlc_pcap&                            pcap_,
                                    task_executor&                       pcell_executor_,
                                    task_executor&                       ue_executor_,
@@ -49,7 +49,7 @@ rlc_tx_am_entity::rlc_tx_am_entity(gnb_du_id_t                          gnb_du_i
                 upper_dn_,
                 upper_cn_,
                 lower_dn_,
-                metrics_agg_,
+                metrics_coll_,
                 pcap_,
                 pcell_executor_,
                 ue_executor_,
@@ -64,7 +64,6 @@ rlc_tx_am_entity::rlc_tx_am_entity(gnb_du_id_t                          gnb_du_i
   head_min_size(rlc_am_pdu_header_min_size(cfg.sn_field_length)),
   head_max_size(rlc_am_pdu_header_max_size(cfg.sn_field_length)),
   poll_retransmit_timer(pcell_timer_factory.create_timer()),
-  is_poll_retransmit_timer_expired(false),
   pcell_executor(pcell_executor_),
   ue_executor(ue_executor_),
   pcap_context(ue_index, rb_id_, config)
@@ -75,8 +74,8 @@ rlc_tx_am_entity::rlc_tx_am_entity(gnb_du_id_t                          gnb_du_i
   srsran_assert(config.pdcp_sn_len == pdcp_sn_size::size12bits || config.pdcp_sn_len == pdcp_sn_size::size18bits,
                 "Cannot create RLC TX AM, unsupported pdcp_sn_len={}. du={} ue={} {}",
                 config.pdcp_sn_len,
-                gnb_du_id,
-                ue_index,
+                fmt::underlying(gnb_du_id),
+                fmt::underlying(ue_index),
                 rb_id_);
 
   // check timer t_poll_retransmission timer
@@ -84,8 +83,9 @@ rlc_tx_am_entity::rlc_tx_am_entity(gnb_du_id_t                          gnb_du_i
 
   //  configure t_poll_retransmission timer
   if (cfg.t_poll_retx > 0) {
-    poll_retransmit_timer.set(std::chrono::milliseconds(cfg.t_poll_retx),
-                              [this](timer_id_t tid) { on_expired_poll_retransmit_timer(); });
+    poll_retransmit_timer.set(
+        std::chrono::milliseconds(cfg.t_poll_retx),
+        [this](timer_id_t tid) noexcept SRSRAN_RTSAN_NONBLOCKING { on_expired_poll_retransmit_timer(); });
   }
 
   logger.log_info("RLC AM configured. {}", cfg);
@@ -95,7 +95,7 @@ rlc_tx_am_entity::rlc_tx_am_entity(gnb_du_id_t                          gnb_du_i
 void rlc_tx_am_entity::handle_sdu(byte_buffer sdu_buf, bool is_retx)
 {
   rlc_sdu sdu;
-  sdu.time_of_arrival = std::chrono::high_resolution_clock::now();
+  sdu.time_of_arrival = std::chrono::steady_clock::now();
 
   sdu.buf     = std::move(sdu_buf);
   sdu.is_retx = is_retx;
@@ -142,7 +142,7 @@ void rlc_tx_am_entity::discard_sdu(uint32_t pdcp_sn)
 }
 
 // TS 38.322 v16.2.0 Sec. 5.2.3.1
-size_t rlc_tx_am_entity::pull_pdu(span<uint8_t> rlc_pdu_buf) SRSRAN_RTSAN_NONBLOCKING
+size_t rlc_tx_am_entity::pull_pdu(span<uint8_t> rlc_pdu_buf) noexcept SRSRAN_RTSAN_NONBLOCKING
 {
   std::chrono::time_point<std::chrono::steady_clock> pull_begin;
   if (metrics_low.is_enabled()) {
@@ -272,6 +272,7 @@ size_t rlc_tx_am_entity::build_new_pdu(span<uint8_t> rlc_pdu_buf)
   sdu_info.is_retx             = sdu.is_retx;
   sdu_info.pdcp_sn             = sdu.pdcp_sn;
   sdu_info.time_of_arrival     = sdu.time_of_arrival;
+  sdu_info.time_of_departure   = std::chrono::steady_clock::now();
 
   // Notify the upper layer about the beginning of the transfer of the current SDU
   if (sdu.pdcp_sn.has_value()) {
@@ -321,8 +322,8 @@ size_t rlc_tx_am_entity::build_new_pdu(span<uint8_t> rlc_pdu_buf)
   logger.log_info(rlc_pdu_buf.data(), pdu_len, "TX PDU. {} pdu_len={} grant_len={}", hdr, pdu_len, grant_len);
 
   // Update TX Next
-  auto latency = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() -
-                                                                      sdu_info.time_of_arrival);
+  auto latency =
+      std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - sdu_info.time_of_arrival);
   metrics_low.metrics_add_sdu_latency_us(latency.count() / 1000);
   metrics_low.metrics_add_pulled_sdus(1);
   st.tx_next = (st.tx_next + 1) % mod;
@@ -483,7 +484,7 @@ size_t rlc_tx_am_entity::build_continued_sdu_segment(span<uint8_t> rlc_pdu_buf, 
 
   // Update TX Next (when segmentation has finished)
   if (si == rlc_si_field::last_segment) {
-    auto latency = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() -
+    auto latency = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() -
                                                                         sdu_info.time_of_arrival);
     metrics_low.metrics_add_sdu_latency_us(latency.count() / 1000);
     metrics_low.metrics_add_pulled_sdus(1);
@@ -642,27 +643,32 @@ size_t rlc_tx_am_entity::build_retx_pdu(span<uint8_t> rlc_pdu_buf)
 void rlc_tx_am_entity::on_status_pdu(rlc_am_status_pdu status)
 {
   // Redirect handling of status to pcell_executor
-  auto handle_func = [this, status = std::move(status)]() mutable { handle_status_pdu(std::move(status)); };
-  if (not pcell_executor.execute(std::move(handle_func))) {
+  if (not pcell_executor.execute(
+          [this, status = std::move(status)]() mutable { handle_status_pdu(std::move(status)); })) {
     logger.log_error("Unable to handle status report");
   }
 }
 
-void rlc_tx_am_entity::handle_status_pdu(rlc_am_status_pdu status) SRSRAN_RTSAN_NONBLOCKING
+void rlc_tx_am_entity::handle_status_pdu(rlc_am_status_pdu status) noexcept SRSRAN_RTSAN_NONBLOCKING
 {
   trace_point status_tp = l2_tracer.now();
-  auto        t_start   = std::chrono::high_resolution_clock::now();
+  auto        t_start   = std::chrono::steady_clock::now();
 
-  auto on_function_exit = make_scope_exit([&]() {
-    auto t_end    = std::chrono::high_resolution_clock::now();
+  uint32_t processed_acks   = 0;
+  uint32_t processed_nacks  = 0;
+  auto     on_function_exit = make_scope_exit([&]() {
+    auto t_end    = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_start);
     logger.log_info("Handled status report. t={}us {}", duration.count(), status);
 
+    if (metrics_low.is_enabled()) {
+      metrics_low.metrics_add_handle_status_latency_us(processed_acks, processed_nacks, duration.count());
+    }
+
     // redirect deletion of status report to UE executor
-    auto delete_status_pdu_func = [status = std::move(status)]() mutable {
-      // leaving this scope will implicitly delete the status PDU
-    };
-    if (not ue_executor.execute(std::move(delete_status_pdu_func))) {
+    if (not ue_executor.execute([status = std::move(status)]() mutable {
+          // leaving this scope will implicitly delete the status PDU
+        })) {
       logger.log_error("Unable to delete status report in UE executor. Deleting from pcell executor");
     }
   });
@@ -733,6 +739,7 @@ void rlc_tx_am_entity::handle_status_pdu(rlc_am_status_pdu status) SRSRAN_RTSAN_
   std::optional<uint32_t> max_deliv_retx_pdcp_sn = {}; // initialize with not value set
   bool                    recycle_bin_full       = false;
   for (uint32_t sn = st.tx_next_ack; tx_mod_base(sn) < tx_mod_base(stop_sn); sn = (sn + 1) % mod) {
+    processed_acks++;
     if (tx_window.has_sn(sn)) {
       rlc_tx_am_sdu_info& sdu_info = tx_window[sn];
       if (sdu_info.pdcp_sn.has_value()) {
@@ -742,6 +749,8 @@ void rlc_tx_am_entity::handle_status_pdu(rlc_am_status_pdu status) SRSRAN_RTSAN_
           max_deliv_pdcp_sn = tx_window[sn].pdcp_sn;
         }
       }
+      auto ack_latency = std::chrono::duration_cast<std::chrono::milliseconds>(t_start - sdu_info.time_of_departure);
+      metrics_low.metrics_add_ack_latency_ms(ack_latency.count());
       // move the PDU's byte_buffer from tx_window into pdu_recycler (if possible) for deletion off the critical path.
       if (!pdu_recycler.add_discarded_pdu(std::move(sdu_info.sdu))) {
         // recycle bin is full and the PDU was deleted on the spot, which may slow down this worker. Warn later.
@@ -791,6 +800,8 @@ void rlc_tx_am_entity::handle_status_pdu(rlc_am_status_pdu status) SRSRAN_RTSAN_
               "Truncating invalid NACK range at ack_sn={}. nack={}", status.ack_sn, status.get_nacks()[nack_idx]);
           break;
         }
+
+        processed_nacks++;
         rlc_am_status_nack nack = {};
         nack.nack_sn            = range_sn;
         if (status.get_nacks()[nack_idx].has_so) {
@@ -985,12 +996,14 @@ void rlc_tx_am_entity::handle_changed_buffer_state()
   }
 }
 
-void rlc_tx_am_entity::update_mac_buffer_state(bool force_notify)
+void rlc_tx_am_entity::update_mac_buffer_state(bool force_notify) noexcept SRSRAN_RTSAN_NONBLOCKING
 {
   pending_buffer_state.clear(std::memory_order_seq_cst);
-  unsigned bs = get_buffer_state();
-  if (force_notify || bs <= MAX_DL_PDU_LENGTH || prev_buffer_state <= MAX_DL_PDU_LENGTH) {
+  rlc_buffer_state bs = get_buffer_state();
+  if (force_notify || bs.pending_bytes <= MAX_DL_PDU_LENGTH || prev_buffer_state.pending_bytes <= MAX_DL_PDU_LENGTH ||
+      suspend_bs_notif_barring || bs.hol_toa < prev_buffer_state.hol_toa) {
     logger.log_debug("Sending buffer state update to lower layer. bs={}", bs);
+    suspend_bs_notif_barring = false;
     lower_dn.on_buffer_state_update(bs);
   } else {
     logger.log_debug(
@@ -1002,8 +1015,10 @@ void rlc_tx_am_entity::update_mac_buffer_state(bool force_notify)
 }
 
 // TS 38.322 v16.2.0 Sec 5.5
-uint32_t rlc_tx_am_entity::get_buffer_state()
+rlc_buffer_state rlc_tx_am_entity::get_buffer_state()
 {
+  rlc_buffer_state bs = {};
+
   // minimum bytes needed to tx all queued SDUs + each header
   rlc_sdu_queue_lockfree::state_t queue_state = sdu_queue.get_state();
   uint32_t                        queue_bytes = queue_state.n_bytes + queue_state.n_sdus * head_min_size;
@@ -1014,8 +1029,14 @@ uint32_t rlc_tx_am_entity::get_buffer_state()
     if (tx_window.has_sn(sn_under_segmentation)) {
       rlc_tx_am_sdu_info& sdu_info = tx_window[sn_under_segmentation];
       segment_bytes                = sdu_info.sdu.length() - sdu_info.next_so + head_max_size;
+      bs.hol_toa                   = sdu_info.time_of_arrival;
     } else {
       logger.log_info("Buffer state ignores SDU under segmentation. sn={} not in tx_window.", sn_under_segmentation);
+    }
+  } else {
+    const rlc_sdu* next_sdu = sdu_queue.front();
+    if (next_sdu != nullptr) {
+      bs.hol_toa = next_sdu->time_of_arrival;
     }
   }
 
@@ -1024,13 +1045,26 @@ uint32_t rlc_tx_am_entity::get_buffer_state()
   uint32_t             retx_bytes = retx_state.get_retx_bytes() + retx_state.get_n_retx_so_zero() * head_min_size +
                         retx_state.get_n_retx_so_nonzero() * head_max_size;
 
+  // Drop any retx SNs not present in tx_window
+  while (!retx_queue.empty() && !tx_window.has_sn(retx_queue.front().sn)) {
+    logger.log_info("Could not find sn={} in tx window, dropping RETX.", retx_queue.front().sn);
+    retx_queue.pop();
+  }
+  if (!retx_queue.empty()) {
+    bs.hol_toa = tx_window[retx_queue.front().sn].time_of_arrival;
+  }
+
   // status report size
   uint32_t status_bytes = 0;
   if (status_provider->status_report_required()) {
     status_bytes = status_provider->get_status_pdu_length();
   }
 
-  return queue_bytes + segment_bytes + retx_bytes + status_bytes;
+  bs.pending_bytes = queue_bytes + segment_bytes + retx_bytes + status_bytes;
+  if (bs.pending_bytes <= MAX_DL_PDU_LENGTH) {
+    suspend_bs_notif_barring = true;
+  }
+  return bs;
 }
 
 uint8_t rlc_tx_am_entity::get_polling_bit(uint32_t sn, bool is_retx, uint32_t payload_size)
@@ -1075,16 +1109,6 @@ uint8_t rlc_tx_am_entity::get_polling_bit(uint32_t sn, bool is_retx, uint32_t pa
   }
 
   /*
-   * From Sec. 5.3.3.4 Expiry of t-PollRetransmit
-   * [...]
-   * - include a poll in an AMD PDU as described in clause 5.3.3.2.
-   */
-  if (is_poll_retransmit_timer_expired.exchange(false, std::memory_order_relaxed)) {
-    logger.log_debug("Setting poll bit due to expired poll retransmit timer. sn={} poll_sn={}", sn, st.poll_sn);
-    poll = 1;
-  }
-
-  /*
    * - If poll bit is included:
    *     - set PDU_WITHOUT_POLL to 0;
    *     - set BYTE_WITHOUT_POLL to 0.
@@ -1105,7 +1129,8 @@ uint8_t rlc_tx_am_entity::get_polling_bit(uint32_t sn, bool is_retx, uint32_t pa
       st.poll_sn = sn;
       logger.log_debug("Updated poll_sn={}.", sn);
     }
-    if (cfg.t_poll_retx > 0) {
+    // Do not restart timer if the whole entity is stopped
+    if (cfg.t_poll_retx > 0 && !stopped_lower) {
       if (not poll_retransmit_timer.is_running()) {
         poll_retransmit_timer.run();
       } else {
@@ -1118,8 +1143,21 @@ uint8_t rlc_tx_am_entity::get_polling_bit(uint32_t sn, bool is_retx, uint32_t pa
   return poll;
 }
 
-void rlc_tx_am_entity::on_expired_poll_retransmit_timer()
+void rlc_tx_am_entity::on_expired_poll_retransmit_timer() noexcept SRSRAN_RTSAN_NONBLOCKING
 {
+  std::chrono::time_point<std::chrono::steady_clock> t_start;
+  if (metrics_low.is_enabled()) {
+    t_start = std::chrono::steady_clock::now();
+  }
+
+  auto on_function_exit = make_scope_exit([&]() {
+    if (metrics_low.is_enabled()) {
+      auto t_end    = std::chrono::steady_clock::now();
+      auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_start);
+      metrics_low.metrics_add_t_poll_retransmission_expiry_latency_us(duration.count());
+    }
+  });
+
   // t-PollRetransmit
   logger.log_info("Poll retransmit timer expired after {}ms.", poll_retransmit_timer.duration().count());
   log_state(srslog::basic_levels::debug);
@@ -1144,16 +1182,11 @@ void rlc_tx_am_entity::on_expired_poll_retransmit_timer()
       return;
     }
     // RETX first RLC SDU that has not been ACKed
-    // or first SDU segment of the first RLC SDU
-    // that has not been acked
     rlc_tx_amd_retx retx = {};
     retx.so              = 0;
     retx.sn              = st.tx_next_ack;
     retx.length          = tx_window[st.tx_next_ack].sdu.length();
     bool retx_enqueued   = retx_queue.try_push(retx);
-    //
-    // TODO: Revise this: shall we send a minimum-sized segment instead?
-    //
 
     if (retx_enqueued) {
       logger.log_debug(
@@ -1171,7 +1204,7 @@ void rlc_tx_am_entity::on_expired_poll_retransmit_timer()
   /*
    * - include a poll in an AMD PDU as described in clause 5.3.3.2.
    */
-  is_poll_retransmit_timer_expired.store(true, std::memory_order_relaxed);
+  // The poll inclusion according to clause 5.3.3.2. is evaluated later upon transmission.
 }
 
 bool rlc_tx_am_entity::inside_tx_window(uint32_t sn) const

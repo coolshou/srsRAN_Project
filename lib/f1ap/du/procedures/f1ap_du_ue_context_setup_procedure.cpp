@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -32,8 +32,28 @@ using namespace srsran;
 using namespace srs_du;
 using namespace asn1::f1ap;
 
-// Time waiting for RRC container delivery.
-constexpr std::chrono::milliseconds rrc_container_delivery_timeout{120};
+/// Time waiting for RRC container delivery.
+static constexpr std::chrono::milliseconds rrc_container_delivery_timeout{120};
+
+static bool requires_ue_ran_config_update(const ue_context_setup_request_s& msg)
+{
+  return msg->srbs_to_be_setup_list_present or msg->drbs_to_be_setup_list_present or
+         msg->scell_to_be_setup_list_present;
+}
+
+static expected<default_success_t, asn1::f1ap::cause_c>
+validate_drb_to_be_setup_item(const asn1::f1ap::drbs_to_be_setup_item_s& drb_to_be_setup_item)
+{
+  asn1::f1ap::cause_c cause;
+  cause.set_protocol().value = asn1::f1ap::cause_protocol_opts::semantic_error;
+
+  // Check DL PDCP SN length information present.
+  // DL PDCP SN information is mandatory in the IE extension field.
+  if (not drb_to_be_setup_item.ie_exts_present) {
+    return make_unexpected(cause);
+  }
+  return default_success_t{};
+}
 
 f1ap_du_ue_context_setup_procedure::f1ap_du_ue_context_setup_procedure(
     const asn1::f1ap::ue_context_setup_request_s& msg_,
@@ -54,6 +74,20 @@ void f1ap_du_ue_context_setup_procedure::operator()(coro_context<async_task<void
 {
   CORO_BEGIN(ctx);
 
+  // Find the cell index from the NR-CGI.
+  sp_cell_index =
+      get_cell_index_from_nr_cgi({plmn_identity::from_bytes(msg->sp_cell_id.plmn_id.to_bytes()).value(),
+                                  nr_cell_identity::create(msg->sp_cell_id.nr_cell_id.to_number()).value()});
+  if (not sp_cell_index.has_value()) {
+    // Failed to create UE context in the DU.
+    logger.warning("{}: Failed to to find spCell with PLMN '{}' and NCI '{}' in DU.",
+                   f1ap_log_prefix{int_to_gnb_cu_ue_f1ap_id(msg->gnb_cu_ue_f1ap_id), name()},
+                   plmn_identity::from_bytes(msg->sp_cell_id.plmn_id.to_bytes()).value(),
+                   nr_cell_identity::create(msg->sp_cell_id.nr_cell_id.to_number()).value());
+    send_ue_context_setup_failure();
+    CORO_EARLY_RETURN();
+  }
+
   if (msg->gnb_du_ue_f1ap_id_present) {
     const gnb_cu_ue_f1ap_id_t gnb_cu_ue_f1ap_id = int_to_gnb_cu_ue_f1ap_id(msg->gnb_cu_ue_f1ap_id);
     const gnb_du_ue_f1ap_id_t gnb_du_ue_f1ap_id = int_to_gnb_du_ue_f1ap_id(msg->gnb_du_ue_f1ap_id);
@@ -67,28 +101,18 @@ void f1ap_du_ue_context_setup_procedure::operator()(coro_context<async_task<void
       send_ue_context_setup_failure();
       CORO_EARLY_RETURN();
     }
+
+    if (requires_ue_ran_config_update(msg)) {
+      // Set that the UE has a pending configuration.
+      ue->context.rrc_state = f1ap_ue_context::ue_rrc_state::config_pending;
+    }
+
   } else {
     // [TS38.473, 8.3.1.2] If no UE-associated logical F1-connection exists, the UE-associated logical F1-connection
     // shall be established as part of the procedure.
-
-    // Find the cell index from the NR-CGI
-    sp_cell_index =
-        get_cell_index_from_nr_cgi({plmn_identity::from_bytes(msg->sp_cell_id.plmn_id.to_bytes()).value(),
-                                    nr_cell_identity::create(msg->sp_cell_id.nr_cell_id.to_number()).value()});
-    if (not sp_cell_index.has_value()) {
-      // Failed to create UE context in the DU.
-      logger.warning("{}: Failed to to find spCell with PLMN '{}' and NCI '{}' in DU.",
-                     f1ap_log_prefix{int_to_gnb_cu_ue_f1ap_id(msg->gnb_cu_ue_f1ap_id), name()},
-                     plmn_identity::from_bytes(msg->sp_cell_id.plmn_id.to_bytes()).value(),
-                     nr_cell_identity::create(msg->sp_cell_id.nr_cell_id.to_number()).value());
-      send_ue_context_setup_failure();
-      CORO_EARLY_RETURN();
-    }
-
     // Request the creation of a new UE context in the DU.
     CORO_AWAIT_VALUE(du_ue_create_response,
-                     du_mng.request_ue_creation(
-                         f1ap_ue_context_creation_request{ue_index, to_du_cell_index(sp_cell_index.value())}));
+                     du_mng.request_ue_creation(f1ap_ue_context_creation_request{ue_index, sp_cell_index.value()}));
     if (not du_ue_create_response->result) {
       // Failed to create UE context in the DU.
       logger.warning("{}: Failed to allocate new UE context in DU.",
@@ -131,9 +155,11 @@ void f1ap_du_ue_context_setup_procedure::operator()(coro_context<async_task<void
     if (ret) {
       logger.debug("{}: RRC container sent successfully.", f1ap_log_prefix{ue->context, name()});
     } else {
+      const f1ap_du_cell_context& cell_ctx = du_ctxt.served_cells[sp_cell_index.value()];
+      std::chrono::milliseconds   timeout  = rrc_container_delivery_timeout + cell_ctx.ntn_link_rtt;
       logger.error("{}: Failed to send RRC container after timeout of {}msec",
                    f1ap_log_prefix{ue->context, name()},
-                   rrc_container_delivery_timeout.count());
+                   timeout.count());
       send_ue_context_setup_failure();
       CORO_EARLY_RETURN();
     }
@@ -152,19 +178,19 @@ async_task<bool> f1ap_du_ue_context_setup_procedure::handle_rrc_container()
     logger.error("{}: Failed to find SRB1 bearer to send RRC container.", f1ap_log_prefix{ue->context, name()});
     return launch_no_op_task(false);
   }
-
+  const f1ap_du_cell_context& cell_ctx = du_ctxt.served_cells[sp_cell_index.value()];
+  std::chrono::milliseconds   timeout  = rrc_container_delivery_timeout + cell_ctx.ntn_link_rtt;
   return srb1->handle_pdu_and_await_transmission(
-      msg->rrc_container.copy(), msg->rrc_delivery_status_request_present, rrc_container_delivery_timeout);
+      msg->rrc_container.copy(), msg->rrc_delivery_status_request_present, timeout);
 }
 
-expected<unsigned> f1ap_du_ue_context_setup_procedure::get_cell_index_from_nr_cgi(nr_cell_global_id_t nr_cgi) const
+expected<du_cell_index_t>
+f1ap_du_ue_context_setup_procedure::get_cell_index_from_nr_cgi(nr_cell_global_id_t nr_cgi) const
 {
   // Find the spCell index in the F1AP DU context.
-  if (const auto I = std::find_if(du_ctxt.served_cells.cbegin(),
-                                  du_ctxt.served_cells.cend(),
-                                  [&nr_cgi](const f1ap_du_cell_context& cell) { return nr_cgi == cell.nr_cgi; });
-      I != du_ctxt.served_cells.cend()) {
-    return std::distance(du_ctxt.served_cells.begin(), I);
+  const auto* cell = du_ctxt.find_cell(nr_cgi);
+  if (cell != nullptr) {
+    return cell->cell_index;
   }
 
   return make_unexpected(default_error_t());
@@ -173,8 +199,8 @@ expected<unsigned> f1ap_du_ue_context_setup_procedure::get_cell_index_from_nr_cg
 async_task<f1ap_ue_context_update_response> f1ap_du_ue_context_setup_procedure::request_du_ue_config()
 {
   // Construct DU request.
-  f1ap_ue_context_update_request du_request;
-  du_request.ue_index = ue->context.ue_index;
+  f1ap_ue_context_update_request du_request = {};
+  du_request.ue_index                       = ue->context.ue_index;
 
   auto plmn = plmn_identity::from_bytes(msg->sp_cell_id.plmn_id.to_bytes());
   auto nci  = nr_cell_identity::create(msg->sp_cell_id.nr_cell_id.to_number());
@@ -194,7 +220,15 @@ async_task<f1ap_ue_context_update_response> f1ap_du_ue_context_setup_procedure::
 
   // > Pass DRBs to setup.
   for (const auto& drb : msg->drbs_to_be_setup_list) {
-    du_request.drbs_to_setup.push_back(make_drb_to_setup(drb.value().drbs_to_be_setup_item()));
+    expected<default_success_t, asn1::f1ap::cause_c> drb_valid =
+        validate_drb_to_be_setup_item(drb->drbs_to_be_setup_item());
+    if (drb_valid.has_value()) {
+      du_request.drbs_to_setup.push_back(make_drb_to_setup(drb.value().drbs_to_be_setup_item()));
+    } else {
+      f1ap_drb_failed_to_setupmod failed_drb = {uint_to_drb_id(drb->drbs_to_be_setup_item().drb_id),
+                                                asn1_to_cause(drb_valid.error())};
+      failed_drbs.push_back(failed_drb);
+    }
   }
 
   // > measConfig IE.
@@ -217,6 +251,26 @@ async_task<f1ap_ue_context_update_response> f1ap_du_ue_context_setup_procedure::
   // > Add UE capabilities information.
   if (not msg->cu_to_du_rrc_info.ue_cap_rat_container_list.empty()) {
     du_request.ue_cap_rat_list = msg->cu_to_du_rrc_info.ue_cap_rat_container_list.copy();
+  }
+
+  // > servingCellMO IE.
+  // [TS 38.473, 8.3.1.2] If the servingCellMO IE is included in the UE CONTEXT SETUP REQUEST message, the gNB-DU shall
+  // configure the servingCellMO for the indicated SpCell accordingly.
+  if (msg->serving_cell_mo_present) {
+    du_request.serving_cell_mo.emplace(msg->serving_cell_mo);
+  }
+
+  // > servingCellMO List IE.
+  // [TS 38.473, 8.3.1.2] If the servingCellMO List IE is included in the UE CONTEXT SETUP REQUEST message, the gNB-DU
+  // shall, if supported, select servingCellMO after determining the list of BWPs for the UE and include the list of
+  // servingCellMOs that have been encoded in CellGroupConfig IE as ServingCellMO-encoded-in-CGC List IE in the UE
+  // CONTEXT SETUP RESPONSE message.
+  if (msg->serving_cell_mo_list_present) {
+    auto& list = du_request.serving_cell_mo_list.emplace(msg->serving_cell_mo_list.size());
+    for (const auto& item : msg->serving_cell_mo_list) {
+      list.emplace_back(f1ap_serving_cell_mo_list_item{item->serving_cell_mo_list_item().serving_cell_mo,
+                                                       item->serving_cell_mo_list_item().ssb_freq});
+    }
   }
 
   return ue->du_handler.request_ue_context_update(du_request);
@@ -257,7 +311,7 @@ void f1ap_du_ue_context_setup_procedure::send_ue_context_setup_response()
     resp->srbs_setup_list.resize(msg->srbs_to_be_setup_list.size());
     for (unsigned i = 0; i != resp->srbs_setup_list.size(); ++i) {
       resp->srbs_setup_list[i].load_info_obj(ASN1_F1AP_ID_SRBS_SETUP_ITEM);
-      auto&              srb_req_item = msg->srbs_to_be_setup_list[i]->srbs_to_be_setup_item();
+      const auto&        srb_req_item = msg->srbs_to_be_setup_list[i]->srbs_to_be_setup_item();
       srbs_setup_item_s& srb_item     = resp->srbs_setup_list[i].value().srbs_setup_item();
       srb_item.srb_id                 = srb_req_item.srb_id;
       srb_item.lcid                   = srb_id_to_lcid(int_to_srb_id(srb_req_item.srb_id));
@@ -268,8 +322,17 @@ void f1ap_du_ue_context_setup_procedure::send_ue_context_setup_response()
   resp->drbs_setup_list         = make_drbs_setup_list(du_ue_cfg_response.drbs_setup);
   resp->drbs_setup_list_present = resp->drbs_setup_list.size() > 0;
   // > DRBs-FailedToBeSetup-List.
-  resp->drbs_failed_to_be_setup_list         = make_drbs_failed_to_be_setup_list(du_ue_cfg_response.failed_drbs_setups);
+  failed_drbs.insert(
+      failed_drbs.end(), du_ue_cfg_response.failed_drbs_setups.begin(), du_ue_cfg_response.failed_drbs_setups.end());
+  resp->drbs_failed_to_be_setup_list         = make_drbs_failed_to_be_setup_list(failed_drbs);
   resp->drbs_failed_to_be_setup_list_present = resp->drbs_failed_to_be_setup_list.size() > 0;
+
+  if (msg->serving_cell_mo_list_present) {
+    // > ServingCellMO-encoded-in-CGC List.
+    resp->serving_cell_mo_encoded_in_cgc_list_present = true;
+    resp->serving_cell_mo_encoded_in_cgc_list =
+        make_serving_cell_mo_encoded_in_cgc_list(du_ue_cfg_response.serving_cell_mo_encoded_in_cgc_list);
+  }
 
   // Send Response to CU-CP.
   ue->f1ap_msg_notifier.on_new_message(f1ap_msg);

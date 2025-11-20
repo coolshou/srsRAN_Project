@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -32,9 +32,22 @@ namespace resource_usage {
 /// Difference between two resource_usage::snapshot points for a given thread.
 struct diff {
   /// Number of voluntary context switches between the two snapshots.
-  long vol_ctxt_switch_count;
+  int vol_ctxt_switch_count{0};
   /// Number of involuntary context switches between the two snapshots.
-  long invol_ctxt_switch_count;
+  int invol_ctxt_switch_count{0};
+  /// Time spent in user mode between two snapshots.
+  std::chrono::microseconds user_time{0};
+  /// Time spent in kernel mode between two snapshots.
+  std::chrono::microseconds sys_time{0};
+
+  diff& operator+=(const diff& rhs)
+  {
+    vol_ctxt_switch_count += rhs.vol_ctxt_switch_count;
+    invol_ctxt_switch_count += rhs.invol_ctxt_switch_count;
+    user_time += rhs.user_time;
+    sys_time += rhs.sys_time;
+    return *this;
+  }
 };
 
 /// Snapshot of the resource usage statistics of a specific thread at given point in time.
@@ -43,10 +56,20 @@ struct snapshot {
   long int vol_ctxt_switch_count = 0;
   /// Number of involuntary context switches at this point in time.
   long int invol_ctxt_switch_count = 0;
+  /// Time spent in user mode.
+  std::chrono::microseconds user_time{0};
+  /// Time spent in kernel mode.
+  std::chrono::microseconds sys_time{0};
 
   constexpr snapshot() {}
-  constexpr snapshot(long int vol_cswitch_, long int invol_switch_) :
-    vol_ctxt_switch_count(vol_cswitch_), invol_ctxt_switch_count(invol_switch_)
+  constexpr snapshot(long int                  vol_cswitch_,
+                     long int                  invol_switch_,
+                     std::chrono::microseconds user_time_,
+                     std::chrono::microseconds sys_time_) :
+    vol_ctxt_switch_count(vol_cswitch_),
+    invol_ctxt_switch_count(invol_switch_),
+    user_time(user_time_),
+    sys_time(sys_time_)
   {
   }
 
@@ -66,7 +89,7 @@ namespace fmt {
 template <>
 struct formatter<srsran::resource_usage::diff> : public basic_parser {
   template <typename FormatContext>
-  auto format(const srsran::resource_usage::diff& diff, FormatContext& ctx)
+  auto format(const srsran::resource_usage::diff& diff, FormatContext& ctx) const
   {
     return format_to(ctx.out(),
                      "nof_vol_ctxt_switch={} nof_invol_ctxt_switch={}",

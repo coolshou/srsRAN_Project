@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -44,20 +44,23 @@ struct cu_cp_test_amf_config {
   std::unique_ptr<mock_amf> amf_stub;
 };
 
+static s_nssai_t               default_s_nssai{slice_service_type{1}, slice_differentiator{}};
+static plmn_item               default_plmn_item{plmn_identity::test_value(), std::vector<s_nssai_t>{default_s_nssai}};
+static supported_tracking_area default_supported_tracking_area{7, {default_plmn_item}};
+
 struct cu_cp_test_env_params {
   cu_cp_test_env_params(
       unsigned                                                 max_nof_cu_ups_      = 8,
       unsigned                                                 max_nof_dus_         = 8,
       unsigned                                                 max_nof_ues_         = 8192,
       unsigned                                                 max_nof_drbs_per_ue_ = 8,
-      const std::vector<std::vector<supported_tracking_area>>& amf_config_          = {{supported_tracking_area{
-          7,
-          {plmn_item{plmn_identity::test_value(),
-                     std::vector<s_nssai_t>{s_nssai_t{slice_service_type{1}, slice_differentiator{}}}}}}}}) :
+      const std::vector<std::vector<supported_tracking_area>>& amf_config_ = {{default_supported_tracking_area}},
+      bool                                                     trigger_ho_from_measurements_ = true) :
     max_nof_cu_ups(max_nof_cu_ups_),
     max_nof_dus(max_nof_dus_),
     max_nof_ues(max_nof_ues_),
-    max_nof_drbs_per_ue(max_nof_drbs_per_ue_)
+    max_nof_drbs_per_ue(max_nof_drbs_per_ue_),
+    trigger_ho_from_measurements(trigger_ho_from_measurements_)
   {
     uint16_t amf_idx = 0;
     for (const auto& supported_tas : amf_config_) {
@@ -70,6 +73,7 @@ struct cu_cp_test_env_params {
   unsigned                                  max_nof_ues;
   unsigned                                  max_nof_drbs_per_ue;
   std::map<unsigned, cu_cp_test_amf_config> amf_configs;
+  bool                                      trigger_ho_from_measurements;
 };
 
 class cu_cp_test_environment
@@ -98,6 +102,8 @@ public:
 
   /// Start CU-CP connection to AMF and run NG setup procedure to completion.
   void run_ng_setup();
+  /// Drop TNL connection between the AMF and the CU-CP.
+  bool drop_amf_connection(unsigned amf_idx);
 
   /// Establish a TNL connection between a DU and the CU-CP.
   std::optional<unsigned> connect_new_du();
@@ -235,6 +241,8 @@ public:
       const std::vector<pdu_session_id_t>& expected_pdu_sessions_to_setup,
       const std::vector<pdu_session_id_t>& expected_pdu_sessions_failed_to_setup);
 
+  rrc_timers_t rrc_test_timer_values;
+
 private:
   class worker_manager;
 
@@ -250,7 +258,7 @@ private:
   /// Notifiers for the CU-CP interface.
   std::map<unsigned, cu_cp_test_amf_config> amf_configs;
 
-  // emulated CU-UP nodes.
+  // Emulated CU-UP nodes.
   std::unordered_map<unsigned, std::unique_ptr<mock_cu_up>> cu_ups;
   unsigned                                                  next_cu_up_idx = 0;
 

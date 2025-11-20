@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,17 +21,9 @@
  */
 
 #include "srsran/phy/upper/channel_processors/channel_processor_factories.h"
-#include "pbch_encoder_impl.h"
-#include "pbch_modulator_impl.h"
-#include "pdcch_encoder_impl.h"
-#include "pdcch_modulator_impl.h"
-#include "pdcch_processor_impl.h"
-#include "pdcch_processor_pool.h"
 #include "prach_detector_generic_impl.h"
 #include "prach_detector_pool.h"
 #include "prach_generator_impl.h"
-#include "ssb_processor_impl.h"
-#include "ssb_processor_pool.h"
 #include "srsran/phy/support/support_formatters.h"
 #include "srsran/phy/upper/channel_modulation/channel_modulation_factories.h"
 #include "srsran/phy/upper/channel_processors/channel_processor_formatters.h"
@@ -42,193 +34,6 @@
 using namespace srsran;
 
 namespace {
-
-class pbch_encoder_factory_sw : public pbch_encoder_factory
-{
-public:
-  pbch_encoder_factory_sw(std::shared_ptr<crc_calculator_factory>          crc_calc_factory_,
-                          std::shared_ptr<pseudo_random_generator_factory> prg_factory_,
-                          std::shared_ptr<polar_factory>                   polar_fec_factory_) :
-    crc_calc_factory(std::move(crc_calc_factory_)),
-    prg_factory(std::move(prg_factory_)),
-    polar_fec_factory(std::move(polar_fec_factory_))
-  {
-    srsran_assert(crc_calc_factory, "Invalid CRC factory.");
-    srsran_assert(prg_factory, "Invalid CRC factory.");
-    srsran_assert(polar_fec_factory, "Invalid polar factory.");
-  }
-
-  std::unique_ptr<pbch_encoder> create() override
-  {
-    return std::make_unique<pbch_encoder_impl>(
-        create_crc_calculator_factory_sw("auto")->create(crc_generator_poly::CRC24C),
-        create_pseudo_random_generator_sw_factory()->create(),
-        polar_fec_factory->create_interleaver(),
-        polar_fec_factory->create_allocator(),
-        polar_fec_factory->create_code(),
-        polar_fec_factory->create_encoder(),
-        polar_fec_factory->create_rate_matcher());
-  }
-
-private:
-  std::shared_ptr<crc_calculator_factory>          crc_calc_factory;
-  std::shared_ptr<pseudo_random_generator_factory> prg_factory;
-  std::shared_ptr<polar_factory>                   polar_fec_factory;
-};
-
-class pbch_modulator_factory_sw : public pbch_modulator_factory
-{
-private:
-  std::shared_ptr<channel_modulation_factory>      modulator_factory;
-  std::shared_ptr<pseudo_random_generator_factory> prg_factory;
-
-public:
-  pbch_modulator_factory_sw(std::shared_ptr<channel_modulation_factory>      modulator_factory_,
-                            std::shared_ptr<pseudo_random_generator_factory> prg_factory_) :
-    modulator_factory(std::move(modulator_factory_)), prg_factory(std::move(prg_factory_))
-  {
-    srsran_assert(modulator_factory, "Invalid modulator factory.");
-    srsran_assert(prg_factory, "Invalid PRG factory.");
-  }
-
-  std::unique_ptr<pbch_modulator> create() override
-  {
-    return std::make_unique<pbch_modulator_impl>(modulator_factory->create_modulation_mapper(), prg_factory->create());
-  }
-};
-
-class pdcch_modulator_factory_sw : public pdcch_modulator_factory
-{
-private:
-  std::shared_ptr<channel_modulation_factory>      modulator_factory;
-  std::shared_ptr<pseudo_random_generator_factory> prg_factory;
-  std::shared_ptr<resource_grid_mapper_factory>    rg_mapper_factory;
-
-public:
-  pdcch_modulator_factory_sw(std::shared_ptr<channel_modulation_factory>      modulator_factory_,
-                             std::shared_ptr<pseudo_random_generator_factory> prg_factory_,
-                             std::shared_ptr<resource_grid_mapper_factory>    rg_mapper_factory_) :
-    modulator_factory(std::move(modulator_factory_)),
-    prg_factory(std::move(prg_factory_)),
-    rg_mapper_factory(std::move(rg_mapper_factory_))
-  {
-    srsran_assert(modulator_factory, "Invalid modulator factory.");
-    srsran_assert(prg_factory, "Invalid PRG factory.");
-    srsran_assert(rg_mapper_factory, "Invalid resource grid mapper factory.");
-  }
-
-  std::unique_ptr<pdcch_modulator> create() override
-  {
-    return std::make_unique<pdcch_modulator_impl>(
-        modulator_factory->create_modulation_mapper(), prg_factory->create(), rg_mapper_factory->create());
-  }
-};
-
-class pdcch_encoder_factory_sw : public pdcch_encoder_factory
-{
-private:
-  std::shared_ptr<crc_calculator_factory> crc_factory;
-  std::shared_ptr<polar_factory>          polar_code_factory;
-
-public:
-  pdcch_encoder_factory_sw(std::shared_ptr<crc_calculator_factory> crc_factory_,
-                           std::shared_ptr<polar_factory>          polar_code_factory_) :
-    crc_factory(std::move(crc_factory_)), polar_code_factory(std::move(polar_code_factory_))
-  {
-    srsran_assert(crc_factory, "Invalid CRC calculator factory.");
-    srsran_assert(polar_code_factory, "Invalid Polar code factory.");
-  }
-
-  std::unique_ptr<pdcch_encoder> create() override
-  {
-    return std::make_unique<pdcch_encoder_impl>(crc_factory->create(crc_generator_poly::CRC24C),
-                                                polar_code_factory->create_interleaver(),
-                                                polar_code_factory->create_allocator(),
-                                                polar_code_factory->create_code(),
-                                                polar_code_factory->create_encoder(),
-                                                polar_code_factory->create_rate_matcher());
-  }
-};
-
-class pdcch_processor_factory_sw : public pdcch_processor_factory
-{
-private:
-  std::shared_ptr<pdcch_encoder_factory>        encoder_factory;
-  std::shared_ptr<pdcch_modulator_factory>      modulator_factory;
-  std::shared_ptr<dmrs_pdcch_processor_factory> dmrs_factory;
-
-public:
-  pdcch_processor_factory_sw(std::shared_ptr<pdcch_encoder_factory>        encoder_factory_,
-                             std::shared_ptr<pdcch_modulator_factory>      modulator_factory_,
-                             std::shared_ptr<dmrs_pdcch_processor_factory> dmrs_factory_) :
-    encoder_factory(std::move(encoder_factory_)),
-    modulator_factory(std::move(modulator_factory_)),
-    dmrs_factory(std::move(dmrs_factory_))
-  {
-    srsran_assert(encoder_factory, "Invalid encoder factory.");
-    srsran_assert(modulator_factory, "Invalid modulator factory.");
-    srsran_assert(dmrs_factory, "Invalid DM-RS factory.");
-  }
-
-  std::unique_ptr<pdcch_processor> create() override
-  {
-    return std::make_unique<pdcch_processor_impl>(
-        encoder_factory->create(), modulator_factory->create(), dmrs_factory->create());
-  }
-
-  std::unique_ptr<pdcch_pdu_validator> create_validator() override
-  {
-    return std::make_unique<pdcch_processor_validator_impl>();
-  }
-};
-
-class pdcch_processor_pool_factory : public pdcch_processor_factory
-{
-public:
-  pdcch_processor_pool_factory(std::shared_ptr<pdcch_processor_factory> factory_, unsigned nof_concurrent_threads_) :
-    factory(std::move(factory_)), nof_concurrent_threads(nof_concurrent_threads_)
-  {
-    srsran_assert(factory, "Invalid PDCCH processor factory.");
-    srsran_assert(nof_concurrent_threads > 1, "Number of concurrent threads must be greater than one.");
-  }
-
-  std::unique_ptr<pdcch_processor> create() override
-  {
-    if (!processors) {
-      std::vector<std::unique_ptr<pdcch_processor>> procs(nof_concurrent_threads);
-
-      for (auto& processor : procs) {
-        processor = factory->create();
-      }
-
-      processors = std::make_shared<pdcch_processor_pool::pdcch_processor_pool_type>(std::move(procs));
-    }
-
-    return std::make_unique<pdcch_processor_pool>(std::move(processors));
-  }
-
-  std::unique_ptr<pdcch_processor> create(srslog::basic_logger& logger, bool enable_logging_broadcast) override
-  {
-    if (!processors) {
-      std::vector<std::unique_ptr<pdcch_processor>> procs(nof_concurrent_threads);
-
-      for (auto& processor : procs) {
-        processor = factory->create(logger, enable_logging_broadcast);
-      }
-
-      processors = std::make_shared<pdcch_processor_pool::pdcch_processor_pool_type>(std::move(procs));
-    }
-
-    return std::make_unique<pdcch_processor_pool>(std::move(processors));
-  }
-
-  std::unique_ptr<pdcch_pdu_validator> create_validator() override { return factory->create_validator(); }
-
-private:
-  std::shared_ptr<pdcch_processor_factory>                         factory;
-  unsigned                                                         nof_concurrent_threads;
-  std::shared_ptr<pdcch_processor_pool::pdcch_processor_pool_type> processors;
-};
 
 class prach_detector_factory_sw : public prach_detector_factory
 {
@@ -285,31 +90,34 @@ public:
 
   std::unique_ptr<prach_detector> create() override
   {
-    std::vector<std::unique_ptr<prach_detector>> detectors(nof_concurrent_threads);
-
-    for (auto& detector : detectors) {
-      detector = factory->create();
+    if (!pool) {
+      std::vector<std::unique_ptr<prach_detector>> detectors(nof_concurrent_threads);
+      std::generate(detectors.begin(), detectors.end(), [this]() { return factory->create(); });
+      pool = std::make_shared<prach_detector_pool::detector_pool>(detectors);
     }
 
-    return std::make_unique<prach_detector_pool>(std::move(detectors));
+    return std::make_unique<prach_detector_pool>(pool);
   }
 
   std::unique_ptr<prach_detector> create(srslog::basic_logger& logger, bool log_all_opportunities) override
   {
-    std::vector<std::unique_ptr<prach_detector>> detectors(nof_concurrent_threads);
-
-    for (auto& detector : detectors) {
-      detector = factory->create(logger, log_all_opportunities);
+    if (!pool) {
+      std::vector<std::unique_ptr<prach_detector>> detectors(nof_concurrent_threads);
+      std::generate(detectors.begin(), detectors.end(), [this, &logger, log_all_opportunities]() {
+        return factory->create(logger, log_all_opportunities);
+      });
+      pool = std::make_shared<prach_detector_pool::detector_pool>(detectors);
     }
 
-    return std::make_unique<prach_detector_pool>(std::move(detectors));
+    return std::make_unique<prach_detector_pool>(pool);
   }
 
   std::unique_ptr<prach_detector_validator> create_validator() override { return factory->create_validator(); }
 
 private:
-  std::shared_ptr<prach_detector_factory> factory;
-  unsigned                                nof_concurrent_threads;
+  std::shared_ptr<prach_detector_factory>             factory;
+  std::shared_ptr<prach_detector_pool::detector_pool> pool;
+  unsigned                                            nof_concurrent_threads;
 };
 
 class prach_generator_factory_sw : public prach_generator_factory
@@ -318,145 +126,7 @@ public:
   std::unique_ptr<prach_generator> create() override { return std::make_unique<prach_generator_impl>(); }
 };
 
-class ssb_processor_factory_sw : public ssb_processor_factory
-{
-public:
-  explicit ssb_processor_factory_sw(ssb_processor_factory_sw_configuration& config) :
-    encoder_factory(std::move(config.encoder_factory)),
-    modulator_factory(std::move(config.modulator_factory)),
-    dmrs_factory(std::move(config.dmrs_factory)),
-    pss_factory(std::move(config.pss_factory)),
-    sss_factory(std::move(config.sss_factory))
-  {
-    srsran_assert(encoder_factory, "Invalid encoder factory");
-    srsran_assert(modulator_factory, "Invalid modulator factory");
-    srsran_assert(dmrs_factory, "Invalid DMRS factory");
-    srsran_assert(pss_factory, "Invalid PSS factory");
-    srsran_assert(sss_factory, "Invalid SSS factory");
-  }
-
-  std::unique_ptr<ssb_processor> create() override
-  {
-    ssb_processor_config config;
-    config.encoder   = encoder_factory->create();
-    config.modulator = modulator_factory->create();
-    config.dmrs      = dmrs_factory->create();
-    config.pss       = pss_factory->create();
-    config.sss       = sss_factory->create();
-
-    return std::make_unique<ssb_processor_impl>(std::move(config));
-  }
-
-  std::unique_ptr<ssb_pdu_validator> create_validator() override
-  {
-    return std::make_unique<ssb_processor_validator_impl>();
-  }
-
-private:
-  std::shared_ptr<pbch_encoder_factory>        encoder_factory;
-  std::shared_ptr<pbch_modulator_factory>      modulator_factory;
-  std::shared_ptr<dmrs_pbch_processor_factory> dmrs_factory;
-  std::shared_ptr<pss_processor_factory>       pss_factory;
-  std::shared_ptr<sss_processor_factory>       sss_factory;
-};
-
-class ssb_processor_pool_factory : public ssb_processor_factory
-{
-public:
-  ssb_processor_pool_factory(std::shared_ptr<ssb_processor_factory> factory_, unsigned nof_concurrent_threads_) :
-    factory(std::move(factory_)), nof_concurrent_threads(nof_concurrent_threads_)
-  {
-    srsran_assert(factory, "Invalid SSB processor factory.");
-    srsran_assert(nof_concurrent_threads > 1, "Number of concurrent threads must be greater than one.");
-  }
-
-  std::unique_ptr<ssb_processor> create() override
-  {
-    if (!processors) {
-      std::vector<std::unique_ptr<ssb_processor>> instances(nof_concurrent_threads);
-
-      for (auto& processor : instances) {
-        processor = factory->create();
-      }
-
-      processors = std::make_shared<ssb_processor_pool::ssb_processor_pool_type>(std::move(instances));
-    }
-
-    return std::make_unique<ssb_processor_pool>(std::move(processors));
-  }
-
-  std::unique_ptr<ssb_processor> create(srslog::basic_logger& logger) override
-  {
-    if (!processors) {
-      std::vector<std::unique_ptr<ssb_processor>> instances(nof_concurrent_threads);
-
-      for (auto& processor : instances) {
-        processor = factory->create(logger);
-      }
-
-      processors = std::make_shared<ssb_processor_pool::ssb_processor_pool_type>(std::move(instances));
-    }
-
-    return std::make_unique<ssb_processor_pool>(std::move(processors));
-  }
-
-  std::unique_ptr<ssb_pdu_validator> create_validator() override { return factory->create_validator(); }
-
-private:
-  std::shared_ptr<ssb_processor_factory>                       factory;
-  unsigned                                                     nof_concurrent_threads;
-  std::shared_ptr<ssb_processor_pool::ssb_processor_pool_type> processors;
-};
-
 } // namespace
-
-std::shared_ptr<pbch_encoder_factory>
-srsran::create_pbch_encoder_factory_sw(std::shared_ptr<crc_calculator_factory>          crc_factory,
-                                       std::shared_ptr<pseudo_random_generator_factory> prg_factory,
-                                       std::shared_ptr<polar_factory>                   polar_factory)
-{
-  return std::make_shared<pbch_encoder_factory_sw>(
-      std::move(crc_factory), std::move(prg_factory), std::move(polar_factory));
-}
-
-std::shared_ptr<pbch_modulator_factory>
-srsran::create_pbch_modulator_factory_sw(std::shared_ptr<channel_modulation_factory>      modulator_factory,
-                                         std::shared_ptr<pseudo_random_generator_factory> prg_factory)
-{
-  return std::make_shared<pbch_modulator_factory_sw>(std::move(modulator_factory), std::move(prg_factory));
-}
-
-std::shared_ptr<pdcch_encoder_factory>
-srsran::create_pdcch_encoder_factory_sw(std::shared_ptr<crc_calculator_factory> crc_factory,
-                                        std::shared_ptr<polar_factory>          encoder_factory)
-{
-  return std::make_shared<pdcch_encoder_factory_sw>(std::move(crc_factory), std::move(encoder_factory));
-}
-
-std::shared_ptr<pdcch_modulator_factory>
-srsran::create_pdcch_modulator_factory_sw(std::shared_ptr<channel_modulation_factory>      modulator_factory,
-                                          std::shared_ptr<pseudo_random_generator_factory> prg_factory,
-                                          std::shared_ptr<resource_grid_mapper_factory>    rg_mapper_factory)
-{
-  return std::make_shared<pdcch_modulator_factory_sw>(
-      std::move(modulator_factory), std::move(prg_factory), rg_mapper_factory);
-}
-
-std::shared_ptr<pdcch_processor_factory>
-srsran::create_pdcch_processor_factory_sw(std::shared_ptr<pdcch_encoder_factory>        encoder_factory,
-                                          std::shared_ptr<pdcch_modulator_factory>      modulator_factory,
-                                          std::shared_ptr<dmrs_pdcch_processor_factory> dmrs_factory)
-{
-  return std::make_shared<pdcch_processor_factory_sw>(
-      std::move(encoder_factory), std::move(modulator_factory), std::move(dmrs_factory));
-}
-
-std::shared_ptr<pdcch_processor_factory>
-srsran::create_pdcch_processor_pool_factory(std::shared_ptr<pdcch_processor_factory> processor_factory,
-                                            unsigned                                 nof_concurrent_threads)
-{
-  return std::make_shared<pdcch_processor_pool_factory>(processor_factory, nof_concurrent_threads);
-}
 
 std::shared_ptr<prach_detector_factory>
 srsran::create_prach_detector_factory_sw(std::shared_ptr<dft_processor_factory>         dft_factory,
@@ -478,93 +148,20 @@ std::shared_ptr<prach_generator_factory> srsran::create_prach_generator_factory_
   return std::make_shared<prach_generator_factory_sw>();
 }
 
-std::shared_ptr<ssb_processor_factory>
-srsran::create_ssb_processor_factory_sw(ssb_processor_factory_sw_configuration& config)
-{
-  return std::make_shared<ssb_processor_factory_sw>(config);
-}
-
-std::shared_ptr<ssb_processor_factory>
-srsran::create_ssb_processor_pool_factory(std::shared_ptr<ssb_processor_factory> processor_factory,
-                                          unsigned                               nof_concurrent_threads)
-{
-  return std::make_shared<ssb_processor_pool_factory>(processor_factory, nof_concurrent_threads);
-}
-
-template <typename Func>
-static std::chrono::nanoseconds time_execution(Func&& func)
-{
-  auto start = std::chrono::steady_clock::now();
-  func();
-  auto end = std::chrono::steady_clock::now();
-
-  return std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
-}
-
-static bool is_broadcast_rnti(uint16_t rnti)
-{
-  return ((rnti < to_value(rnti_t::MIN_CRNTI)) || (rnti > to_value(rnti_t::MAX_CRNTI)));
-}
-
 namespace {
-
-class logging_pdcch_processor_decorator : public pdcch_processor
-{
-public:
-  logging_pdcch_processor_decorator(srslog::basic_logger&            logger_,
-                                    bool                             enable_logging_broadcast_,
-                                    std::unique_ptr<pdcch_processor> processor_) :
-    logger(logger_), enable_logging_broadcast(enable_logging_broadcast_), processor(std::move(processor_))
-  {
-    srsran_assert(processor, "Invalid processor.");
-  }
-
-  void process(resource_grid_writer& grid, const pdu_t& pdu) override
-  {
-    const auto&& func = [this, &grid, &pdu]() { processor->process(grid, pdu); };
-
-    if (!enable_logging_broadcast && is_broadcast_rnti(pdu.dci.rnti)) {
-      func();
-      return;
-    }
-
-    std::chrono::nanoseconds time_ns = time_execution(func);
-
-    static_bit_buffer<pdcch_constants::MAX_DCI_PAYLOAD_SIZE> data(pdu.dci.payload.size());
-    srsvec::zero(data.get_buffer());
-    srsvec::bit_pack(data, pdu.dci.payload);
-
-    if (logger.debug.enabled()) {
-      // Detailed log information, including a list of all PDU fields.
-      logger.debug(pdu.slot.sfn(),
-                   pdu.slot.slot_index(),
-                   data.get_buffer().data(),
-                   divide_ceil(data.size(), 8),
-                   "PDCCH: {:s} {}\n  {:n}\n  {}",
-                   pdu,
-                   time_ns,
-                   pdu,
-                   time_ns);
-      return;
-    }
-    // Single line log entry.
-    logger.info(pdu.slot.sfn(),
-                pdu.slot.slot_index(),
-                data.get_buffer().data(),
-                divide_ceil(data.size(), 8),
-                "PDCCH: {:s} {}",
-                pdu,
-                time_ns);
-  }
-
-private:
-  srslog::basic_logger&            logger;
-  bool                             enable_logging_broadcast;
-  std::unique_ptr<pdcch_processor> processor;
-};
 
 class logging_prach_detector_decorator : public prach_detector
 {
+  template <typename Func>
+  static std::chrono::nanoseconds time_execution(Func&& func)
+  {
+    auto start = std::chrono::steady_clock::now();
+    func();
+    auto end = std::chrono::steady_clock::now();
+
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
+  }
+
 public:
   logging_prach_detector_decorator(srslog::basic_logger&           logger_,
                                    bool                            log_all_opportunities_,
@@ -607,62 +204,9 @@ private:
   std::unique_ptr<prach_detector> detector;
 };
 
-class logging_ssb_processor_decorator : public ssb_processor
-{
-public:
-  logging_ssb_processor_decorator(srslog::basic_logger& logger_, std::unique_ptr<ssb_processor> processor_) :
-    logger(logger_), processor(std::move(processor_))
-  {
-    srsran_assert(processor, "Invalid processor.");
-  }
-
-  void process(resource_grid_writer& grid, const pdu_t& pdu) override
-  {
-    const auto&& func = [&]() { processor->process(grid, pdu); };
-
-    std::chrono::nanoseconds time_ns = time_execution(func);
-
-    static_bit_buffer<BCH_PAYLOAD_SIZE> data(pdu.bch_payload.size());
-    srsvec::zero(data.get_buffer());
-    srsvec::bit_pack(data, pdu.bch_payload);
-
-    if (logger.debug.enabled()) {
-      // Detailed log information, including a list of all SSB PDU fields.
-      logger.debug(pdu.slot.sfn(),
-                   pdu.slot.slot_index(),
-                   data.get_buffer().data(),
-                   divide_ceil(data.size(), 8),
-                   "SSB: {:s} {}\n  {:n}\n  {}",
-                   pdu,
-                   time_ns,
-                   pdu,
-                   time_ns);
-
-      return;
-    }
-    // Single line log entry.
-    logger.info(data.get_buffer().data(), divide_ceil(data.size(), 8), "SSB: {:s} {}", pdu, time_ns);
-  }
-
-private:
-  srslog::basic_logger&          logger;
-  std::unique_ptr<ssb_processor> processor;
-};
-
 } // namespace
-
-std::unique_ptr<pdcch_processor> pdcch_processor_factory::create(srslog::basic_logger& logger,
-                                                                 bool                  enable_logging_broadcast)
-{
-  return std::make_unique<logging_pdcch_processor_decorator>(logger, enable_logging_broadcast, create());
-}
 
 std::unique_ptr<prach_detector> prach_detector_factory::create(srslog::basic_logger& logger, bool log_all_opportunities)
 {
   return std::make_unique<logging_prach_detector_decorator>(logger, log_all_opportunities, create());
-}
-
-std::unique_ptr<ssb_processor> ssb_processor_factory::create(srslog::basic_logger& logger)
-{
-  return std::make_unique<logging_ssb_processor_decorator>(logger, create());
 }

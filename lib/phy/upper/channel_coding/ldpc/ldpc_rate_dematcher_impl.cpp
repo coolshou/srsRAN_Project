@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -102,7 +102,7 @@ void ldpc_rate_dematcher_impl::rate_dematch(span<log_likelihood_ratio>       out
   nof_filler_bits = cfg.cb_specific.nof_filler_bits;
 
   double tmp = (shift_factor[rv] * buffer_length) / block_length;
-  shift_k0   = static_cast<uint16_t>(floor(tmp)) * lifting_size;
+  shift_k0   = static_cast<uint16_t>(std::floor(tmp)) * lifting_size;
 
   if (modulation_order == 1) {
     allot_llrs(output, input);
@@ -111,7 +111,7 @@ void ldpc_rate_dematcher_impl::rate_dematch(span<log_likelihood_ratio>       out
     deinterleave_llrs(aux, input);
     allot_llrs(output, aux);
   }
-};
+}
 
 void ldpc_rate_dematcher_impl::combine_softbits(span<log_likelihood_ratio>       out,
                                                 span<const log_likelihood_ratio> in0,

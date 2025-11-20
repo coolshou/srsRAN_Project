@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,8 +22,7 @@
 
 #include "rrc_ue_impl.h"
 #include "rrc_ue_helpers.h"
-#include "srsran/asn1/rrc_nr/dl_dcch_msg.h"
-#include "srsran/asn1/rrc_nr/ho_prep_info.h"
+#include "srsran/asn1/rrc_nr/rrc_nr.h"
 #include "srsran/support/cpu_architecture_info.h"
 #include "srsran/support/srsran_assert.h"
 
@@ -36,9 +35,10 @@ rrc_ue_impl::rrc_ue_impl(rrc_pdu_f1ap_notifier&                 f1ap_pdu_notifie
                          rrc_ue_context_update_notifier&        cu_cp_notifier_,
                          rrc_ue_measurement_notifier&           measurement_notifier_,
                          rrc_ue_cu_cp_ue_notifier&              cu_cp_ue_notifier_,
+                         rrc_ue_event_notifier&                 metrics_notifier_,
                          const ue_index_t                       ue_index_,
                          const rnti_t                           c_rnti_,
-                         const rrc_cell_context                 cell_,
+                         rrc_cell_context                       cell_,
                          const rrc_ue_cfg_t&                    cfg_,
                          const byte_buffer                      du_to_cu_container_,
                          std::optional<rrc_ue_transfer_context> rrc_context) :
@@ -48,19 +48,19 @@ rrc_ue_impl::rrc_ue_impl(rrc_pdu_f1ap_notifier&                 f1ap_pdu_notifie
   cu_cp_notifier(cu_cp_notifier_),
   measurement_notifier(measurement_notifier_),
   cu_cp_ue_notifier(cu_cp_ue_notifier_),
+  metrics_notifier(metrics_notifier_),
   du_to_cu_container(du_to_cu_container_),
   logger("RRC", {ue_index_, c_rnti_}),
   event_mng(std::make_unique<rrc_ue_event_manager>(cu_cp_ue_notifier.get_timer_factory()))
 {
   srsran_assert(context.cell.bands.empty() == false, "Band must be present in RRC cell configuration.");
-  srsran_assert(context.cfg.rrc_procedure_timeout_ms.count() > 0, "RRC procedure timeout cannot be zero.");
 
   // Update security context and keys
   if (rrc_context.has_value()) {
     if (!rrc_context.value().is_inter_cu_handover) {
       cu_cp_ue_notifier.update_security_context(rrc_context.value().sec_context);
+      cu_cp_ue_notifier.perform_horizontal_key_derivation(cell_.pci, cell_.ssb_arfcn);
     }
-    cu_cp_ue_notifier.perform_horizontal_key_derivation(cell_.pci, cell_.ssb_arfcn);
 
     // Create SRBs.
     for (const auto& srb : rrc_context.value().srbs) {
@@ -121,6 +121,22 @@ static_vector<srb_id_t, MAX_NOF_SRBS> rrc_ue_impl::get_srbs()
 rrc_state rrc_ue_impl::get_rrc_state() const
 {
   return context.state;
+}
+
+void rrc_ue_impl::cancel_handover_reconfiguration_transaction(uint8_t transaction_id)
+{
+  // If the UE is awaiting a RRC Reconfiguration Complete for an ongoing handover, cancel the transaction.
+  logger.log_debug(
+      "Received a RRC Reestablishment Request during an ongoing handover. Cancelling the handover transaction");
+  if (not event_mng->transactions.cancel_transaction(transaction_id)) {
+    logger.log_warning("Unexpected RRC transaction id={}", transaction_id);
+  }
+}
+
+void rrc_ue_impl::cancel_all_transactions()
+{
+  logger.log_debug("Cancelling all ongoing RRC transactions");
+  event_mng->cancel_all();
 }
 
 void rrc_ue_impl::on_new_dl_ccch(const asn1::rrc_nr::dl_ccch_msg_s& dl_ccch_msg)

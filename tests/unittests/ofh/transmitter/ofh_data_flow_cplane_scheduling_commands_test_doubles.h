@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,13 +23,15 @@
 #pragma once
 
 #include "../../../../lib/ofh/transmitter/ofh_data_flow_cplane_scheduling_commands.h"
+#include "srsran/ofh/ofh_controller.h"
 
 namespace srsran {
 namespace ofh {
 namespace testing {
 
 /// Spy Control-Plane scheduling commands data flow.
-class data_flow_cplane_scheduling_commands_spy : public data_flow_cplane_scheduling_commands
+class data_flow_cplane_scheduling_commands_spy : public data_flow_cplane_scheduling_commands,
+                                                 public operation_controller
 {
 public:
   struct spy_info {
@@ -38,6 +40,10 @@ public:
     slot_point        slot;
     filter_index_type filter_type;
   };
+
+  operation_controller& get_operation_controller() override { return *this; }
+  void                  start() override {}
+  void                  stop() override {}
 
   void enqueue_section_type_1_message(const data_flow_cplane_type_1_context& context) override
   {
@@ -56,6 +62,8 @@ public:
     info.direction                                        = data_direction::uplink;
     info.filter_type                                      = context.filter_type;
   }
+
+  data_flow_message_encoding_metrics_collector* get_metrics_collector() override { return nullptr; }
 
   /// Returns true if the method enqueue section type 1 message has been called, otherwise false.
   bool has_enqueue_section_type_1_method_been_called() const

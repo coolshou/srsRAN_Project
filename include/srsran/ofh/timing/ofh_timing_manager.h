@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,6 +24,7 @@
 
 #include "srsran/ofh/ofh_controller.h"
 #include "srsran/ofh/timing/ofh_ota_symbol_boundary_notifier_manager.h"
+#include "srsran/ofh/timing/ofh_timing_metrics_collector.h"
 
 namespace srsran {
 namespace ofh {
@@ -36,10 +37,13 @@ public:
   virtual ~timing_manager() = default;
 
   /// Returns the controller of this timing manager.
-  virtual controller& get_controller() = 0;
+  virtual operation_controller& get_controller() = 0;
 
   /// Returns the OTA symbol boundary notifier manager of this timing manager.
   virtual ota_symbol_boundary_notifier_manager& get_ota_symbol_boundary_notifier_manager() = 0;
+
+  /// Returns the timing metrics collector of this timing manager.
+  virtual timing_metrics_collector& get_metrics_collector() = 0;
 };
 
 } // namespace ofh

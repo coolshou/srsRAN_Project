@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,22 +22,22 @@
 
 #pragma once
 
-#include "srsran/adt/expected.h"
+#include "f1ap_du_metrics_collector.h"
 #include "srsran/f1ap/du/f1ap_du_connection_manager.h"
 #include "srsran/f1ap/du/f1ap_du_ue_config.h"
 #include "srsran/f1ap/du/f1ap_du_ue_context_update.h"
 #include "srsran/f1ap/du/f1c_bearer.h"
 #include "srsran/f1ap/f1ap_message_handler.h"
-#include "srsran/f1u/du/f1u_bearer.h"
-#include "srsran/mac/mac_paging_information_handler.h"
 #include "srsran/ran/du_types.h"
+#include "srsran/ran/paging_information.h"
 #include "srsran/ran/rb_id.h"
-#include "srsran/ran/rnti.h"
 #include "srsran/support/async/async_task.h"
 #include "srsran/support/timers.h"
 
 namespace srsran {
 namespace srs_du {
+
+class f1ap_du_positioning_handler;
 
 struct f1ap_rrc_delivery_report_msg {
   du_cell_index_t cell_index          = INVALID_DU_CELL_INDEX;
@@ -65,7 +65,15 @@ struct f1ap_ue_inactivity_notification_message {};
 struct f1ap_notify_message {};
 
 struct f1ap_ue_delete_request {
+  /// Identifier of the UE context to be removed from the DU.
   du_ue_index_t ue_index = INVALID_DU_UE_INDEX;
+  /// \brief How much time to wait between UE deactivation (stop activity in all bearers and scheduling) and UE full
+  /// removal (including deallocation of its RAN resources).
+  /// \remark As per TS 38.331, 5.3.8.3, it is optional for the UE to immediately shutdown or wait the full 60msec
+  /// after it receives the RRC Release. If it decides to stay awake for those full 60msec, it will keep using RAN
+  /// resources (e.g. for CSI and SR). To avoid the reallocation of RAN resources to other UEs too early (and
+  /// potentially cause collisions), we may need to postpone the UE context full removal from the DU.
+  std::chrono::milliseconds ran_resource_release_timeout{0};
 };
 
 /// Handle F1AP UE context management procedures as defined in TS 38.473 section 8.3.
@@ -100,6 +108,10 @@ public:
   /// \brief Initiate the Notify procedure as per TS 38.473 section 8.3.7
   /// \param[in] msg The Notify message to transmit.
   virtual void handle_notify(const f1ap_notify_message& msg) = 0;
+
+  /// \brief Checks if UE was assigned a gNB-CU-UE-F1AP-ID by the CU-CP.
+  /// \param[in] ue_index of a given UE.
+  virtual bool has_gnb_cu_ue_f1ap_id(const du_ue_index_t& ue_index) const = 0;
 };
 
 /// This interface is used to get mapping between ue_index, gnb_cu_ue_f1ap_id and gnb_du_ue_f1ap_id.
@@ -111,12 +123,13 @@ public:
   /// \brief Map ue_index to gnb_cu_ue_f1ap_id.
   /// \param[in] ue_index of a given UE.
   /// \param[out] gnb_cu_ue_f1ap_id of the given UE.
-  virtual gnb_cu_ue_f1ap_id_t get_gnb_cu_ue_f1ap_id(const du_ue_index_t& ue_index) = 0;
+  virtual std::optional<gnb_cu_ue_f1ap_id_t> get_gnb_cu_ue_f1ap_id(const du_ue_index_t& ue_index) const = 0;
 
   /// \brief Map gnb_du_ue_f1ap_id to gnb_cu_ue_f1ap_id.
   /// \param[in] gnb_du_ue_f1ap_id of a given UE.
   /// \param[out] gnb_cu_ue_f1ap_id of the given UE.
-  virtual gnb_cu_ue_f1ap_id_t get_gnb_cu_ue_f1ap_id(const gnb_du_ue_f1ap_id_t& gnb_du_ue_f1ap_id) = 0;
+  virtual std::optional<gnb_cu_ue_f1ap_id_t>
+  get_gnb_cu_ue_f1ap_id(const gnb_du_ue_f1ap_id_t& gnb_du_ue_f1ap_id) const = 0;
 
   /// \brief Map ue_index to gnb_du_ue_f1ap_id.
   /// \param[in] ue_index of a given UE.
@@ -166,7 +179,7 @@ public:
 
 /// The F1AP uses this interface to notify the DU of new required updates (e.g. UE config modification, etc.) and to
 /// request services such as timers, scheduling of async tasks, etc.
-class f1ap_du_configurator : public f1ap_task_scheduler
+class f1ap_du_configurator : public f1ap_interface_update_notifier, public f1ap_task_scheduler
 {
 public:
   virtual ~f1ap_du_configurator() = default;
@@ -206,6 +219,9 @@ public:
   /// Confirm that the UE applied the pending configuration.
   virtual void on_ue_config_applied(du_ue_index_t ue_index) = 0;
 
+  /// Retrieve handling of positioning information.
+  virtual f1ap_du_positioning_handler& get_positioning_handler() = 0;
+
   /// \brief Retrieve task scheduler specific to a given UE.
   virtual f1ap_ue_task_scheduler& get_ue_handler(du_ue_index_t ue_index) = 0;
 };
@@ -226,7 +242,13 @@ class f1ap_du : public f1ap_message_handler,
                 public f1ap_connection_manager,
                 public f1ap_ue_context_manager,
                 public f1ap_ue_id_translator
-{};
+{
+public:
+  virtual ~f1ap_du() = default;
+
+  /// \brief Retrieve the F1AP metrics collector.
+  virtual f1ap_metrics_collector& get_metrics_collector() = 0;
+};
 
 } // namespace srs_du
 } // namespace srsran

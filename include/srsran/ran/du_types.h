@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,7 +22,8 @@
 
 #pragma once
 
-#include "srsran/ran/serv_cell_index.h"
+#include "srsran/ran/gnb_constants.h"
+#include "fmt/format.h"
 #include <cstdint>
 #include <type_traits>
 
@@ -39,24 +40,24 @@ enum du_ue_index_t : uint16_t {
 /// Maximum number of cells supported by DU (implementation-defined).
 enum du_cell_index_t : uint16_t {
   MIN_DU_CELL_INDEX     = 0,
-  MAX_DU_CELL_INDEX     = 15,
-  MAX_NOF_DU_CELLS      = 16,
+  MAX_DU_CELL_INDEX     = MAX_CELLS_PER_DU - 1,
+  MAX_NOF_DU_CELLS      = MAX_CELLS_PER_DU,
   INVALID_DU_CELL_INDEX = MAX_NOF_DU_CELLS
 };
 
 /// Convert integer to DU UE index type.
-constexpr inline du_ue_index_t to_du_ue_index(std::underlying_type_t<du_ue_index_t> idx)
+constexpr du_ue_index_t to_du_ue_index(std::underlying_type_t<du_ue_index_t> idx)
 {
   return static_cast<du_ue_index_t>(idx);
 }
 
-constexpr inline bool is_du_ue_index_valid(du_ue_index_t ue_idx)
+constexpr bool is_du_ue_index_valid(du_ue_index_t ue_idx)
 {
   return ue_idx < MAX_NOF_DU_UES;
 }
 
 /// Convert integer to DU cell index type.
-inline du_cell_index_t to_du_cell_index(std::underlying_type_t<du_cell_index_t> idx)
+constexpr du_cell_index_t to_du_cell_index(std::underlying_type_t<du_cell_index_t> idx)
 {
   return static_cast<du_cell_index_t>(idx);
 }
@@ -69,7 +70,7 @@ enum ue_cell_index_t : uint16_t {
   INVALID_UE_CELL_INDEX = MAX_NOF_SCELL_INDEXES
 };
 
-inline ue_cell_index_t to_ue_cell_index(std::underlying_type_t<ue_cell_index_t> idx)
+constexpr ue_cell_index_t to_ue_cell_index(std::underlying_type_t<ue_cell_index_t> idx)
 {
   return static_cast<ue_cell_index_t>(idx);
 }
@@ -82,3 +83,43 @@ enum du_cell_group_index_t : uint16_t {
 };
 
 } // namespace srsran
+
+namespace fmt {
+
+template <>
+struct formatter<srsran::du_ue_index_t> {
+  template <typename ParseContext>
+  auto parse(ParseContext& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(srsran::du_ue_index_t ue_idx, FormatContext& ctx) const
+  {
+    if (srsran::is_du_ue_index_valid(ue_idx)) {
+      return format_to(ctx.out(), "{}", underlying(ue_idx));
+    }
+    return format_to(ctx.out(), "invalid");
+  }
+};
+
+template <>
+struct formatter<srsran::du_cell_index_t> {
+  template <typename ParseContext>
+  auto parse(ParseContext& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(srsran::du_cell_index_t cell_idx, FormatContext& ctx) const
+  {
+    if (cell_idx < srsran::du_cell_index_t::MAX_NOF_DU_CELLS) {
+      return format_to(ctx.out(), "{}", underlying(cell_idx));
+    }
+    return format_to(ctx.out(), "invalid");
+  }
+};
+
+} // namespace fmt

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -32,10 +32,13 @@ namespace srsran {
 /// Generic LDPC decoder implementation without any optimization.
 class ldpc_decoder_generic : public ldpc_decoder_impl
 {
-  // See above for the documentation.
-  void specific_init() override { node_size_byte = lifting_size; }
+public:
+  /// Constructor: configures the force_decoding flag.
+  explicit ldpc_decoder_generic(bool cfg_force_decoding) : ldpc_decoder_impl(cfg_force_decoding) {}
 
-  bool get_hard_bits(bit_buffer& out) override;
+private:
+  // See ldpc_decoder_impl for the documentation.
+  void specific_init() override { node_size_byte = lifting_size; }
 
   void compute_var_to_check_msgs(span<log_likelihood_ratio>       this_var_to_check,
                                  span<const log_likelihood_ratio> this_soft_bits,

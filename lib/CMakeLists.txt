@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -39,6 +39,7 @@ endif (DPDK_FOUND)
 add_subdirectory(instrumentation)
 add_subdirectory(mac)
 add_subdirectory(ngap)
+add_subdirectory(nrppa)
 add_subdirectory(nru)
 add_subdirectory(ofh)
 add_subdirectory(pcap)

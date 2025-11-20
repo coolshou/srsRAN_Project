@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -47,6 +47,8 @@ void srsran::srs_cu_cp::fill_e1ap_qos_flow_param_item(e1ap_qos_flow_qos_param_it
 
   e1ap_qos_item.qos_flow_level_qos_params.ng_ran_alloc_retention =
       request_item.qos_flow_level_qos_params.alloc_retention_prio;
+
+  e1ap_qos_item.qos_flow_level_qos_params.gbr_qos_flow_info = request_item.qos_flow_level_qos_params.gbr_qos_info;
 }
 
 bool srsran::srs_cu_cp::verify_and_log_cell_group_config(const byte_buffer&          packed_cell_group_cfg,
@@ -76,11 +78,12 @@ bool srsran::srs_cu_cp::fill_rrc_reconfig_args(
     const std::vector<drb_id_t>&                                     drb_to_remove,
     const f1ap_du_to_cu_rrc_info&                                    du_to_cu_rrc_info,
     const std::vector<byte_buffer>&                                  nas_pdus,
-    const std::optional<rrc_meas_cfg>                                rrc_meas_cfg,
+    const std::optional<rrc_meas_cfg>&                               rrc_meas_cfg,
     bool                                                             reestablish_srbs,
     bool                                                             reestablish_drbs,
     std::optional<uint8_t>                                           ncc,
     byte_buffer                                                      sib1,
+    std::optional<security::sec_selected_algos>                      selected_algos,
     const srslog::basic_logger&                                      logger)
 {
   rrc_radio_bearer_config radio_bearer_config;
@@ -98,7 +101,6 @@ bool srsran::srs_cu_cp::fill_rrc_reconfig_args(
 
   // Set masterCellGroupConfig as received by DU.
   rrc_recfg_v1530_ies rrc_recfg_v1530_ies;
-  rrc_recfg_v1530_ies.master_cell_group = du_to_cu_rrc_info.cell_group_cfg.copy();
 
   // Verify DU container content.
   if (!du_to_cu_rrc_info.cell_group_cfg.empty()) {
@@ -111,7 +113,7 @@ bool srsran::srs_cu_cp::fill_rrc_reconfig_args(
   }
 
   for (const auto& pdu_session_to_add_mod : pdu_sessions) {
-    // Add radio bearer config
+    // Fill radio bearer config.
     for (const auto& drb_to_add : pdu_session_to_add_mod.second.drb_to_add) {
       rrc_drb_to_add_mod drb_to_add_mod;
       drb_to_add_mod.drb_id = drb_to_add.first;
@@ -120,7 +122,7 @@ bool srsran::srs_cu_cp::fill_rrc_reconfig_args(
       } else {
         drb_to_add_mod.pdcp_cfg = drb_to_add.second.pdcp_cfg;
 
-        // Add CN association and SDAP config.
+        // Fill CN association and SDAP config.
         rrc_cn_assoc cn_assoc;
         cn_assoc.sdap_cfg       = drb_to_add.second.sdap_cfg;
         drb_to_add_mod.cn_assoc = cn_assoc;
@@ -137,7 +139,7 @@ bool srsran::srs_cu_cp::fill_rrc_reconfig_args(
       } else {
         drb_to_add_mod.pdcp_cfg = drb_to_modify.second.pdcp_cfg;
 
-        // Add CN association and SDAP config.
+        // Fill CN association and SDAP config.
         rrc_cn_assoc cn_assoc;
         cn_assoc.sdap_cfg       = drb_to_modify.second.sdap_cfg;
         drb_to_add_mod.cn_assoc = cn_assoc;
@@ -164,6 +166,14 @@ bool srsran::srs_cu_cp::fill_rrc_reconfig_args(
     radio_bearer_config.drb_to_release_list.push_back(drb_id);
   }
 
+  // If selected security algos, fill securityConfig
+  if (selected_algos) {
+    radio_bearer_config.security_cfg.emplace();
+    radio_bearer_config.security_cfg->security_algorithm_cfg.emplace();
+    radio_bearer_config.security_cfg->security_algorithm_cfg->ciphering_algorithm      = selected_algos->cipher_algo;
+    radio_bearer_config.security_cfg->security_algorithm_cfg->integrity_prot_algorithm = selected_algos->integ_algo;
+  }
+
   // Append NAS PDUs as received by AMF.
   for (const auto& nas_pdu : nas_pdus) {
     rrc_recfg_v1530_ies.ded_nas_msg_list.push_back(nas_pdu.copy());
@@ -178,11 +188,16 @@ bool srsran::srs_cu_cp::fill_rrc_reconfig_args(
   rrc_reconfig_args.non_crit_ext = rrc_recfg_v1530_ies;
 
   if (radio_bearer_config.contains_values()) {
-    // Add radio bearer config.
+    // Fill radio bearer config.
     rrc_reconfig_args.radio_bearer_cfg = radio_bearer_config;
   }
 
   rrc_reconfig_args.meas_cfg = rrc_meas_cfg;
+
+  // Fill meas gap config.
+  if (!du_to_cu_rrc_info.meas_gap_cfg.empty()) {
+    rrc_reconfig_args.meas_gap_cfg = du_to_cu_rrc_info.meas_gap_cfg.copy();
+  }
 
   if (!sib1.empty()) {
     rrc_reconfig_args.non_crit_ext.value().ded_sib1_delivery = std::move(sib1);
@@ -217,24 +232,23 @@ bool srsran::srs_cu_cp::fill_f1ap_drb_setup_mod_item(
   // Start filling the DU request.
   drb_setup_mod_item.drb_id = drb_id;
 
-  // QoS config.
-  drb_setup_mod_item.qos_info.drb_qos.qos_desc             = next_drb_config.qos_params.qos_desc;
-  drb_setup_mod_item.qos_info.drb_qos.alloc_retention_prio = next_drb_config.qos_params.alloc_retention_prio;
+  // Fill DRB QoS.
+  drb_setup_mod_item.qos_info.drb_qos = next_drb_config.qos_params;
 
-  // S-NSSAI.
+  // Fill S-NSSAI.
   drb_setup_mod_item.qos_info.s_nssai = next_drb_config.s_nssai;
 
   drb_setup_mod_item.mode        = next_drb_config.rlc_mod;
   drb_setup_mod_item.pdcp_sn_len = next_drb_config.pdcp_cfg.tx.sn_size;
 
-  // Add UP TNL info.
+  // Fill UP TNL info.
   for (const auto& ul_up_transport_param : e1ap_drb_item.ul_up_transport_params) {
     drb_setup_mod_item.uluptnl_info_list.push_back(ul_up_transport_param.up_tnl_info);
     // Store UL tunnel information in DRB context (required for mobility).
     next_drb_config.ul_up_tnl_info_to_be_setup_list.push_back(ul_up_transport_param.up_tnl_info);
   }
 
-  // QoS flows.
+  // Fill QoS flows.
   for (const auto& e1ap_flow : e1ap_drb_item.flow_setup_list) {
     // Verify the QoS flow ID is present in original setup message.
     if (!ngap_qos_flow_setup_items.contains(e1ap_flow.qos_flow_id)) {
@@ -249,7 +263,7 @@ bool srsran::srs_cu_cp::fill_f1ap_drb_setup_mod_item(
     }
 
     if (response_flow_list) {
-      // Add flow to NGAP response.
+      // Fill flow to NGAP response.
       cu_cp_associated_qos_flow qos_flow;
       qos_flow.qos_flow_id = e1ap_flow.qos_flow_id;
       response_flow_list->emplace(e1ap_flow.qos_flow_id, qos_flow);
@@ -258,7 +272,7 @@ bool srsran::srs_cu_cp::fill_f1ap_drb_setup_mod_item(
     // Retrieve QoS properties from NGAP request.
     const auto& ngap_qos_flow = ngap_qos_flow_setup_items[e1ap_flow.qos_flow_id];
 
-    // Add flow to F1AP DRB item.
+    // Fill flow to F1AP DRB item.
     flow_mapped_to_drb flow_map_item;
     flow_map_item.qos_flow_id               = e1ap_flow.qos_flow_id;
     flow_map_item.qos_flow_level_qos_params = ngap_qos_flow.qos_flow_level_qos_params;

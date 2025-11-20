@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -23,9 +23,13 @@ set(SOURCES
         cu_up_factory.cpp
         cu_up_impl.cpp
         cu_up_manager_impl.cpp
-        pdu_session_manager_impl.cpp
-        routines/initial_cu_up_setup_routine.cpp
         ue_manager.cpp
+        pdu_session_manager_impl.cpp
+        ngu_session_manager_impl.cpp
+        routines/cu_up_setup_routine.cpp
+        routines/cu_up_e1_connection_loss_routine.cpp
+        routines/cu_up_bearer_context_modification_routine.cpp
+        routines/cu_up_test_mode_routines.cpp
 )
 
 add_library(srsran_cu_up STATIC ${SOURCES})

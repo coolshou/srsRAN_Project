@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -19,6 +19,7 @@
 #
 
 add_subdirectory(generic_functions)
+add_subdirectory(lower)
+add_subdirectory(metrics)
 add_subdirectory(support)
 add_subdirectory(upper)
-add_subdirectory(lower)

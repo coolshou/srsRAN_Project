@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,11 +23,12 @@
 #include "lib/mac/mac_dl/cell_dl_harq_buffer_pool.h"
 #include "lib/mac/mac_dl/dl_sch_pdu_assembler.h"
 #include "mac_test_helpers.h"
-#include "srsran/mac/config/mac_config_helpers.h"
+#include "srsran/mac/mac_pdu_format.h"
 #include "srsran/ran/pdsch/pdsch_constants.h"
 #include "srsran/support/bit_encoding.h"
 #include "srsran/support/executors/manual_task_worker.h"
 #include "srsran/support/test_utils.h"
+#include <deque>
 #include <gtest/gtest.h>
 
 using namespace srsran;
@@ -148,7 +149,7 @@ public:
     return nof_bytes;
   }
 
-  unsigned on_buffer_state_update() override { return 0; }
+  rlc_buffer_state on_buffer_state_update() override { return rlc_buffer_state{}; }
 };
 
 class mac_dl_sch_assembler_tester : public testing::Test

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -114,8 +114,8 @@ public:
                   dmrs_pattern.symbols.size());
 
     // Generate DMRS pattern.
-    dmrs_pattern.prb_mask.resize(bwp_start_rb + bwp_size_rb);
-    dmrs_pattern.prb_mask.fill(bwp_start_rb, bwp_start_rb + bwp_size_rb);
+    dmrs_pattern.crb_mask.resize(bwp_start_rb + bwp_size_rb);
+    dmrs_pattern.crb_mask.fill(bwp_start_rb, bwp_start_rb + bwp_size_rb);
     dmrs_pattern.re_mask = get_dmrs_prb_mask(nof_cdm_groups_without_data);
     dmrs_pattern.symbols = symbol_mask;
 
@@ -140,7 +140,7 @@ private:
 };
 
 /// Defines the maximum number of ports the DM-RS can be mapped to.
-static constexpr unsigned DMRS_MAX_NPORTS =
+constexpr unsigned DMRS_MAX_NPORTS =
     std::max(dmrs_type(dmrs_type::TYPE1).dmrs_max_ports_type(), dmrs_type(dmrs_type::TYPE2).dmrs_max_ports_type());
 
 } // namespace srsran

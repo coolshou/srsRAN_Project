@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -45,7 +45,7 @@ struct formatter<srsran::dci_0_0_size> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::dci_0_0_size& dci_size, FormatContext& ctx)
+  auto format(const srsran::dci_0_0_size& dci_size, FormatContext& ctx) const
   {
     helper.format_always(ctx, "Total:                {}", dci_size.total);
     helper.format_always(ctx, "Frequency resource:   {}", dci_size.frequency_resource);
@@ -71,7 +71,7 @@ struct formatter<srsran::dci_1_0_size> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::dci_1_0_size& dci_size, FormatContext& ctx)
+  auto format(const srsran::dci_1_0_size& dci_size, FormatContext& ctx) const
   {
     helper.format_always(ctx, "Total:              {}", dci_size.total);
     helper.format_always(ctx, "Frequency resource: {}", dci_size.frequency_resource);
@@ -97,7 +97,7 @@ struct formatter<srsran::dci_0_1_size> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::dci_0_1_size& dci_size, FormatContext& ctx)
+  auto format(const srsran::dci_0_1_size& dci_size, FormatContext& ctx) const
   {
     helper.format_always(ctx, "Total:                 {}", dci_size.total);
     helper.format_always(ctx, "Carrier indicator:     {}", dci_size.carrier_indicator);
@@ -106,6 +106,7 @@ struct formatter<srsran::dci_0_1_size> {
     helper.format_always(ctx, "Frequency resource:    {}", dci_size.frequency_resource);
     helper.format_always(ctx, "Time resource:         {}", dci_size.time_resource);
     helper.format_always(ctx, "Freq hopping flag:     {}", dci_size.freq_hopping_flag);
+    helper.format_always(ctx, "HARQ process number:   {}", dci_size.harq_process_number);
     helper.format_always(ctx, "First DAI:             {}", dci_size.first_dl_assignment_idx);
     helper.format_always(ctx, "Second DAI:            {}", dci_size.second_dl_assignment_idx);
     helper.format_always(ctx, "SRS res indicator:     {}", dci_size.srs_resource_indicator);
@@ -139,7 +140,7 @@ struct formatter<srsran::dci_1_1_size> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::dci_1_1_size& dci_size, FormatContext& ctx)
+  auto format(const srsran::dci_1_1_size& dci_size, FormatContext& ctx) const
   {
     helper.format_always(ctx, "Total:                   {}", dci_size.total);
     helper.format_always(ctx, "Carrier indicator:       {}", dci_size.carrier_indicator);
@@ -154,6 +155,7 @@ struct formatter<srsran::dci_1_1_size> {
     helper.format_always(ctx, "TB2 NDI:                 {}", dci_size.tb2_new_data_indicator);
     helper.format_always(ctx, "TB2 RV:                  {}", dci_size.tb2_redundancy_version);
     helper.format_always(ctx, "DAI:                     {}", dci_size.downlink_assignment_index);
+    helper.format_always(ctx, "HARQ process number:     {}", dci_size.harq_process_number);
     helper.format_always(ctx, "PDSCH-HARQ timing:       {}", dci_size.pdsch_harq_fb_timing_indicator);
     helper.format_always(ctx, "Antenna ports:           {}", dci_size.antenna_ports);
     helper.format_always(ctx, "Tx config indication:    {}", dci_size.tx_config_indication);

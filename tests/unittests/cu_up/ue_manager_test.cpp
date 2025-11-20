@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -47,16 +47,19 @@ protected:
     f1u_gw             = std::make_unique<dummy_f1u_gateway>(f1u_bearer);
     e1ap               = std::make_unique<dummy_e1ap>();
 
+    ngu_session_mngr = std::make_unique<dummy_ngu_session_manager>();
+
     cu_up_exec_mapper = std::make_unique<dummy_cu_up_executor_mapper>(&worker);
+
     // Create UE cfg
-    ue_cfg = {security::sec_as_config{}, activity_notification_level_t::ue, std::chrono::seconds(0)};
+    ue_cfg = {security::sec_as_config{}, activity_notification_level_t::ue, std::chrono::seconds(0), {}, 1000000000};
 
     // create DUT object
-    ue_mng = std::make_unique<ue_manager>(ue_manager_config{net_config, n3_config, test_mode_config},
+    ue_mng = std::make_unique<ue_manager>(ue_manager_config{n3_config, test_mode_config},
                                           ue_manager_dependencies{*e1ap,
                                                                   timers,
                                                                   *f1u_gw,
-                                                                  *gtpu_tx_notifier,
+                                                                  *ngu_session_mngr,
                                                                   *gtpu_rx_demux,
                                                                   *gtpu_n3_allocator,
                                                                   *gtpu_f1u_allocator,
@@ -75,15 +78,15 @@ protected:
   std::unique_ptr<gtpu_teid_pool>                             gtpu_n3_allocator;
   std::unique_ptr<gtpu_teid_pool>                             gtpu_f1u_allocator;
   std::unique_ptr<gtpu_tunnel_common_tx_upper_layer_notifier> gtpu_tx_notifier;
-  std::unique_ptr<e1ap_control_message_handler>               e1ap;
+  std::unique_ptr<e1ap_interface>                             e1ap;
   std::unique_ptr<cu_up_executor_mapper>                      cu_up_exec_mapper;
   dummy_inner_f1u_bearer                                      f1u_bearer;
   null_dlt_pcap                                               gtpu_pcap;
   std::unique_ptr<f1u_cu_up_gateway>                          f1u_gw;
+  std::unique_ptr<ngu_session_manager>                        ngu_session_mngr;
   timer_manager                                               timers;
   ue_context_cfg                                              ue_cfg;
   std::unique_ptr<ue_manager_ctrl>                            ue_mng;
-  network_interface_config                                    net_config;
   n3_interface_config                                         n3_config;
   cu_up_test_mode_config                                      test_mode_config{};
   srslog::basic_logger&                                       test_logger = srslog::fetch_basic_logger("TEST", false);

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,7 +23,17 @@
 #pragma once
 
 #include "srsran/adt/span.h"
-#include "srsran/fapi/messages.h"
+#include "srsran/fapi/messages/crc_indication.h"
+#include "srsran/fapi/messages/dl_tti_request.h"
+#include "srsran/fapi/messages/error_indication.h"
+#include "srsran/fapi/messages/rach_indication.h"
+#include "srsran/fapi/messages/rx_data_indication.h"
+#include "srsran/fapi/messages/slot_indication.h"
+#include "srsran/fapi/messages/srs_indication.h"
+#include "srsran/fapi/messages/tx_data_request.h"
+#include "srsran/fapi/messages/uci_indication.h"
+#include "srsran/fapi/messages/ul_dci_request.h"
+#include "srsran/fapi/messages/ul_tti_request.h"
 #include "srsran/ran/dmrs.h"
 #include "srsran/ran/pdcch/coreset.h"
 #include "srsran/ran/pdcch/dci_packing.h"
@@ -246,11 +256,23 @@ public:
     return *this;
   }
 
-  /// Sets the transmission power info parameters for the fields of the DL DCI PDU.
+  /// Sets the profile NR Tx Power info parameters for the fields of the DL DCI PDU.
   /// \note These parameters are specified in SCF-222 v4.0 section 3.4.2.1, in table DL DCI PDU.
-  dl_dci_pdu_builder& set_tx_power_info_parameter(int power_control_offset_ss_dB)
+  dl_dci_pdu_builder& set_profile_nr_tx_power_info_parameters(int power_control_offset_ss_dB)
   {
-    pdu.power_control_offset_ss_profile_nr = power_control_offset_ss_dB;
+    auto& power                   = pdu.power_config.emplace<dl_dci_pdu::power_profile_nr>();
+    power.power_control_offset_ss = power_control_offset_ss_dB;
+
+    return *this;
+  }
+
+  /// Sets the profile SSS Tx Power info parameters for the fields of the DL DCI PDU.
+  /// \note These parameters are specified in SCF-222 v4.0 section 3.4.2.1, in table PDCCH PDU maintenance PDU.
+  dl_dci_pdu_builder& set_profile_sss_tx_power_info_parameters(float dmrs_offset_db, float data_offset_db)
+  {
+    auto& power                = pdu.power_config.emplace<dl_dci_pdu::power_profile_sss>();
+    power.dmrs_power_offset_db = dmrs_offset_db;
+    power.data_power_offset_db = data_offset_db;
 
     return *this;
   }
@@ -472,7 +494,7 @@ public:
                                             dmrs_config_type   dmrs_type,
                                             uint16_t           pdsch_dmrs_scrambling_id,
                                             uint16_t           pdsch_dmrs_scrambling_id_complement,
-                                            low_papr_dmrs_type low_parp_dmrs,
+                                            low_papr_dmrs_type low_papr_dmrs,
                                             uint8_t            nscid,
                                             uint8_t            num_dmrs_cdm_groups_no_data,
                                             uint16_t           dmrs_ports)
@@ -481,7 +503,7 @@ public:
     pdu.dmrs_type        = (dmrs_type == dmrs_config_type::type1) ? dmrs_cfg_type::type_1 : dmrs_cfg_type::type_2;
     pdu.pdsch_dmrs_scrambling_id       = pdsch_dmrs_scrambling_id;
     pdu.pdsch_dmrs_scrambling_id_compl = pdsch_dmrs_scrambling_id_complement;
-    pdu.low_papr_dmrs                  = low_parp_dmrs;
+    pdu.low_papr_dmrs                  = low_papr_dmrs;
     pdu.nscid                          = nscid;
     pdu.num_dmrs_cdm_grps_no_data      = num_dmrs_cdm_groups_no_data;
     pdu.dmrs_ports                     = dmrs_ports;
@@ -545,13 +567,26 @@ public:
 
   // :TODO: Beamforming.
 
-  /// Sets the Tx Power info parameters for the fields of the PDSCH PDU.
+  /// Sets the profile NR Tx Power info parameters for the fields of the PDSCH PDU.
   /// \note These parameters are specified in SCF-222 v4.0 section 3.4.2.2, in table PDSCH PDU.
-  dl_pdsch_pdu_builder& set_tx_power_info_parameters(int                     power_control_offset,
-                                                     power_control_offset_ss power_control_offset_ss)
+  dl_pdsch_pdu_builder& set_profile_nr_tx_power_info_parameters(int                     power_control_offset,
+                                                                power_control_offset_ss power_control_offset_ss)
   {
-    pdu.power_control_offset_profile_nr    = power_control_offset;
-    pdu.power_control_offset_ss_profile_nr = power_control_offset_ss;
+    auto& power = pdu.power_config.emplace<dl_pdsch_pdu::power_profile_nr>();
+
+    power.power_control_offset_profile_nr    = power_control_offset;
+    power.power_control_offset_ss_profile_nr = power_control_offset_ss;
+
+    return *this;
+  }
+
+  /// Sets the profile SSS Tx Power info parameters for the fields of the PDSCH PDU.
+  /// \note These parameters are specified in SCF-222 v4.0 section 3.4.2.2, in table PDSCH PDU.
+  dl_pdsch_pdu_builder& set_profile_sss_tx_power_info_parameters(float dmrs_offset_db, float data_offset_db)
+  {
+    auto& power                    = pdu.power_config.emplace<dl_pdsch_pdu::power_profile_sss>();
+    power.data_power_offset_sss_db = data_offset_db;
+    power.dmrs_power_offset_sss_db = dmrs_offset_db;
 
     return *this;
   }
@@ -754,6 +789,16 @@ public:
     return *this;
   }
 
+  /// Sets the vendor specific CSI-RS PDU BWP parameters and returns a reference to the builder.
+  /// \note These parameters are vendor specific.
+  dl_csi_rs_pdu_builder& set_vendor_specific_bwp_parameters(unsigned bwp_size, unsigned bwp_start)
+  {
+    pdu.bwp_size  = bwp_size;
+    pdu.bwp_start = bwp_start;
+
+    return *this;
+  }
+
   /// Sets the CSI-RS PDU tx power info parameters and returns a reference to the builder.
   /// \note These parameters are specified in SCF-222 v4.0 section 3.4.2.3 in table CSI-RS PDU.
   dl_csi_rs_pdu_builder& set_tx_power_info_parameters(int                     power_control_offset,
@@ -774,15 +819,81 @@ public:
   }
 };
 
+/// PRS PDU builder that helps to fill in the parameters specified in SCF-222 v8.0 section 3.4.2.4a.
+class dl_prs_pdu_builder
+{
+  dl_prs_pdu& pdu;
+
+public:
+  explicit dl_prs_pdu_builder(dl_prs_pdu& pdu_) : pdu(pdu_) {}
+
+  /// Sets the PRS PDU basic parameters and returns a reference to the builder.
+  dl_prs_pdu_builder& set_basic_parameters(subcarrier_spacing scs, cyclic_prefix cp)
+  {
+    pdu.scs = scs;
+    pdu.cp  = cp;
+
+    return *this;
+  }
+
+  /// Sets the PRS PDU N_ID parameter and returns a reference to the builder.
+  dl_prs_pdu_builder& set_n_id(unsigned n_id)
+  {
+    pdu.nid_prs = n_id;
+
+    return *this;
+  }
+
+  /// Sets the PRS PDU symbol parameters and returns a reference to the builder.
+  dl_prs_pdu_builder& set_symbol_parameters(prs_num_symbols nof_symbols, unsigned first_symbol)
+  {
+    pdu.num_symbols  = nof_symbols;
+    pdu.first_symbol = first_symbol;
+
+    return *this;
+  }
+
+  /// Sets the PRS PDU RB parameters and returns a reference to the builder.
+  dl_prs_pdu_builder& set_rb_parameters(unsigned nof_rb, unsigned start_rb)
+  {
+    pdu.num_rbs  = nof_rb;
+    pdu.start_rb = start_rb;
+
+    return *this;
+  }
+
+  /// Sets the PRS PDU power offset parameter and returns a reference to the builder.
+  dl_prs_pdu_builder& set_power_offset(std::optional<float> power_offset)
+  {
+    pdu.prs_power_offset = power_offset;
+
+    return *this;
+  }
+
+  /// Sets the PRS PDU transmission comb parameters and returns a reference to the builder.
+  dl_prs_pdu_builder& set_comb_parameters(prs_comb_size comb_size, unsigned comb_offset)
+  {
+    pdu.comb_size   = comb_size;
+    pdu.comb_offset = comb_offset;
+
+    return *this;
+  }
+
+  /// Returns a transmission precoding and beamforming PDU builder of this PRS PDU.
+  tx_precoding_and_beamforming_pdu_builder get_tx_precoding_and_beamforming_pdu_builder()
+  {
+    tx_precoding_and_beamforming_pdu_builder builder(pdu.precoding_and_beamforming);
+
+    return builder;
+  }
+};
+
 /// DL_TTI.request message builder that helps to fill in the parameters specified in SCF-222 v4.0 section 3.4.2.
 class dl_tti_request_message_builder
 {
 public:
   /// Constructs a builder that will help to fill the given DL TTI request message.
-  explicit dl_tti_request_message_builder(dl_tti_request_message& msg_) : msg(msg_)
-  {
-    msg.is_last_message_in_slot = false;
-  }
+  explicit dl_tti_request_message_builder(dl_tti_request_message& msg_) : msg(msg_) {}
 
   /// Sets the DL_TTI.request basic parameters and returns a reference to the builder.
   /// \note nPDUs and nPDUsOfEachType properties are filled by the add_*_pdu() functions.
@@ -804,7 +915,7 @@ public:
     // Add a new pdu.
     dl_tti_request_pdu& pdu = msg.pdus.emplace_back();
 
-    // Fill the PDCCH PDU index value. The index value will be the index of the pdu in the array of PDCCH pdus.
+    // Fill the PDCCH PDU index value. The index value will be the index of the pdu in the array of PDCCH PDUs.
     dl_pdcch_pdu_maintenance_v3& info          = pdu.pdcch_pdu.maintenance_v3;
     auto&                        num_pdcch_pdu = msg.num_pdus_of_each_type[static_cast<size_t>(dl_pdu_type::PDCCH)];
     info.pdcch_pdu_index                       = num_pdcch_pdu;
@@ -905,7 +1016,7 @@ public:
     // Add a new PDU.
     dl_tti_request_pdu& pdu = msg.pdus.emplace_back();
 
-    // Fill the SSB PDU index value. The index value will be the index of the PDU in the array of SSB pdus.
+    // Fill the SSB PDU index value. The index value will be the index of the PDU in the array of SSB PDUs.
     dl_ssb_maintenance_v3& info        = pdu.ssb_pdu.ssb_maintenance_v3;
     auto&                  num_ssb_pdu = msg.num_pdus_of_each_type[static_cast<size_t>(dl_pdu_type::SSB)];
     info.ssb_pdu_index                 = num_ssb_pdu;
@@ -920,11 +1031,25 @@ public:
     return builder;
   }
 
-  /// Sets the flag of the last message in slot.
-  dl_tti_request_message_builder& set_last_message_in_slot_flag()
+  /// Adds a PRS PDU to the message and returns a PRS PDU builder.
+  dl_prs_pdu_builder add_prs_pdu()
   {
-    msg.is_last_message_in_slot = true;
-    return *this;
+    // Add a new PDU.
+    dl_tti_request_pdu& pdu = msg.pdus.emplace_back();
+
+    // Fill the PRS PDU index value. The index value will be the index of the PDU in the array of PRS PDUs.
+    dl_prs_pdu& info        = pdu.prs_pdu;
+    auto&       num_prs_pdu = msg.num_pdus_of_each_type[static_cast<size_t>(dl_pdu_type::PRS)];
+    info.pdu_index          = num_prs_pdu;
+
+    // Increase the number of SSB PDUs in the request.
+    ++num_prs_pdu;
+
+    pdu.pdu_type = dl_pdu_type::PRS;
+
+    dl_prs_pdu_builder builder(info);
+
+    return builder;
   }
 
   //: TODO: PDU groups array
@@ -943,7 +1068,6 @@ public:
   explicit ul_dci_request_message_builder(ul_dci_request_message& msg_) : msg(msg_)
   {
     msg.num_pdus_of_each_type.fill(0);
-    msg.is_last_message_in_slot = false;
   }
 
   /// Sets the UL_DCI.request basic parameters and returns a reference to the builder.
@@ -976,13 +1100,6 @@ public:
     dl_pdcch_pdu_builder builder(pdu.pdu);
 
     return builder;
-  }
-
-  /// Sets the flag of the last message in slot.
-  ul_dci_request_message_builder& set_last_message_in_slot_flag()
-  {
-    msg.is_last_message_in_slot = true;
-    return *this;
   }
 };
 
@@ -1377,7 +1494,7 @@ public:
         pdu.pucch_format = uci_pucch_pdu_format_0_1::format_type::format_1;
         break;
       default:
-        srsran_assert(0, "PUCCH format={} is not supported by this PDU", type);
+        srsran_assert(0, "PUCCH format={} is not supported by this PDU", fmt::underlying(type));
         break;
     }
 
@@ -1497,7 +1614,7 @@ public:
         pdu.pucch_format = uci_pucch_pdu_format_2_3_4::format_type::format_4;
         break;
       default:
-        srsran_assert(0, "PUCCH format={} is not supported by this PDU", type);
+        srsran_assert(0, "PUCCH format={} is not supported by this PDU", fmt::underlying(type));
         break;
     }
 
@@ -1667,8 +1784,28 @@ public:
   srs_indication_pdu_builder& set_codebook_report_matrix(const srs_channel_matrix& matrix)
   {
     pdu.usage       = srs_usage::codebook;
-    pdu.report_type = 1;
+    pdu.report_type = srs_report_type::normalized_channel_iq_matrix;
     pdu.matrix      = matrix;
+
+    return *this;
+  }
+
+  /// \brief Sets the SRS indication PDU positioning report and returns a reference to the builder.
+  /// \note These parameters are specified in SCF-222 v8.0 Section 3.4.10 Table 3-209.
+  srs_indication_pdu_builder& set_positioning_report_parameters(std::optional<phy_time_unit> ul_relative_toa,
+                                                                std::optional<uint32_t>      gnb_rx_tx_difference,
+                                                                std::optional<uint16_t>      ul_aoa,
+                                                                std::optional<float>         rsrp)
+  {
+    pdu.report_type                      = srs_report_type::positioning;
+    pdu.positioning.ul_relative_toa      = ul_relative_toa;
+    pdu.positioning.gnb_rx_tx_difference = gnb_rx_tx_difference;
+    pdu.positioning.ul_aoa               = ul_aoa;
+    pdu.positioning.rsrp                 = rsrp;
+    // [Implementation defined] Set this one to local as it is not used.
+    pdu.positioning.coordinate_system_aoa = srs_coordinate_system_ul_aoa::local;
+    // [Implementation defined] Set the usage to a enum value.
+    pdu.usage = srs_usage::codebook;
 
     return *this;
   }
@@ -1726,12 +1863,20 @@ public:
   /// Adds a PUSCH PDU to the \e UCI.indication message and returns a PUSCH PDU builder.
   uci_pusch_pdu_builder add_pusch_pdu(uint32_t handle, rnti_t rnti)
   {
+    uci_pusch_pdu_builder builder = add_pusch_pdu();
+    builder.set_basic_parameters(handle, rnti);
+
+    return builder;
+  }
+
+  /// Adds a PUSCH PDU to the \e UCI.indication message and returns a PUSCH PDU builder.
+  uci_pusch_pdu_builder add_pusch_pdu()
+  {
     auto& pdu = msg.pdus.emplace_back();
 
     pdu.pdu_type = uci_pdu_type::PUSCH;
 
     uci_pusch_pdu_builder builder(pdu.pusch_pdu);
-    builder.set_basic_parameters(handle, rnti);
 
     return builder;
   }
@@ -1740,12 +1885,21 @@ public:
   /// PDU builder.
   uci_pucch_pdu_format_0_1_builder add_format_0_1_pucch_pdu(uint32_t handle, rnti_t rnti, pucch_format type)
   {
+    uci_pucch_pdu_format_0_1_builder builder = add_format_0_1_pucch_pdu();
+    builder.set_basic_parameters(handle, rnti, type);
+
+    return builder;
+  }
+
+  /// Adds a PUCCH Format 0 and Format 1 PDU to the \e UCI.indication message and returns a PUCCH Format 0 and Format 1
+  /// PDU builder.
+  uci_pucch_pdu_format_0_1_builder add_format_0_1_pucch_pdu()
+  {
     auto& pdu = msg.pdus.emplace_back();
 
     pdu.pdu_type = uci_pdu_type::PUCCH_format_0_1;
 
     uci_pucch_pdu_format_0_1_builder builder(pdu.pucch_pdu_f01);
-    builder.set_basic_parameters(handle, rnti, type);
 
     return builder;
   }
@@ -1754,12 +1908,21 @@ public:
   /// Format 3 and Format 4 PDU builder.
   uci_pucch_pdu_format_2_3_4_builder add_format_2_3_4_pucch_pdu(uint32_t handle, rnti_t rnti, pucch_format type)
   {
+    uci_pucch_pdu_format_2_3_4_builder builder = add_format_2_3_4_pucch_pdu();
+    builder.set_basic_parameters(handle, rnti, type);
+
+    return builder;
+  }
+
+  /// Adds a PUCCH Format 2, Format 3 and Format 4  PDU to the \e UCI.indication message and returns a PUCCH Format 2,
+  /// Format 3 and Format 4 PDU builder.
+  uci_pucch_pdu_format_2_3_4_builder add_format_2_3_4_pucch_pdu()
+  {
     auto& pdu = msg.pdus.emplace_back();
 
     pdu.pdu_type = uci_pdu_type::PUCCH_format_2_3_4;
 
     uci_pucch_pdu_format_2_3_4_builder builder(pdu.pucch_pdu_f234);
-    builder.set_basic_parameters(handle, rnti, type);
 
     return builder;
   }
@@ -1767,13 +1930,17 @@ public:
 
 /// Builds and returns a slot.indication message with the given parameters, as per SCF-222 v4.0 section 3.4.1 in table
 /// Slot indication message body.
-inline slot_indication_message build_slot_indication_message(unsigned sfn, unsigned slot)
+inline slot_indication_message
+build_slot_indication_message(unsigned                                           sfn,
+                              unsigned                                           slot,
+                              std::chrono::time_point<std::chrono::system_clock> time_point)
 {
   slot_indication_message msg;
   msg.message_type = message_type_id::slot_indication;
 
-  msg.sfn  = sfn;
-  msg.slot = slot;
+  msg.sfn        = sfn;
+  msg.slot       = slot;
+  msg.time_point = time_point;
 
   return msg;
 }
@@ -1844,7 +2011,7 @@ inline error_indication_message build_invalid_sfn_error_indication(uint16_t     
 /// \brief Builds and returns an ERROR.indication message with the given parameters, as per SCF-222 v4.0 section 3.3.6.1
 /// in table ERROR.indication message body
 /// \note This builder is used to build only a MSG_SLOT_ERR error code.
-inline error_indication_message build_msg_slot_error_indication(uint16_t sfn, uint16_t slot, message_type_id msg_id)
+inline error_indication_message build_msg_error_indication(uint16_t sfn, uint16_t slot, message_type_id msg_id)
 {
   error_indication_message msg;
 
@@ -2533,7 +2700,7 @@ class ul_srs_pdu_builder
   ul_srs_pdu& pdu;
 
 public:
-  explicit ul_srs_pdu_builder(ul_srs_pdu& pdu_) : pdu(pdu_) {}
+  explicit ul_srs_pdu_builder(ul_srs_pdu& pdu_) : pdu(pdu_) { pdu.srs_params_v4.report_type = 0; }
 
   /// Sets the SRS PDU basic parameters and returns a reference to the builder.
   /// \note These parameters are specified in SCF-222 v4.0 section 3.4.3.3 in table SRS PDU.
@@ -2575,6 +2742,21 @@ public:
   {
     pdu.comb_size   = comb_size;
     pdu.comb_offset = comb_offset;
+
+    return *this;
+  }
+
+  /// Sets the SRS report types and returns a reference to the builder.
+  /// \note These parameters are specified in SCF-222 v8.0 section 3.4.3.4 in table SRS PDU.
+  ul_srs_pdu_builder& set_report_params(bool enable_normalized_iq_matrix_report, bool enable_positioning_report)
+  {
+    if (enable_normalized_iq_matrix_report) {
+      pdu.srs_params_v4.report_type.set(to_value(srs_report_type::normalized_channel_iq_matrix));
+    }
+
+    if (enable_positioning_report) {
+      pdu.srs_params_v4.report_type.set(to_value(srs_report_type::positioning));
+    }
 
     return *this;
   }

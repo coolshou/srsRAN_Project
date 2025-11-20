@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -33,7 +33,8 @@
 #include "srsran/phy/upper/channel_processors/uci/factories.h"
 #include "srsran/phy/upper/channel_processors/uci/uci_decoder.h"
 #include "srsran/phy/upper/equalization/equalization_factories.h"
-#include "srsran/phy/upper/signal_processors/signal_processor_factories.h"
+#include "srsran/phy/upper/signal_processors/pusch/factories.h"
+#include "srsran/srslog/logger.h"
 #include <memory>
 
 namespace srsran {
@@ -92,10 +93,10 @@ public:
 std::shared_ptr<pusch_demodulator_factory>
 create_pusch_demodulator_factory_sw(std::shared_ptr<channel_equalizer_factory>       equalizer_factory,
                                     std::shared_ptr<transform_precoder_factory>      precoder_factory,
-                                    std::shared_ptr<channel_modulation_factory>      demodulation_factory,
+                                    std::shared_ptr<demodulation_mapper_factory>     demodulation_factory,
+                                    std::shared_ptr<evm_calculator_factory>          evm_calc_factory,
                                     std::shared_ptr<pseudo_random_generator_factory> prg_factory,
                                     unsigned                                         max_nof_prb,
-                                    bool                                             enable_evm          = false,
                                     bool                                             enable_post_eq_sinr = false);
 
 class pusch_processor_factory
@@ -146,8 +147,6 @@ struct pusch_processor_pool_factory_config {
   /// reserved. The number of UCI processors must be equal to the number of threads that will use the PUSCH processor
   /// pool.
   unsigned nof_uci_processors;
-  /// Set to true for the pool to wait for processors to be unlocked.
-  bool blocking = false;
 };
 
 /// Creates a PUSCH processor pool.

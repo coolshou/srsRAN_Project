@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,9 +24,16 @@
 
 #include "srsran/ran/du_types.h"
 #include "srsran/support/executors/task_executor.h"
+#include <chrono>
+#include <memory>
+#include <optional>
 #include <variant>
+#include <vector>
 
 namespace srsran {
+
+class executor_metrics_channel_registry;
+
 namespace srs_du {
 
 /// \brief Mapper of task executors used by the MAC DL, RLC DL and MAC scheduler for low-latency tasks. The task
@@ -36,10 +43,13 @@ class du_high_cell_executor_mapper
 public:
   virtual ~du_high_cell_executor_mapper() = default;
 
-  /// \brief Default executor to handle events for a given cell.
-  virtual task_executor& executor(du_cell_index_t cell_index) = 0;
+  /// \brief Default executor to handle MAC events for a given cell.
+  virtual task_executor& mac_cell_executor(du_cell_index_t cell_index) = 0;
 
-  /// \brief Executor to handle slot_indication events for a given cell.
+  /// \brief Executor to handle RLC-lower events for a given cell.
+  virtual task_executor& rlc_lower_executor(du_cell_index_t cell_index) = 0;
+
+  /// \brief Executor to handle slot_indication events for a given cell. These events are of high-priority.
   virtual task_executor& slot_ind_executor(du_cell_index_t cell_index) = 0;
 };
 
@@ -93,11 +103,17 @@ public:
   /// \brief Retrieve DU control executor.
   virtual task_executor& du_control_executor() = 0;
 
-  /// \brief Retrieve DU timer tick dispatching executor.
-  virtual task_executor& du_timer_executor() = 0;
-
   /// \brief Retrieve E2 control executor.
   virtual task_executor& du_e2_executor() = 0;
+
+  /// \brief Retrieve executor used for reading messages from the F1-C SCTP socket.
+  virtual task_executor& f1c_rx_executor() = 0;
+
+  /// \brief Retrieve executor used for reading messages from the E2 SCTP socket.
+  virtual task_executor& e2_rx_executor() = 0;
+
+  /// \brief Retrieve executor used for reading messages from the F1-U UDP sockets.
+  virtual task_executor& f1u_rx_executor() = 0;
 };
 
 /// Configuration of DU-high executor mapper.
@@ -105,9 +121,9 @@ struct du_high_executor_config {
   /// Dedicated serialized worker for a given cell.
   struct dedicated_cell_worker {
     /// Serialized executor used to pass slot indications to a cell in the MAC.
-    task_executor& high_prio_executor;
+    task_executor* high_prio_executor;
     /// Serialized executor used to pass other tasks to a cell in the MAC.
-    task_executor& low_prio_executor;
+    task_executor* low_prio_executor;
   };
   using dedicated_cell_worker_list = std::vector<dedicated_cell_worker>;
   /// Worker pool which will be used for the DU-high cell real-time tasks.
@@ -116,8 +132,8 @@ struct du_high_executor_config {
     unsigned nof_cells;
     /// Default queue size for tasks other than slot indications.
     unsigned default_task_queue_size;
-    /// Worker pool executor.
-    task_executor* pool_executor;
+    /// Worker pool executors.
+    std::vector<task_executor*> pool_executors;
   };
   /// \brief Configuration of the DU-high cell executors. Two options:
   /// - list of dedicated workers, one per cell, and indexed by cell index.
@@ -141,6 +157,8 @@ struct du_high_executor_config {
     unsigned pdu_queue_size;
     /// Executor of a thread pool to which strands will point to.
     task_executor* pool_executor;
+    /// Executor used to read the F1-U UDP socket.
+    task_executor* f1u_reader_executor;
   };
   /// \brief Configuration of strand for control-plane tasks of the DU-high.
   struct control_executor_config {
@@ -158,6 +176,10 @@ struct du_high_executor_config {
   bool is_rt_mode_enabled = true;
   /// Whether to trace executed tasks.
   bool trace_exec_tasks = false;
+  /// \brief Optional executor metrics channel registry.
+  ///
+  /// If it is initialized, the executor mapper wraps the executors with metric decorators.
+  executor_metrics_channel_registry* exec_metrics_channel_registry = nullptr;
 };
 
 /// \brief Creates an executor mapper for the DU-high.

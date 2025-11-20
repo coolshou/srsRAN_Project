@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -34,7 +34,8 @@ public:
     return {};
   }
 
-  pucch_processor_result process(const resource_grid_reader& grid, const format1_configuration& config) override
+  pucch_format1_map<pucch_processor_result> process(const resource_grid_reader&        grid,
+                                                    const format1_batch_configuration& config) override
   {
     return {};
   }

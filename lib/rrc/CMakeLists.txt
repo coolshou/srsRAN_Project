@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -21,6 +21,7 @@
 set(SOURCES
   rrc_du_factory.cpp
   rrc_du_impl.cpp
+  metrics/rrc_du_metrics_aggregator.cpp
   ue/meas_types_validators.cpp
   ue/rrc_asn1_helpers.cpp
   ue/rrc_asn1_converters.cpp

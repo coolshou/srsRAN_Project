@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -46,14 +46,14 @@ target_include_directories(rlc_um_test PRIVATE ${CMAKE_SOURCE_DIR})
 gtest_discover_tests(rlc_um_test)
 
 add_executable(rlc_um_pdu_test rlc_um_pdu_test.cpp)
-target_link_libraries(rlc_um_pdu_test srsran_support srslog)
+target_link_libraries(rlc_um_pdu_test srsran_support srslog gtest gtest_main)
 target_include_directories(rlc_um_pdu_test PRIVATE ${CMAKE_SOURCE_DIR})
-add_test(rlc_um_pdu_test rlc_um_pdu_test)
+gtest_discover_tests(rlc_um_pdu_test)
 
 add_executable(rlc_am_pdu_test rlc_am_pdu_test.cpp)
-target_link_libraries(rlc_am_pdu_test srsran_rlc srsran_support srslog)
+target_link_libraries(rlc_am_pdu_test srsran_rlc srsran_support srslog gtest gtest_main)
 target_include_directories(rlc_am_pdu_test PRIVATE ${CMAKE_SOURCE_DIR})
-add_test(rlc_am_pdu_test rlc_am_pdu_test)
+gtest_discover_tests(rlc_am_pdu_test)
 
 add_executable(rlc_pdu_recycler_test rlc_pdu_recycler_test.cpp)
 target_link_libraries(rlc_pdu_recycler_test srsran_instrumentation srsran_support srslog gtest gtest_main pdcp_test_doubles)
@@ -61,7 +61,7 @@ target_include_directories(rlc_pdu_recycler_test PRIVATE ${CMAKE_SOURCE_DIR})
 gtest_discover_tests(rlc_pdu_recycler_test)
 
 add_executable(rlc_sdu_queue_lockfree_test rlc_sdu_queue_lockfree_test.cpp)
-target_link_libraries(rlc_sdu_queue_lockfree_test srsran_support srslog)
+target_link_libraries(rlc_sdu_queue_lockfree_test srsran_support srslog gtest gtest_main)
 target_include_directories(rlc_sdu_queue_lockfree_test PRIVATE ${CMAKE_SOURCE_DIR})
 gtest_discover_tests(rlc_sdu_queue_lockfree_test)
 
@@ -70,7 +70,12 @@ target_link_libraries(rlc_retx_queue_test srsran_support srslog gtest gtest_main
 target_include_directories(rlc_retx_queue_test PRIVATE ${CMAKE_SOURCE_DIR})
 gtest_discover_tests(rlc_retx_queue_test)
 
-add_executable(rlc_metrics_aggregator_test rlc_metrics_aggregator_test.cpp)
-target_link_libraries(rlc_metrics_aggregator_test srsran_rlc srsran_support srslog gtest gtest_main)
-target_include_directories(rlc_metrics_aggregator_test PRIVATE ${CMAKE_SOURCE_DIR})
-gtest_discover_tests(rlc_metrics_aggregator_test)
+add_executable(rlc_bearer_metrics_collector_test rlc_bearer_metrics_collector_test.cpp)
+target_link_libraries(rlc_bearer_metrics_collector_test srsran_rlc srsran_support srslog gtest gtest_main)
+target_include_directories(rlc_bearer_metrics_collector_test PRIVATE ${CMAKE_SOURCE_DIR})
+gtest_discover_tests(rlc_bearer_metrics_collector_test)
+
+add_executable(rlc_tx_metrics_test rlc_tx_metrics_test.cpp)
+target_link_libraries(rlc_tx_metrics_test srsran_rlc srsran_support srslog gtest gtest_main)
+target_include_directories(rlc_tx_metrics_test PRIVATE ${CMAKE_SOURCE_DIR})
+gtest_discover_tests(rlc_tx_metrics_test)

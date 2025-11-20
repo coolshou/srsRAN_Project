@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -25,19 +25,16 @@
 
 include:
   - project: softwareradiosystems/ci/tools
-    ref: "20"
+    ref: "23"
     file: .gitlab/ci-shared/setup/all.yml
   - project: softwareradiosystems/ci/tools
-    ref: "20"
+    ref: "23"
     file: .gitlab/ci-shared/features/all.yml
   - project: softwareradiosystems/ci/tools
-    ref: "20"
+    ref: "23"
     file: .gitlab/ci-shared/tools/python.yml
   - project: softwareradiosystems/ci/tools
-    ref: "20"
-    file: .gitlab/ci-shared/tools/test_reporter.yml
-  - project: softwareradiosystems/ci/tools
-    ref: "20"
+    ref: "23"
     file: .gitlab/ci-shared/tools/tagger.yml
   - local: .gitlab/ci/builders/version.yml
   - local: .gitlab/ci/build.yml
@@ -50,6 +47,7 @@ stages:
   - static
   - build and unit tests
   - zmq
+  - test mode
   - rf
   - manual
   - documentation
@@ -69,20 +67,105 @@ variables:
   AUTOREBASER_PRS_IN_QUEUE: 1
 
 ################################################################################
-## CI
+## CI MR
 ################################################################################
-job cleaner:
-  extends: .job cleaner
-  timeout: 4h
-  rules:
-    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
 
-pr reminder:
-  extends: .pr reminder
+.blocked MRs:
+  image: alpine/curl:8.12.1
+  retry: 2
+  variables:
+    GIT_LFS_SKIP_SMUDGE: 1
+  before_script:
+    - apk add --no-cache jq
+    - |
+      REPO_PLUGIN_COMMIT_SHA=$(cat .gitlab/ci/plugin_version.txt)
+    - |
+      MR_JSON=$(
+        curl -s -H "PRIVATE-TOKEN: $CODEBOT_TOKEN" \
+          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/merge_requests/${CI_MERGE_REQUEST_IID}/blockees?state=opened" | \
+        jq --argjson PLUGIN_PROJECT_ID "$PLUGIN_PROJECT_ID" -r '
+          .[] 
+          | select(.blocked_merge_request.project_id == $PLUGIN_PROJECT_ID) 
+          | select(.blocked_merge_request.target_branch == "main") 
+          | .blocked_merge_request'
+      )
+      echo $MR_JSON | jq
+    - |
+      if test $(echo $MR_JSON | jq '.id' | wc -l) -gt 1; then
+        echo "Found multiple plugin MRs blocked by this one! Only 1 is allowed"
+        exit 1
+      fi
+
+get plugin commit:
+  extends: .blocked MRs
+  stage: ci
   rules:
-    - if: $NOTIFY_SLACK != "true"
+    - if: $CI_DISABLE_PLUGINS
       when: never
+    - if: $ON_MR
+    - if: $ON_WEB
+    - if: $ON_API
+    - if: $ON_TAG
     - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
+    - if: $CI_DESCRIPTION =~ /Nightly E2E Tests/
+    - if: $CI_DESCRIPTION =~ /Weekly/
+    - if: $CI_DESCRIPTION =~ /Alternative OSs/
+  script:
+    - |
+      CI_PLUGIN_COMMIT_SHA=$(echo $MR_JSON | jq -r '.sha')
+      if [[ -z $CI_PLUGIN_COMMIT_SHA ]]; then
+        CI_PLUGIN_COMMIT_SHA=$REPO_PLUGIN_COMMIT_SHA
+      fi
+    - echo "CI_PLUGIN_COMMIT_SHA=$CI_PLUGIN_COMMIT_SHA" >> info.env
+    - cat info.env
+  artifacts:
+    reports:
+      dotenv: info.env
+  needs: []
+
+validate blocked MRs:
+  extends: .blocked MRs
+  stage: .post
+  rules:
+    - if: $ON_MR
+  script:
+    # Validate the last pipeline is green
+    - |
+      CI_PLUGIN_MERGE_REQUEST_IID=$(echo $MR_JSON | jq -r '.iid')
+      PLUGIN_PROJECT_ID=$(echo $MR_JSON | jq -r '.project_id')
+    - |
+      if [[ -z $CI_PLUGIN_MERGE_REQUEST_IID ]]; then
+        LATEST_PIPELINE_STATUS="success"
+      else
+        LATEST_PIPELINE_STATUS=$(
+          curl -s -H "PRIVATE-TOKEN: $CODEBOT_TOKEN" \
+            "${CI_API_V4_URL}/projects/${PLUGIN_PROJECT_ID}/merge_requests/${CI_PLUGIN_MERGE_REQUEST_IID}/pipelines" | \
+          jq -r '
+            [.[] | select(.source == "merge_request_event")]
+            | first
+            | .status'
+        )
+      fi
+    - test "$LATEST_PIPELINE_STATUS" = "success"
+    # Validate the plugin commit is the same as the one in the MR
+    - |
+      TO_VALIDATE_PLUGIN_COMMIT_SHA=$(
+        echo $MR_JSON | jq -r '
+          select(.draft==false) 
+          | select(.work_in_progress==false) 
+          | select(.merge_when_pipeline_succeeds==true) 
+          | select(.has_conflicts==false) 
+          | select(.blocking_discussions_resolved==true) 
+          | select(.detailed_merge_status=="merge_request_blocked") 
+          | .sha'
+      )
+      if [[ -z $TO_VALIDATE_PLUGIN_COMMIT_SHA ]]; then
+        TO_VALIDATE_PLUGIN_COMMIT_SHA=$REPO_PLUGIN_COMMIT_SHA
+      fi
+      echo "Validating if the related MR is ready, with a successful pipeline and in auto-merge state!"
+    - test "$TO_VALIDATE_PLUGIN_COMMIT_SHA" = "$CI_PLUGIN_COMMIT_SHA"
+  dependencies:
+    - get plugin commit
 
 trigger builder:
   stage: ci
@@ -111,7 +194,7 @@ trigger docker:
           - docker/**/*.{yml,env,json,toml,py,sh,csv,py,toml}
           - docker/**/Dockerfile
           - .gdbinit
-    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests Plugin/
       variables:
         CI_DESCRIPTION: $CI_DESCRIPTION
     - if: $CI_DESCRIPTION =~ /Weekly/
@@ -123,10 +206,49 @@ trigger docker:
   variables:
     PY_DIR: docker/metrics_server
 
+################################################################################
+## CI Scheduled pipelines
+################################################################################
+
+job cleaner:
+  extends: .job cleaner
+  timeout: 4h
+  rules:
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests Plugin/
+
+pr reminder:
+  extends: .pr reminder
+  rules:
+    - if: $NOTIFY_SLACK != "true"
+      when: never
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests Plugin/
+
+handle stale issues:
+  extends: .handle_stale_issues
+  rules:
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests Plugin/
+  variables:
+    WARN_LABEL: "not seen in a while"
+    CLOSE_MESSAGE: "Issue closed due to inactivity. Please reopen it if it happens again."
+  parallel:
+    matrix:
+      - LABELS_INCLUDE: "bug::ci"
+        LABELS_EXCLUDE: "low_priority,mid_priority"
+        WARN_THRESHOLD: 10
+        CLOSE_THRESHOLD: 30
+      - LABELS_INCLUDE: "bug::ci,mid_priority"
+        LABELS_EXCLUDE: "low_priority"
+        WARN_THRESHOLD: 20
+        CLOSE_THRESHOLD: 60
+      - LABELS_INCLUDE: "bug::ci,low_priority"
+        LABELS_EXCLUDE: ""
+        WARN_THRESHOLD: 30
+        CLOSE_THRESHOLD: 90
+
 matlab nightly:
   stage: ci
   rules:
-    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests Plugin/
       variables:
         ON_SCHEDULE: "true"
         CI_DESCRIPTION: Nightly
@@ -137,21 +259,6 @@ matlab nightly:
   trigger:
     project: softwareradiosystems/srsgnb_matlab
     branch: master
-
-plugin nightly:
-  stage: ci
-  rules:
-    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
-      variables:
-        ON_SCHEDULE: "true"
-        CI_DESCRIPTION: Nightly
-        SRSRAN_COMMIT: $CI_COMMIT_SHA
-        NOTIFY_SLACK: "true"
-  inherit:
-    variables: false
-  trigger:
-    project: ${PLUGIN_REPO}
-    branch: main
 
 matlab weekly:
   stage: ci
@@ -168,12 +275,70 @@ matlab weekly:
     project: softwareradiosystems/srsgnb_matlab
     branch: master
 
+generate nightly plugin:
+  stage: ci
+  image: ubuntu:24.04
+  rules:
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests Plugin/
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - |
+      echo """
+      include:
+        - project: softwareradiosystems/ci/tools
+          ref: \"21\"
+          file: .gitlab/ci-shared/setup/all.yml
+
+      stages:
+        - trigger
+      """ >> trigger_nightly_plugins.yml
+
+      while IFS='|' read -r PLUGIN_PATH PLUGIN_REPO PLUGIN_REF; do
+          echo """
+      ${PLUGIN_PATH} nightly:
+        stage: trigger
+        interruptible: false
+        variables:
+          ON_SCHEDULE: "true"
+          CI_DESCRIPTION: Nightly
+          NOTIFY_SLACK: "false"
+        trigger:
+          project: ${PLUGIN_REPO}
+          branch: main
+          strategy: depend
+      """ >> trigger_nightly_plugins.yml
+      done < <(grep -v '^#' "$PLUGINS_DATA_FILE")
+    - cat trigger_nightly_plugins.yml
+  artifacts:
+    paths:
+      - trigger_nightly_plugins.yml
+    expire_in: 1 day
+
+plugin nightly:
+  stage: ci
+  interruptible: false
+  rules:
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests Plugin/
+  inherit:
+    variables: false
+  trigger:
+    include:
+      - artifact: trigger_nightly_plugins.yml
+        job: generate nightly plugin
+    strategy: depend
+  needs:
+    - job: generate nightly plugin
+      artifacts: true
+
 ################################################################################
 ## Static
 ################################################################################
 headers:
-  image: ubuntu
+  image: ubuntu:24.04
   stage: static
+  variables:
+    GIT_LFS_SKIP_SMUDGE: 1
   rules:
     - if: $ON_MR
       exists:
@@ -201,7 +366,7 @@ full-code-format:
     - if: $ON_MR
       changes:
         - .clang-format
-    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests Plugin/
 
 .codechecker:
   image: ${CR_REGISTRY_URI}/srsgnb/codechecker:${DOCKER_BUILDER_VERSION}
@@ -215,19 +380,25 @@ full-code-format:
     - job: trigger builder
       optional: true
       artifacts: false
+    - job: get plugin commit
+      optional: true
+      artifacts: true
   variables:
     ANALYZER: ""
     ANALYZER_ARGS: ""
     ARTIFACT_EXTRA_PATH: ""
-    KUBERNETES_CPU_REQUEST: 6
-    KUBERNETES_CPU_LIMIT: 6
-    KUBERNETES_MEMORY_REQUEST: 12Gi
-    KUBERNETES_MEMORY_LIMIT: 12Gi
+    KUBERNETES_CPU_REQUEST: ${SRS_CPU_LIMIT}
+    KUBERNETES_CPU_LIMIT: ${SRS_CPU_LIMIT}
+    KUBERNETES_MEMORY_REQUEST: ${SRS_MEMORY_LIMIT}
+    KUBERNETES_MEMORY_LIMIT: ${SRS_MEMORY_LIMIT}
     CHECK_PER_FILE_TIMEOUT: 600
+    GIT_LFS_SKIP_SMUDGE: 1
   before_script:
     - |
       echo "
       -/usr/lib
+      -*CMakeTmp
+      -*CompilerIdCXX
       -*tests/unittests
       -*tests/integrationtests
       -*tests/benchmarks
@@ -242,7 +413,7 @@ full-code-format:
       export CXX=/usr/bin/clang++
       mkdir -p build
       cd build || exit
-      cmake -DASSERT_LEVEL=PARANOID -DMARCH=x86-64-v3 -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DBUILD_TESTS=False ..
+      cmake -DASSERT_LEVEL=PARANOID -DMARCH=x86-64-v3 -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DBUILD_TESTING=False ..
       make srsran_versioning # needed to generate hashes.h
     - |
       monitor_child_process() {
@@ -257,7 +428,7 @@ full-code-format:
           done
       }
       export -f monitor_child_process
-  script:
+  script: &codechecker_script
     - nohup bash -c monitor_child_process &
     - static-analyzer.sh -i /tmp/codechecker_skip --jobs ${KUBERNETES_CPU_REQUEST} --analyzers ${ANALYZER} ${ANALYZER_ARGS} $CI_PROJECT_DIR
   after_script:
@@ -272,29 +443,60 @@ full-code-format:
 
 clang-tidy:
   extends: .codechecker
+  rules:
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
+  interruptible: false
+  retry: 2
+  variables:
+    ANALYZER: clang-tidy
+    ANALYZER_ARGS: --analyzer-config clang-tidy:take-config-from-directory=true --tidy-config .clang-tidy
+    ARTIFACT_EXTRA_PATH: "/index.html"
+
+clang-tidy incremental:
+  extends: clang-tidy
   stage: manual
   rules:
+    - if: $ON_MR == "true" && $CI_MERGE_REQUEST_TARGET_BRANCH_PROTECTED == "true" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME != $CI_DEFAULT_BRANCH
+      when: never
     - if: $ON_MR == "true" && $CI_MERGE_REQUEST_APPROVED == "true"
     - if: $ON_MR
       when: manual
       allow_failure: false
   variables:
-    ANALYZER: clang-tidy
-    ANALYZER_ARGS: --analyzer-config clang-tidy:take-config-from-directory=true --tidy-config .clang-tidy
-    ARTIFACT_EXTRA_PATH: "/index.html"
+    CCACHE_MAXSIZE: 3G
+    CACHE_COMPRESSION_LEVEL: slowest
+    CACHE_REQUEST_TIMEOUT: 5 # minutes - 10 by default
+  script:
+    - |
+      cd $CI_PROJECT_DIR
+      git config advice.detachedHead false
+      git config --local core.hooksPath /dev/null
+      git fetch origin $CI_MERGE_REQUEST_TARGET_BRANCH_NAME $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
+    - |
+      for rev in $CI_MERGE_REQUEST_TARGET_BRANCH_NAME $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME; do
+        git checkout $rev
+        CodeChecker log -o ${CI_PROJECT_DIR}/build/compile_commands.json --build "builder.sh -m -j${KUBERNETES_CPU_REQUEST} -c clang -DMARCH=x86-64-v3 -DENABLE_ARMPL=False -DENABLE_MKL=False -DENABLE_FFTW=True -DASSERT_LEVEL=PARANOID -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=False $CI_PROJECT_DIR"
+      done
+    - *codechecker_script
+  cache:
+    - key: codechecker-clang-tidy
+      paths: [ccache]
+      policy: pull-push
+      when: always
 
 cppcheck:
   extends: .codechecker
   rules:
     - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
   interruptible: false
+  timeout: 2 hours
   retry: 2
   variables:
     ANALYZER: cppcheck
     ANALYZER_ARGS: --cppcheck-max-template-recursion 5
   artifacts:
     <<: *codechecker_artifacts
-    expire_in: 1 day
+    expire_in: 7 days
 
 clangsa:
   extends: .codechecker
@@ -316,10 +518,10 @@ clangsa:
 #   stage: static
 #   needs: []
 #   variables:
-#     KUBERNETES_CPU_REQUEST: 6
-#     KUBERNETES_CPU_LIMIT: 6
-#     KUBERNETES_MEMORY_REQUEST: 12Gi
-#     KUBERNETES_MEMORY_LIMIT: 12Gi
+#     KUBERNETES_CPU_REQUEST: ${SRS_CPU_LIMIT}
+#     KUBERNETES_CPU_LIMIT: ${SRS_CPU_LIMIT}
+#     KUBERNETES_MEMORY_REQUEST: ${SRS_MEMORY_LIMIT}
+#     KUBERNETES_MEMORY_LIMIT: ${SRS_MEMORY_LIMIT}
 #   tags:
 #     - amd64
 #   interruptible: false
@@ -376,10 +578,14 @@ unit coverage:
     name: ${GITLAB_REGISTRY_URI}/${CI_TOOLS_REPO}/report-generator:5.1.26
     entrypoint: ["/bin/sh", "-c"]
   rules:
+    - if: $ON_MR == "true" && $CI_MERGE_REQUEST_TARGET_BRANCH_PROTECTED == "true" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME != $CI_DEFAULT_BRANCH
+      when: never
     - if: $ON_MR
       variables:
         coverage_report: summary
       when: always # Even if previous stages/required jobs fail
+  variables:
+    GIT_LFS_SKIP_SMUDGE: 1
   before_script:
     - PACKAGE_URL=${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/coverage/${CI_COMMIT_BRANCH}${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME}/coverage_history.tar.gz
     # Download coverage history from the registry
@@ -426,7 +632,7 @@ unit coverage:
       echo "coverage${metric_prefix},pipeline=${CI_PIPELINE_ID},os=${OS} value=${coverage_value}" >> build/build_time_metrics.txt
     - |
       influx write --host $INFLUXDB_URL --token $INFLUXDB_TOKEN --org $INFLUXDB_ORG \
-        --bucket ci --file build/build_time_metrics.txt
+        --bucket ci --file build/build_time_metrics.txt || true
   coverage: /^\s*Line coverage:\s*\d+.\d+\%/
   artifacts: &unit_coverage_artifacts
     paths:
@@ -447,7 +653,7 @@ unit coverage:
 unit coverage dev:
   extends: unit coverage
   rules:
-    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests Plugin/
       variables:
         coverage_report: full
       when: always # Even if previous stages/required jobs fail
@@ -458,7 +664,7 @@ unit coverage dev:
 pages:
   stage: documentation
   rules:
-    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests Plugin/
       when: always # Even if previous stages/required jobs fail
       allow_failure: true
   image: ${GITLAB_REGISTRY_URI}/${CI_TOOLS_REPO}/doxygen:1.9.8-1.2023.7
@@ -511,7 +717,7 @@ update agpl main dryrun:
   extends: update private branch
   stage: .post
   rules:
-    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests Plugin/
       when: always
   variables:
     PRIVATE_BRANCH: agpl_main
@@ -523,7 +729,7 @@ create-tags:
   extends: .create-tag
   stage: .post
   rules:
-    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests Plugin/
       when: delayed
       start_in: 3 hours
   script:

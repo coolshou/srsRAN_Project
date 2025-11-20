@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -70,16 +70,21 @@ size_t srsran::get_byte_buffer_segment_pool_current_size_approx()
   return pool.get_central_cache_approx_size() + pool.get_local_cache_size();
 }
 
+void srsran::init_byte_buffer_segment_pool_tls()
+{
+  detail::get_default_byte_buffer_segment_pool().init_worker_cache();
+}
+
 // ------ memory resource -------
 
-namespace {
-
 /// Warn when the default segment pool is depleted.
-void byte_buffer_warn_alloc_failure()
+static void byte_buffer_warn_alloc_failure()
 {
   static srslog::basic_logger& logger = srslog::fetch_basic_logger("ALL");
   logger.warning("POOL: Failure to allocate byte buffer segment");
 }
+
+namespace {
 
 /// Memory resource wrapper of the default byte buffer segment pool.
 class default_segment_pool_memory_resource final : public byte_buffer_memory_resource

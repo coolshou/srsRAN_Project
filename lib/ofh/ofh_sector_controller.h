@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,17 +22,23 @@
 
 #pragma once
 
+#include "support/uplink_context_repository.h"
 #include "srsran/ofh/ofh_controller.h"
 #include "srsran/ofh/receiver/ofh_receiver.h"
+#include "srsran/ofh/transmitter/ofh_transmitter.h"
+#include <memory>
 
 namespace srsran {
 namespace ofh {
 
 /// Open Fronthaul controller for the sector.
-class sector_controller : public controller
+class sector_controller : public operation_controller
 {
 public:
-  explicit sector_controller(receiver& ofh_rx_) : ofh_rx(ofh_rx_) {}
+  sector_controller(transmitter& ofh_tx_, receiver& ofh_rx_, std::shared_ptr<uplink_context_repository> slot_repo_) :
+    ofh_tx(ofh_tx_), ofh_rx(ofh_rx_), slot_repo(std::move(slot_repo_))
+  {
+  }
 
   // See interface for documentation.
   void start() override;
@@ -41,7 +47,9 @@ public:
   void stop() override;
 
 private:
-  receiver& ofh_rx;
+  transmitter&                               ofh_tx;
+  receiver&                                  ofh_rx;
+  std::shared_ptr<uplink_context_repository> slot_repo;
 };
 
 } // namespace ofh

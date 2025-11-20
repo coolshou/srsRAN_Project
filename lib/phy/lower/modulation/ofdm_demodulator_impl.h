@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -57,6 +57,10 @@ private:
   std::unique_ptr<dft_processor> dft;
   /// Phase compensation table.
   phase_compensation_lut phase_compensation_table;
+  /// Next center frequency in Hertz.
+  std::atomic<double> next_center_freq_Hz;
+  /// Current center frequency in Hertz.
+  double current_center_freq_Hz;
   /// Internal buffer aimed at storing the phase compensated DFT outputs.
   std::vector<cf_t> compensated_output;
   /// DFT window offset phase compensation.
@@ -71,7 +75,7 @@ public:
 
   /// \brief Gets the resource grid bandwidth in resource elements.
   /// \return The number of resource elements in the grid.
-  unsigned get_rg_size() const { return rg_size; };
+  unsigned get_rg_size() const { return rg_size; }
 
   /// \brief Gets the offset in samples to the start of (the cyclic prefix of) a given symbol.
   /// \param[in] symbol_index Indicates the symbol index within the subframe.
@@ -86,6 +90,12 @@ public:
   }
 
   // See interface for documentation.
+  void set_center_frequency(double center_frequency_Hz) override
+  {
+    next_center_freq_Hz.store(center_frequency_Hz, std::memory_order_relaxed);
+  }
+
+  // See interface for documentation.
   void
   demodulate(resource_grid_writer& grid, span<const cf_t> input, unsigned port_index, unsigned symbol_index) override;
 };
@@ -97,17 +107,17 @@ private:
   /// Cyclic prefix type.
   cyclic_prefix cp;
   /// Instance of symbol demodulator.
-  ofdm_symbol_demodulator_impl symbol_demodulator;
+  std::unique_ptr<ofdm_symbol_demodulator> symbol_demodulator;
 
 public:
   /// \brief Constructs an OFDM slot demodulator.
-  /// \param[in] common_config Provides specific configuration parameters from the factory.
-  /// \param[in] ofdm_config Provides generic OFDM configuration parameters.
-  ofdm_slot_demodulator_impl(ofdm_demodulator_common_configuration& common_config,
-                             const ofdm_demodulator_configuration&  ofdm_config) :
-    cp(ofdm_config.cp), symbol_demodulator(common_config, ofdm_config)
+  /// \param[in] ofdm_config       OFDM factory parameters.
+  /// \param[in] symbol_modulator_ OFDM symbol demodulator instance.
+  ofdm_slot_demodulator_impl(const ofdm_demodulator_configuration&    ofdm_config,
+                             std::unique_ptr<ofdm_symbol_demodulator> symbol_demodulator_) :
+    cp(ofdm_config.cp), symbol_demodulator(std::move(symbol_demodulator_))
   {
-    // Do nothing.
+    srsran_assert(symbol_demodulator, "Invalid OFDM symbol demodulator.");
   }
 
   // See interface for documentation;

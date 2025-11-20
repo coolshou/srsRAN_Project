@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,6 +23,7 @@
 #pragma once
 
 #include "pdcp_bearer_logger.h"
+#include "pdcp_crypto_token.h"
 #include "pdcp_entity_tx_rx_base.h"
 #include "pdcp_interconnect.h"
 #include "pdcp_metrics_aggregator.h"
@@ -30,6 +31,7 @@
 #include "pdcp_rx_metrics_impl.h"
 #include "srsran/adt/byte_buffer.h"
 #include "srsran/adt/byte_buffer_chain.h"
+#include "srsran/adt/ring_buffer.h"
 #include "srsran/pdcp/pdcp_config.h"
 #include "srsran/pdcp/pdcp_rx.h"
 #include "srsran/security/security_engine.h"
@@ -52,9 +54,25 @@ struct pdcp_rx_state {
   uint32_t rx_reord;
 };
 
+/// Helper structure used to pass RX PDUs to the security engine.
+struct pdcp_rx_pdu_info {
+  /// The PDU/SDU buffer (PDU header/footer are removed during processing so that finally the SDU remains.)
+  byte_buffer buf;
+  /// The count value of the PDU
+  uint32_t count = 0;
+  /// Time of arrival at the PDCP entity
+  std::chrono::system_clock::time_point time_of_arrival;
+  /// The PDCP crypto token
+  pdcp_crypto_token token;
+};
+
+/// Structure used to hold RX SDUs in the RX window.
 struct pdcp_rx_sdu_info {
-  byte_buffer                           sdu;
-  uint32_t                              count = 0;
+  /// The SDU buffer
+  byte_buffer buf;
+  /// The count value of the SDU
+  uint32_t count = 0;
+  /// Time of arrival at the PDCP entity
   std::chrono::system_clock::time_point time_of_arrival;
 };
 
@@ -86,6 +104,40 @@ public:
 
   /// \brief Triggers re-establishment as specified in TS 38.323, section 5.1.2
   void reestablish(security::sec_128_as_config sec_cfg) override;
+
+  /// \brief Tells the PDCP to start buffering SDUs.
+  void begin_buffering() override;
+
+  /// \brief Ends the PDCP the buffering of SDUs and flushes the current buffer.
+  void end_buffering() override;
+
+  /// \brief Get the RX count for status transfer
+  pdcp_count_info get_count() const override
+  {
+    pdcp_count_info count_info;
+    uint32_t        count = st.rx_deliv;
+    count_info.sn         = SN(count);
+    count_info.hfn        = HFN(count);
+    return count_info;
+  }
+
+  /// \brief Set the RX count for status transfer
+  void set_count(pdcp_count_info count_info) override
+  {
+    uint32_t count = COUNT(count_info.hfn, count_info.sn);
+    if (st.rx_next != 0 || st.rx_deliv != 0 || st.rx_reord != 0) {
+      logger.log_warning("Status transfer applied to bearer with non-zero state. st={} count={}", st, count);
+    }
+    st = {count, count, count};
+    logger.log_info("Setted PDCP RX state. {}", st);
+  }
+
+  /// \brief Retrun awaitable to wait for cripto tasks to be
+  /// finished.
+  manual_event_flag& crypto_awaitable();
+
+  void notify_pdu_processing_stopped() override;
+  void restart_pdu_processing() override;
 
   // Rx/Tx interconnect
   void set_status_handler(pdcp_tx_status_handler* status_handler_) { status_handler = status_handler_; }
@@ -142,19 +194,27 @@ private:
   class reordering_callback;
   void handle_t_reordering_expire();
 
+  /// Crypto token manager. Used to wait for crypto engine to finish
+  /// when destroying DRB.
+  pdcp_crypto_token_manager token_mngr;
+
+  bool                           buffering = false;
+  ring_buffer<byte_buffer_chain> pdu_buffer{2048};
+
   // Handling of different PDU types
 
   /// \brief Handles a received data PDU.
   /// \param pdu The data PDU to be handled (including header and payload)
-  void handle_data_pdu(byte_buffer pdu);
+  /// \param time_of_arrival The time of arrival at the PDCP entity
+  void handle_data_pdu(byte_buffer pdu, std::chrono::system_clock::time_point time_of_arrival);
 
-  void apply_security(pdcp_rx_sdu_info pdu_info);
+  void apply_security(pdcp_rx_pdu_info&& pdu_info);
 
-  void apply_reordering(pdcp_rx_sdu_info pdu_info);
+  void apply_reordering(pdcp_rx_pdu_info pdu_info);
 
   /// \brief Handles a received control PDU.
   /// \param buf The control PDU to be handled (including header and payload)
-  void handle_control_pdu(byte_buffer_chain buf);
+  void handle_control_pdu(byte_buffer_chain pdu);
 
   void deliver_all_consecutive_counts();
   void deliver_all_sdus();
@@ -207,7 +267,7 @@ struct formatter<srsran::pdcp_rx_state> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::pdcp_rx_state& st, FormatContext& ctx)
+  auto format(const srsran::pdcp_rx_state& st, FormatContext& ctx) const
   {
     return format_to(ctx.out(), "rx_next={} rx_deliv={} rx_reord={}", st.rx_next, st.rx_deliv, st.rx_reord);
   }

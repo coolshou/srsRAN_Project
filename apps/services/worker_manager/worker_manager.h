@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,130 +22,186 @@
 
 #pragma once
 
+#include "pcap_executor_mapper.h"
 #include "worker_manager_config.h"
-#include "worker_manager_worker_getter.h"
+#include "srsran/cu_cp/cu_cp_executor_mapper.h"
 #include "srsran/cu_up/cu_up_executor_mapper.h"
 #include "srsran/du/du_high/du_high_executor_mapper.h"
+#include "srsran/du/du_low/du_low_executor_mapper.h"
+#include "srsran/ru/dummy/ru_dummy_executor_mapper.h"
+#include "srsran/ru/generic/ru_generic_executor_mapper.h"
+#include "srsran/ru/ofh/ru_ofh_executor_mapper.h"
 #include "srsran/support/executors/task_execution_manager.h"
 #include "srsran/support/executors/task_executor.h"
 
 namespace srsran {
 
+namespace app_services {
+class metrics_notifier;
+}
+
+/// Mapper of PCAP executors for the APP.
+class gnb_pcap_executor_mapper : public du_pcap_executor_mapper,
+                                 public cu_cp_pcap_executor_mapper,
+                                 public cu_up_pcap_executor_mapper
+{
+public:
+  virtual ~gnb_pcap_executor_mapper() = default;
+};
+
 /// Manages the workers of the app.
-struct worker_manager : public worker_manager_executor_getter {
+struct worker_manager {
   worker_manager(const worker_manager_config& config);
+  ~worker_manager();
 
   void stop();
 
-  /// du ctrl exec points to general ctrl_worker
-  /// du ue exec points to the general ue_worker
-  /// cu-cp ctrl exec points to general ctrl_worker (just like the du ctrl exec)
-  /// cu-up ue exec points to the general ue_worker (just like the du ue exec)
-  ///
-  /// The handler side is responsible for executor dispatching:
-  /// - ngap::handle_message calls cu-cp ctrl exec
-  /// - f1ap_cu::handle_message calls cu-cp ctrl exec
-  /// - e1ap_cu_cp::handle_message calls cu-cp ctrl exec
-  /// - e1ap_cu_up::handle_message calls cu-up ue exec
-
-  task_executor*              cu_cp_exec = nullptr;
-  std::vector<task_executor*> lower_phy_tx_exec;
-  std::vector<task_executor*> lower_phy_rx_exec;
-  std::vector<task_executor*> lower_phy_dl_exec;
-  std::vector<task_executor*> lower_phy_ul_exec;
-  std::vector<task_executor*> lower_prach_exec;
-  std::vector<task_executor*> upper_pusch_exec;
-  std::vector<task_executor*> upper_pusch_decoder_exec;
-  std::vector<task_executor*> upper_pucch_exec;
-  std::vector<task_executor*> upper_prach_exec;
-  std::vector<task_executor*> upper_srs_exec;
-  std::vector<task_executor*> upper_pdsch_exec;
-  task_executor*              radio_exec      = nullptr;
-  task_executor*              ru_printer_exec = nullptr;
-  task_executor*              ru_timing_exec  = nullptr;
-  std::vector<task_executor*> ru_txrx_exec;
   std::vector<task_executor*> fapi_exec;
-  std::vector<task_executor*> ru_dl_exec;
-  std::vector<task_executor*> ru_rx_exec;
-  task_executor*              cu_e2_exec       = nullptr;
-  task_executor*              metrics_hub_exec = nullptr;
+  task_executor*              split6_exec      = nullptr;
+  task_executor*              split6_crtl_exec = nullptr;
 
-  std::unique_ptr<srs_cu_up::cu_up_executor_mapper> cu_up_exec_mapper;
-
-  srs_du::du_high_executor_mapper& get_du_high_executor_mapper(unsigned du_index);
-
-  // Gets the DU-low downlink executors.
-  void get_du_low_dl_executors(std::vector<task_executor*>& executors, unsigned sector_id) const;
-
-  /// Get executor based on the name.
-  task_executor* find_executor(const std::string& name) const
+  srs_du::du_high_executor_mapper& get_du_high_executor_mapper()
   {
-    auto it = exec_mng.executors().find(name);
-    return it != exec_mng.executors().end() ? it->second : nullptr;
+    srsran_assert(du_high_exec_mapper, "DU High execution mapper is not available.");
+    return *du_high_exec_mapper;
   }
 
-  task_executor& get_executor(const std::string& name) const override { return *exec_mng.executors().at(name); }
+  srs_cu_cp::cu_cp_executor_mapper& get_cu_cp_executor_mapper()
+  {
+    srsran_assert(cu_cp_exec_mapper, "CU-CP execution mapper is not available.");
+    return *cu_cp_exec_mapper;
+  }
 
-  worker_manager_executor_getter* get_executor_getter() { return this; }
+  srs_cu_up::cu_up_executor_mapper& get_cu_up_executor_mapper()
+  {
+    srsran_assert(cu_up_exec_mapper, "CU-UP execution mapper is not available.");
+    return *cu_up_exec_mapper;
+  }
+
+  srs_du::du_low_executor_mapper& get_du_low_executor_mapper()
+  {
+    srsran_assert(du_low_exec_mapper, "DU Low execution mapper is not available.");
+    return *du_low_exec_mapper;
+  }
+
+  ru_dummy_executor_mapper& get_dummy_ru_executor_mapper()
+  {
+    srsran_assert(dummy_exec_mapper, "Dummy RU execution mapper is not available.");
+    return *dummy_exec_mapper;
+  }
+
+  ru_generic_executor_mapper& get_sdr_ru_executor_mapper()
+  {
+    srsran_assert(sdr_exec_mapper, "SDR RU execution mapper is not available.");
+    return *sdr_exec_mapper;
+  }
+
+  ru_ofh_executor_mapper& get_ofh_ru_executor_mapper()
+  {
+    srsran_assert(ofh_exec_mapper, "OFH RU execution mapper is not available.");
+    return *ofh_exec_mapper;
+  }
+
+  du_pcap_executor_mapper&    get_du_pcap_executors() { return *pcap_exec_mapper; }
+  cu_cp_pcap_executor_mapper& get_cu_cp_pcap_executors() { return *pcap_exec_mapper; }
+  cu_up_pcap_executor_mapper& get_cu_up_pcap_executors() { return *pcap_exec_mapper; }
+
+  task_executor& get_cmd_line_executor() const { return *non_rt_medium_prio_exec; }
+  task_executor& get_timer_source_executor() const { return *timer_source_exec; }
+  task_executor& get_metrics_executor() const { return *metrics_exec; }
 
 private:
-  struct du_high_executor_storage {
-    std::unique_ptr<srs_du::du_high_executor_mapper> du_high_exec_mapper;
-  };
-  std::vector<du_high_executor_storage>    du_high_executors;
-  std::vector<std::vector<task_executor*>> du_low_dl_executors;
+  srslog::basic_logger& app_logger;
+
+  /// Total number of workers for the general task worker pool. Necessary for providing maximum concurrency level to
+  /// the physical layer.
+  unsigned nof_workers_general_pool = 0;
+
+  /// Instantiated raw executors.
+  task_executor* non_rt_low_prio_exec    = nullptr;
+  task_executor* non_rt_medium_prio_exec = nullptr;
+  task_executor* non_rt_hi_prio_exec     = nullptr;
+  task_executor* rt_hi_prio_exec         = nullptr;
+
+  std::unique_ptr<srs_du::du_high_executor_mapper>  du_high_exec_mapper;
+  std::unique_ptr<srs_du::du_low_executor_mapper>   du_low_exec_mapper;
+  std::unique_ptr<srs_cu_cp::cu_cp_executor_mapper> cu_cp_exec_mapper;
+  std::unique_ptr<srs_cu_up::cu_up_executor_mapper> cu_up_exec_mapper;
+
+  /// Serialized Executor used for metrics.
+  task_executor* metrics_exec = nullptr;
+
+  /// Serialized Executor used for timer ticking.
+  task_executor* timer_source_exec = nullptr;
+
+  std::unique_ptr<gnb_pcap_executor_mapper> pcap_exec_mapper;
+
+  /// Dummy RU executor mapper.
+  std::unique_ptr<ru_dummy_executor_mapper> dummy_exec_mapper;
+
+  /// SDR RU executor mapper.
+  std::unique_ptr<ru_generic_executor_mapper> sdr_exec_mapper;
+
+  /// Open Fronthaul RU executor mapper.
+  std::unique_ptr<ru_ofh_executor_mapper> ofh_exec_mapper;
 
   /// Manager of execution contexts and respective executors instantiated by the application.
   task_execution_manager exec_mng;
 
-  os_sched_affinity_manager low_prio_affinity_mng;
-  os_sched_affinity_bitmask ru_timing_mask;
+  /// Executor metrics channel registry.
+  executor_metrics_channel_registry* exec_metrics_channel_registry = nullptr;
 
+  /// Collection of task executor decorators.
+  std::vector<std::unique_ptr<task_executor>> executor_decorators_exec;
+
+  os_sched_affinity_manager              main_pool_affinity_mng;
+  os_sched_affinity_bitmask              ru_timing_mask;
   std::vector<os_sched_affinity_bitmask> ru_txrx_affinity_masks;
 
   /// CPU affinity bitmask manager per cell.
   std::vector<os_sched_affinity_manager> affinity_mng;
 
+  /// State of worker_manager.
+  bool running = true;
+
+  void create_main_worker_pool(const worker_manager_config& worker_cfg);
+
   /// Helper method to create workers with non zero priority.
-  void create_prio_worker(const std::string&                                    name,
-                          unsigned                                              queue_size,
-                          const std::vector<execution_config_helper::executor>& execs,
-                          const os_sched_affinity_bitmask&                      mask,
-                          os_thread_realtime_priority prio = os_thread_realtime_priority::no_realtime());
+  void create_prio_worker(const std::string&               name,
+                          const std::string&               exec_name,
+                          unsigned                         queue_size,
+                          const os_sched_affinity_bitmask& mask,
+                          os_thread_realtime_priority      prio = os_thread_realtime_priority::no_realtime());
 
   /// Helper method to create worker pool.
-  void create_worker_pool(const std::string&                                    name,
-                          unsigned                                              nof_workers,
-                          unsigned                                              queue_size,
-                          const std::vector<execution_config_helper::executor>& execs,
+  void create_worker_pool(const std::string&                    name,
+                          unsigned                              nof_workers,
+                          const std::string&                    exec_name,
+                          unsigned                              queue_size,
                           os_thread_realtime_priority           prio      = os_thread_realtime_priority::no_realtime(),
-                          span<const os_sched_affinity_bitmask> cpu_masks = {});
+                          span<const os_sched_affinity_bitmask> cpu_masks = {},
+                          concurrent_queue_policy               queue_policy = concurrent_queue_policy::locking_mpmc);
 
-  execution_config_helper::worker_pool create_low_prio_workers(unsigned                  nof_low_prio_threads,
-                                                               unsigned int              low_prio_task_queue_size,
-                                                               os_sched_affinity_bitmask low_prio_mask);
-  void                                 create_low_prio_executors(const worker_manager_config& config);
-  void                                 associate_low_prio_executors(const worker_manager_config& config);
+  void create_support_strands(const worker_manager_config& config);
+
+  void add_pcap_strands(const worker_manager_config::pcap_config& config);
 
   std::vector<execution_config_helper::single_worker> create_fapi_workers(unsigned nof_cells);
 
-  std::vector<execution_config_helper::priority_multiqueue_worker> create_du_hi_slot_workers(unsigned nof_cells,
-                                                                                             bool     rt_mode);
+  /// Helper method that creates the CU-CP executors.
+  void create_cu_cp_executors(const worker_manager_config::cu_cp_config& config, timer_manager& timers);
 
   /// Helper method that creates the CU-UP executors.
-  void create_cu_up_executors(const worker_manager_config::cu_up_config& config);
+  void create_cu_up_executors(const worker_manager_config::cu_up_config& config, timer_manager& timers);
 
-  /// Helper method that creates the Distributed Unit executors.
-  void create_du_executors(const worker_manager_config::du_high_config&        du_hi,
-                           std::optional<worker_manager_config::du_low_config> du_low,
-                           std::optional<worker_manager_config::fapi_config>   fapi_cfg);
+  /// Helper method that creates the DU-high executors.
+  void create_du_high_executors(const worker_manager_config::du_high_config& config);
+
+  /// Helper method that creates the FAPI executors.
+  void create_fapi_executors(const worker_manager_config::fapi_config& config);
 
   /// Helper method that creates the low Distributed Unit executors.
-  void create_du_low_executors(bool     is_blocking_mode_active,
-                               unsigned nof_ul_workers,
-                               unsigned nof_dl_workers,
-                               unsigned nof_pusch_decoder_workers,
-                               unsigned nof_cells);
+  void create_du_low_executors(const worker_manager_config::du_low_config& du_low);
 
   /// Helper method that creates the Radio Unit dummy executors.
   void create_ru_dummy_executors();
@@ -155,6 +211,9 @@ private:
 
   /// Helper method that creates the Open Fronthaul executors.
   void create_ofh_executors(const worker_manager_config::ru_ofh_config& config);
+
+  /// Helper method that creates the split 6 executors.
+  void create_split6_executors();
 };
 
 } // namespace srsran

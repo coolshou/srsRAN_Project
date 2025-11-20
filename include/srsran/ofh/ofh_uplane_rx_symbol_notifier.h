@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -51,7 +51,8 @@ public:
   ///
   /// \param[in] context Notification context.
   /// \param[in] grid    Resource grid that belongs to the context.
-  virtual void on_new_uplink_symbol(const uplane_rx_symbol_context& context, shared_resource_grid grid) = 0;
+  virtual void
+  on_new_uplink_symbol(const uplane_rx_symbol_context& context, shared_resource_grid grid, bool is_valid) = 0;
 
   /// \brief Notifies the completion of a PRACH window.
   /// \param[in] context PRACH context.

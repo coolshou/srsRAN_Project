@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,7 +25,7 @@
 
 using namespace srsran;
 
-const unsigned CQI_TABLE_SIZE = 16;
+static constexpr unsigned CQI_TABLE_SIZE = 16;
 
 // The table below performs the mapping of the CQI into the closest MCS, based on the corresponding spectral efficiency.
 // The mapping works as follows:
@@ -45,7 +45,7 @@ const unsigned CQI_TABLE_SIZE = 16;
 //
 // The array cqi_to_mcs_table[MCS_table_idx][CQI] provides the mapping of the CQI to the MCS corresponding, based on
 // MCS_table_idx.
-static const int cqi_to_mcs_table[3][CQI_TABLE_SIZE] = {
+static constexpr int cqi_to_mcs_table[3][CQI_TABLE_SIZE] = {
     // clang-format off
     // CQI Table 1 and MCS_table_idx 1
     {-1, 0, 0, 2, 4, 6, 8, 11, 13, 15, 18, 20, 22, 24, 26, 28},
@@ -72,7 +72,7 @@ static const int cqi_to_mcs_table[3][CQI_TABLE_SIZE] = {
 //  NOTE: Following values were computed using SISO configuration over 20Mhz Bandwidth and TDD configuration
 
 // For 64QAM PUSCH MCS table.
-static const std::array<double, 29> ul_snr_mcs_table = {
+static constexpr std::array<double, 29> ul_snr_mcs_table = {
     // clang-format off
     /* MCS 0      1        2        3        4       5        6         7        8        9  */
      -5.7998, -3.5500,  -2.925, -2.5625, -1.0500,  0.98266,  1.6250,  2.5425,  3.4175,  4.3548,
@@ -84,7 +84,7 @@ static const std::array<double, 29> ul_snr_mcs_table = {
 };
 
 // For 256QAM PUSCH MCS table.
-static const std::array<double, 28> ul_snr_256qam_mcs_table = {
+static constexpr std::array<double, 28> ul_snr_256qam_mcs_table = {
     // clang-format off
     /* MCS 0      1        2        3        4       5        6         7        8        9  */
       1.7998,  3.5500,   4.925,  5.5625,  6.0500, 7.98266,  8.6250,  9.5425, 10.4175,  11.3548,
@@ -92,6 +92,18 @@ static const std::array<double, 28> ul_snr_256qam_mcs_table = {
      12.3695, 12.8250, 13.1375, 13.8475, 14.6875,  15.554, 15.9540, 16.1070, 16.8250,  17.0625,
     /* MCS 20    21       22       23       24      25       26        27   */
      17.4250, 17.9375, 18.1160, 18.5525, 18.8725, 19.0150,  20.591,  21.691
+    // clang-format on
+};
+
+// For 64QAM PUSCH MCS table.
+static constexpr std::array<double, 29> ul_snr_qam64_lowse_mcs_table = {
+    // clang-format off
+    /* MCS 0      1        2        3        4       5        6         7        8        9  */
+     -5.7998, -3.5500,  -2.925, -2.5625, -1.0500,  0.98266,  1.6250,  2.5425,  3.4175,  4.3548,
+    /* MCS 10    11       12       13       14      15       16        17       18       19  */
+      5.3695,  5.8250,  6.6375,  7.6375,  9.5875,  10.4000, 11.1540, 12.1070, 12.5250, 13.0625,
+    /* MCS 20    21       22       23       24      25       26        27       28 */
+     13.5250, 13.9375, 14.1160, 14.5525, 14.9725,  15.3450, 15.9175, 16.0425, 16.591
     // clang-format on
 };
 
@@ -117,7 +129,7 @@ std::optional<sch_mcs_index> srsran::map_cqi_to_mcs(unsigned cqi, pdsch_mcs_tabl
   return mcs;
 }
 
-sch_mcs_index srsran::map_snr_to_mcs_ul(double snr, pusch_mcs_table mcs_table)
+sch_mcs_index srsran::map_snr_to_mcs_ul(double snr, pusch_mcs_table mcs_table, bool use_transform_precoder)
 {
   // The objective of this function is to find the maximum MCS that can be used for a given SNR. A possible approach to
   // this problem would be to get the iterator to the biggest element of the SNR vector not greater than the target SNR.
@@ -127,8 +139,17 @@ sch_mcs_index srsran::map_snr_to_mcs_ul(double snr, pusch_mcs_table mcs_table)
   span<const double> selected_mcs_table = ul_snr_mcs_table;
   if (mcs_table == pusch_mcs_table::qam256) {
     selected_mcs_table = ul_snr_256qam_mcs_table;
+  } else if (mcs_table == pusch_mcs_table::qam64LowSe) {
+    selected_mcs_table = ul_snr_qam64_lowse_mcs_table;
   }
   const unsigned MIN_MCS = 0;
+
+  // Prevent selecting a reserved MCS entry when TP is enabled.
+  // The PUSCH MCS tables used when TP is enabled (TS 38.214 Table 6.1.4.1-1/2, see \ref srsran::pusch_mcs_get_config)
+  // only have 28 valid (non-reserved) entries, while the regular qam64 and qam64LowSe tables have 29 valid entries.
+  if (use_transform_precoder and mcs_table != pusch_mcs_table::qam256) {
+    selected_mcs_table = selected_mcs_table.first(28);
+  }
 
   // Check of the SNR is lower than the minimum, or greater than the maximum. If so, return the min or max MCS.
   if (snr <= selected_mcs_table.front()) {
@@ -140,7 +161,7 @@ sch_mcs_index srsran::map_snr_to_mcs_ul(double snr, pusch_mcs_table mcs_table)
     return selected_mcs_table.size() - 1;
   }
 
-  auto it_ub = std::upper_bound(selected_mcs_table.begin(), selected_mcs_table.end(), snr);
+  const auto* it_ub = std::upper_bound(selected_mcs_table.begin(), selected_mcs_table.end(), snr);
 
   // NOTE: By design, it_ub > ul_snr_mcs_table.begin(). All SNR values such it_ub == ul_snr_mcs_table.begin() are
   // handled above, in the "if (snr <= ul_snr_mcs_table.front())" statement above.

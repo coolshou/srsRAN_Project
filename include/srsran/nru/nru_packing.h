@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -39,13 +39,13 @@ enum class nru_pdu_type : uint8_t {
 };
 
 /// Convert NR-U PDU type to unsigned integer.
-constexpr inline uint8_t nru_pdu_type_to_uint(nru_pdu_type pdu_type)
+constexpr uint8_t nru_pdu_type_to_uint(nru_pdu_type pdu_type)
 {
   return static_cast<uint8_t>(pdu_type);
 }
 
 /// Convert unsigned integer to NR-U PDU type.
-constexpr inline nru_pdu_type uint_to_nru_pdu_type(uint8_t num)
+constexpr nru_pdu_type uint_to_nru_pdu_type(uint8_t num)
 {
   return static_cast<nru_pdu_type>(num);
 }
@@ -84,13 +84,13 @@ struct formatter<srsran::nru_pdu_type> {
   }
 
   template <typename FormatContext>
-  auto format(srsran::nru_pdu_type pdu_type, FormatContext& ctx)
+  auto format(srsran::nru_pdu_type pdu_type, FormatContext& ctx) const
   {
     static constexpr const char* options[] = {"dl_user_data", "dl_data_delivery_status", "assistance_information"};
     if (nru_pdu_type_to_uint(pdu_type) < nru_pdu_type_to_uint(srsran::nru_pdu_type::reserved)) {
       format_to(ctx.out(), "{}", options[nru_pdu_type_to_uint(pdu_type)]);
     }
     return format_to(ctx.out(), "reserved ({})", nru_pdu_type_to_uint(pdu_type));
-  };
+  }
 };
 } // namespace fmt

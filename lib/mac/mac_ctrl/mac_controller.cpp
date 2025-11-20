@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,9 +22,12 @@
 
 #include "mac_controller.h"
 #include "../rnti_manager.h"
+#include "mac_ue_removal_procedure.h"
 #include "ue_creation_procedure.h"
-#include "ue_delete_procedure.h"
 #include "ue_reconfiguration_procedure.h"
+#include "srsran/mac/mac_clock_controller.h"
+#include "srsran/ran/tdd/tdd_ul_dl_config.h"
+#include "fmt/base.h"
 
 using namespace srsran;
 
@@ -33,17 +36,38 @@ mac_controller::mac_controller(const mac_control_config&   cfg_,
                                mac_dl_configurator&        dl_unit_,
                                rnti_manager&               rnti_table_,
                                mac_scheduler_configurator& sched_cfg_) :
-  cfg(cfg_), logger(cfg.logger), ul_unit(ul_unit_), dl_unit(dl_unit_), rnti_table(rnti_table_), sched_cfg(sched_cfg_)
+  cfg(cfg_),
+  logger(cfg.logger),
+  ul_unit(ul_unit_),
+  dl_unit(dl_unit_),
+  rnti_table(rnti_table_),
+  sched_cfg(sched_cfg_),
+  time_ctrl(cfg.time_source),
+  metrics(cfg.metrics, cfg.ctrl_exec, cfg.time_source.get_timer_manager(), logger)
 {
 }
 
-void mac_controller::add_cell(const mac_cell_creation_request& cell_cfg)
+mac_cell_controller& mac_controller::add_cell(const mac_cell_creation_request& cell_add_req)
 {
+  // Add new cell to track timing.
+  auto cell_time_source = time_ctrl.add_cell(cell_add_req.cell_index);
+
+  // Add cell to metrics reports.
+  unsigned tdd_period_slots = cell_add_req.sched_req.tdd_ul_dl_cfg_common.has_value()
+                                  ? nof_slots_per_tdd_period(*cell_add_req.sched_req.tdd_ul_dl_cfg_common)
+                                  : 0U;
+
+  auto cell_metrics_cfg =
+      metrics.add_cell(cell_add_req.cell_index, cell_add_req.scs_common, tdd_period_slots, *cell_time_source);
+
   // > Fill sched cell configuration message and pass it to the scheduler.
-  sched_cfg.add_cell(cell_cfg);
+  sched_cfg.add_cell(mac_scheduler_cell_creation_request{cell_add_req, cell_metrics_cfg.sched_notifier});
 
   // > Create MAC Cell DL Handler.
-  dl_unit.add_cell(cell_cfg);
+  return dl_unit.add_cell(cell_add_req,
+                          mac_cell_config_dependencies{std::move(cell_time_source),
+                                                       cell_metrics_cfg.report_period,
+                                                       cell_metrics_cfg.mac_notifier});
 }
 
 void mac_controller::remove_cell(du_cell_index_t cell_index)
@@ -53,11 +77,14 @@ void mac_controller::remove_cell(du_cell_index_t cell_index)
 
   // > Remove cell from scheduler.
   sched_cfg.remove_cell(cell_index);
+
+  // > Remove cell from metrics reports.
+  metrics.rem_cell(cell_index);
 }
 
-mac_cell_controller& mac_controller::get_cell_controller(du_cell_index_t cell_index)
+mac_cell_time_mapper& mac_controller::get_time_mapper(du_cell_index_t cell_index)
 {
-  return dl_unit.get_cell_controller(cell_index);
+  return dl_unit.get_time_mapper(cell_index);
 }
 
 async_task<mac_ue_create_response> mac_controller::handle_ue_create_request(const mac_ue_create_request& msg)
@@ -67,7 +94,7 @@ async_task<mac_ue_create_response> mac_controller::handle_ue_create_request(cons
 
 async_task<mac_ue_delete_response> mac_controller::handle_ue_delete_request(const mac_ue_delete_request& msg)
 {
-  return launch_async<mac_ue_delete_procedure>(msg, cfg, *this, ul_unit, dl_unit, sched_cfg);
+  return launch_async<mac_ue_removal_procedure>(msg, cfg, *this, ul_unit, dl_unit, sched_cfg);
 }
 
 async_task<mac_ue_reconfiguration_response>
@@ -78,7 +105,7 @@ mac_controller::handle_ue_reconfiguration_request(const mac_ue_reconfiguration_r
 
 void mac_controller::handle_ue_config_applied(du_ue_index_t ue_index)
 {
-  srsran_assert(ue_db.contains(ue_index), "Invalid ue_index={}", ue_index);
+  srsran_assert(ue_db.contains(ue_index), "Invalid ue_index={}", fmt::underlying(ue_index));
 
   ul_unit.handle_ue_config_applied(ue_index);
 
@@ -87,7 +114,7 @@ void mac_controller::handle_ue_config_applied(du_ue_index_t ue_index)
 
 rnti_t mac_controller::add_ue(du_ue_index_t ue_index, du_cell_index_t cell_index, rnti_t tc_rnti)
 {
-  srsran_assert(is_du_ue_index_valid(ue_index), "Invalid ue_index={}", ue_index);
+  srsran_assert(is_du_ue_index_valid(ue_index), "Invalid ue_index={}", fmt::underlying(ue_index));
 
   if (ue_db.contains(ue_index)) {
     // UE already existed with same ue_index.
@@ -110,7 +137,8 @@ rnti_t mac_controller::add_ue(du_ue_index_t ue_index, du_cell_index_t cell_index
 
   // Update RNTI -> UE index map.
   if (not rnti_table.add_ue(u.rnti, ue_index)) {
-    logger.error("ue={} rnti={}: The update of the RNTI table overwrote a previous entry", ue_index, u.rnti);
+    logger.error(
+        "ue={} rnti={}: The update of the RNTI table overwrote a previous entry", fmt::underlying(ue_index), u.rnti);
     rnti_table.rem_ue(u.rnti);
     return rnti_t::INVALID_RNTI;
   }
@@ -120,7 +148,7 @@ rnti_t mac_controller::add_ue(du_ue_index_t ue_index, du_cell_index_t cell_index
 void mac_controller::remove_ue(du_ue_index_t ue_index)
 {
   if (not ue_db.contains(ue_index)) {
-    logger.warning("Failed to find ue_index={:#x}", ue_index);
+    logger.warning("Failed to find ue_index={:#x}", fmt::underlying(ue_index));
     return;
   }
 

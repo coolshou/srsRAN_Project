@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,7 +22,7 @@
 
 #include "du_meas_config_manager.h"
 #include "du_ue_resource_config.h"
-#include "srsran/asn1/rrc_nr/meas_cfg.h"
+#include "srsran/asn1/rrc_nr/dl_dcch_msg_ies.h"
 #include "srsran/srslog/srslog.h"
 
 using namespace srsran;
@@ -62,8 +62,12 @@ static meas_gap_config create_meas_gap(subcarrier_spacing scs, const ssb_mtc_s& 
   switch (smtc1.periodicity_and_offset.type().value) {
     case ssb_mtc_s::periodicity_and_offset_c_::types_opts::sf5:
       meas_gap.offset = smtc1.periodicity_and_offset.sf5();
+      meas_gap.mgrp   = meas_gap_repetition_period::ms20;
+      break;
     case ssb_mtc_s::periodicity_and_offset_c_::types_opts::sf10:
       meas_gap.offset = smtc1.periodicity_and_offset.sf10();
+      meas_gap.mgrp   = meas_gap_repetition_period::ms20;
+      break;
     case ssb_mtc_s::periodicity_and_offset_c_::types_opts::sf20:
       meas_gap.offset = smtc1.periodicity_and_offset.sf20();
       meas_gap.mgrp   = meas_gap_repetition_period::ms20;

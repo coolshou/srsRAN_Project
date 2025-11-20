@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -86,16 +86,6 @@ public:
   /// successful outcome, 'false' otherwise.
   /// and awaits the response. If a E2SetupFailure is received the E2 will handle the failure.
   virtual async_task<e2_setup_response_message> start_initial_e2_setup_routine() = 0;
-};
-
-/// This interface is used to pack outgoing and unpack incoming E2 messages.
-class e2ap_packer : public e2_message_handler
-{
-public:
-  virtual ~e2ap_packer() = default;
-
-  /// Handle packed E2AP PDU that needs to be unpacked and forwarded.
-  virtual void handle_packed_pdu(const byte_buffer& pdu) = 0;
 };
 
 /// Combined entry point for E2 handling.

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -29,11 +29,9 @@ namespace srsran {
 namespace detail {
 
 template <typename U>
-struct is_std_array : std::false_type {
-};
+struct is_std_array : std::false_type {};
 template <typename U, std::size_t N>
-struct is_std_array<std::array<U, N>> : std::true_type {
-};
+struct is_std_array<std::array<U, N>> : std::true_type {};
 
 } // namespace detail
 } // namespace srsran

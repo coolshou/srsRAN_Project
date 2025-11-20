@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -38,7 +38,7 @@ public:
   }
 
   template <typename FormatContext>
-  auto format(const srsran::pucch_context& context, FormatContext& ctx)
+  auto format(const srsran::pucch_context& context, FormatContext& ctx) const
   {
     helper.format_always(ctx, "rnti={}", context.rnti);
     return ctx.out();

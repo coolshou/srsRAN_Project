@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,12 +27,9 @@
 
 using namespace srsran;
 
-// Register for converting data representation between big endian (BE) to little endian (LE).
-static const __m128i crc_xmm_be_le_swap128 = _mm_setr_epi32(0x0c0d0e0f, 0x08090a0b, 0x04050607, 0x00010203);
-
 namespace {
 
-// Collects algorithm parameters.
+/// Collects algorithm parameters.
 struct crc_pclmulqdq_parameters {
   // K1 = remainder X^128 / P(X)
   int64_t k1;
@@ -115,7 +112,9 @@ static inline uint32_t crc32_calc_pclmulqdq(span<const uint8_t> data, const crc_
 
   // Load first 16 data bytes in fold and set swap BE<->LE 16 byte conversion variable.
   __m128i fold = mm_safe_load_si128(data.first(std::min(data.size(), 16UL)));
-  __m128i swap = crc_xmm_be_le_swap128;
+
+  // Register for converting data representation between big endian (BE) to little endian (LE).
+  const __m128i swap = _mm_setr_epi32(0x0c0d0e0f, 0x08090a0b, 0x04050607, 0x00010203);
 
   // Folding all data into single 16 byte data block.
   if (data_len <= 16) {

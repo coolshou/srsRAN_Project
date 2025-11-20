@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,6 +26,7 @@
 #include "srsran/ngap/ngap_types.h"
 #include "srsran/security/security.h"
 #include "srsran/support/async/async_task.h"
+#include <map>
 
 namespace srsran {
 namespace srs_cu_cp {
@@ -164,6 +165,32 @@ struct ngap_handover_resource_allocation_response {
 
   // common
   std::optional<crit_diagnostics_t> crit_diagnostics;
+};
+
+struct ngap_drb_status_ul_t {
+  pdcp_sn_size    sn_size;
+  pdcp_count_info ul_count;
+};
+
+struct ngap_drb_status_dl_t {
+  pdcp_sn_size    sn_size;
+  pdcp_count_info dl_count;
+};
+
+struct ngap_drbs_subject_to_status_transfer_item {
+  drb_id_t             drb_id;
+  ngap_drb_status_dl_t drb_status_dl;
+  ngap_drb_status_ul_t drb_status_ul;
+};
+
+struct ngap_ul_ran_status_transfer {
+  ue_index_t                                                             ue_index = ue_index_t::invalid;
+  slotted_id_vector<drb_id_t, ngap_drbs_subject_to_status_transfer_item> drbs_subject_to_status_transfer_list;
+};
+
+struct ngap_dl_ran_status_transfer {
+  ue_index_t                                                             ue_index = ue_index_t::invalid;
+  slotted_id_vector<drb_id_t, ngap_drbs_subject_to_status_transfer_item> drbs_subject_to_status_transfer_list;
 };
 
 } // namespace srs_cu_cp

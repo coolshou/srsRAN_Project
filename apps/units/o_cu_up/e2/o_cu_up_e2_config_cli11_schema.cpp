@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,7 +21,7 @@
  */
 
 #include "o_cu_up_e2_config_cli11_schema.h"
-#include "apps/services/e2/e2_cli11_schema.h"
+#include "apps/helpers/e2/e2_cli11_schema.h"
 #include "o_cu_up_e2_config.h"
 #include "srsran/support/cli11_utils.h"
 
@@ -41,4 +41,10 @@ void srsran::configure_cli11_with_o_cu_up_e2_config_schema(CLI::App& app, o_cu_u
   // PCAP section.
   CLI::App* pcap_subcmd = add_subcommand(app, "pcap", "Logging configuration")->configurable();
   configure_cli11_pcap_args(*pcap_subcmd, unit_cfg.pcaps);
+}
+
+void srsran::autoderive_o_cu_up_e2_parameters_after_parsing(o_cu_up_e2_config& unit_cfg)
+{
+  // If CU UP E2 agent is disabled do not enable e2ap pcap for it.
+  unit_cfg.pcaps.enabled = unit_cfg.base_config.enable_unit_e2 && unit_cfg.pcaps.enabled;
 }

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,16 +22,28 @@
 
 #pragma once
 
-#include "../mac_ctrl/mac_config.h"
 #include "../mac_ctrl/mac_scheduler_configurator.h"
 #include "../rnti_manager.h"
+#include "mac_rach_handler.h"
 #include "mac_scheduler_adapter.h"
+#include "positioning_handler.h"
 #include "rlf_detector.h"
 #include "uci_cell_decoder.h"
+#include "srsran/adt/slotted_array.h"
 #include "srsran/scheduler/mac_scheduler.h"
 #include "srsran/support/async/manual_event.h"
 
 namespace srsran {
+
+struct srsran_mac_sched_config {
+  const mac_expert_config& mac_cfg;
+  /// Executor for DU control-plane operations.
+  task_executor& ctrl_exec;
+  /// APP Timers.
+  timer_manager& timers;
+  // Parameters passed to MAC scheduler.
+  const scheduler_expert_config& sched_cfg;
+};
 
 /// \brief This class adapts srsRAN scheduler interface to operate with srsRAN MAC.
 /// The configuration completion notification handling (e.g. ue creation complete) is deferred for later processing
@@ -40,20 +52,27 @@ namespace srsran {
 class srsran_scheduler_adapter final : public mac_scheduler_adapter
 {
 public:
-  explicit srsran_scheduler_adapter(const mac_config& params, rnti_manager& rnti_mng_);
+  explicit srsran_scheduler_adapter(const srsran_mac_sched_config& params, rnti_manager& rnti_mng_);
 
-  void add_cell(const mac_cell_creation_request& msg) override;
+  void add_cell(const mac_scheduler_cell_creation_request& msg) override;
 
-  void remove_cell(du_cell_index_t cell_index) override
+  void remove_cell(du_cell_index_t cell_index) override;
+
+  void handle_cell_activation(du_cell_index_t cell_index) override
   {
-    // TODO: Call scheduler cell remove.
+    sched_impl->handle_cell_activation_request(cell_index);
+  }
+
+  void handle_cell_deactivation(du_cell_index_t cell_index) override
+  {
+    sched_impl->handle_cell_deactivation_request(cell_index);
   }
 
   async_task<bool> handle_ue_creation_request(const mac_ue_create_request& msg) override;
 
   async_task<bool> handle_ue_reconfiguration_request(const mac_ue_reconfiguration_request& msg) override;
 
-  async_task<bool> handle_ue_removal_request(const mac_ue_delete_request& msg) override;
+  async_task<void> handle_ue_removal_request(const mac_ue_delete_request& msg) override;
 
   void handle_ue_config_applied(du_ue_index_t ue_index) override;
 
@@ -78,9 +97,15 @@ public:
                                du_cell_index_t                    cell_idx,
                                mac_cell_slot_handler::error_event event) override;
 
+  void handle_si_change_indication(const si_scheduling_update_request& request) override;
+
+  mac_positioning_measurement_handler& get_positioning_handler() override { return *pos_handler; }
+
+  void handle_slice_reconfiguration_request(const du_cell_slice_reconfig_request& req) override;
+
   mac_cell_rach_handler& get_cell_rach_handler(du_cell_index_t cell_index) override
   {
-    return cell_handlers[cell_index];
+    return cell_handlers[cell_index].get_rach_handler();
   }
 
   mac_cell_control_information_handler& get_cell_control_info_handler(du_cell_index_t cell_index) override
@@ -89,17 +114,11 @@ public:
   }
 
 private:
-  class cell_handler final : public mac_cell_rach_handler, public mac_cell_control_information_handler
+  class cell_handler final : public mac_cell_control_information_handler
   {
   public:
-    cell_handler(du_cell_index_t                                 cell_idx_,
-                 srsran_scheduler_adapter&                       parent_,
-                 const sched_cell_configuration_request_message& sched_cfg) :
-      uci_decoder(sched_cfg, parent_.rnti_mng, parent_.rlf_handler), cell_idx(cell_idx_), parent(&parent_)
-    {
-    }
-
-    void handle_rach_indication(const mac_rach_indication& rach_ind) override;
+    cell_handler(srsran_scheduler_adapter& parent_, const sched_cell_configuration_request_message& sched_cfg);
+    ~cell_handler() override;
 
     void handle_crc(const mac_crc_indication_message& msg) override;
 
@@ -107,11 +126,18 @@ private:
 
     void handle_srs(const mac_srs_indication_message& msg) override;
 
+    mac_cell_rach_handler_impl& get_rach_handler() { return rach_handler; }
+
     uci_cell_decoder uci_decoder;
 
+    std::unique_ptr<cell_positioning_handler> pos_handler;
+
   private:
-    du_cell_index_t           cell_idx = INVALID_DU_CELL_INDEX;
-    srsran_scheduler_adapter* parent   = nullptr;
+    const du_cell_index_t     cell_idx = INVALID_DU_CELL_INDEX;
+    srsran_scheduler_adapter& parent;
+
+    // Handler of RACH indications for this cell.
+    mac_cell_rach_handler_impl& rach_handler;
   };
 
   class sched_config_notif_adapter final : public sched_configuration_notifier
@@ -119,7 +145,7 @@ private:
   public:
     explicit sched_config_notif_adapter(srsran_scheduler_adapter& parent_) : parent(parent_) {}
     void on_ue_config_complete(du_ue_index_t ue_index, bool ue_creation_result) override;
-    void on_ue_delete_response(du_ue_index_t ue_index) override;
+    void on_ue_deletion_completed(du_ue_index_t ue_index) override;
 
   private:
     srsran_scheduler_adapter& parent;
@@ -131,6 +157,7 @@ private:
   /// Detector of UE RLFs.
   rlf_detector          rlf_handler;
   task_executor&        ctrl_exec;
+  timer_manager&        timers;
   srslog::basic_logger& logger;
 
   /// Notifier that is used by MAC to start and await configurations of the scheduler.
@@ -139,11 +166,20 @@ private:
   /// srsGNB scheduler.
   std::unique_ptr<mac_scheduler> sched_impl;
 
+  /// Handler of RACH indications.
+  mac_rach_handler rach_handler;
+
+  std::atomic<slot_point>                                     last_slot_point;
+  std::atomic<std::chrono::high_resolution_clock::time_point> last_slot_tp;
+
   /// List of event flags used by scheduler to notify that the configuration is complete.
   struct ue_notification_context {
     manual_event<bool> ue_config_ready;
   };
   std::array<ue_notification_context, MAX_NOF_DU_UES> sched_cfg_notif_map;
+
+  /// Positioning measurement handler.
+  std::unique_ptr<positioning_handler> pos_handler;
 
   /// Handler for each DU cell.
   slotted_id_table<du_cell_index_t, cell_handler, MAX_NOF_DU_CELLS> cell_handlers;

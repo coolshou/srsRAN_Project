@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -29,6 +29,7 @@
 #include "srsran/phy/generic_functions/transform_precoding/transform_precoder.h"
 #include "srsran/phy/support/mask_types.h"
 #include "srsran/phy/support/resource_grid_reader.h"
+#include "srsran/phy/upper/channel_estimation.h"
 #include "srsran/phy/upper/equalization/modular_ch_est_list.h"
 #include "srsran/ran/pucch/pucch_constants.h"
 
@@ -181,7 +182,7 @@ inline void pucch_3_4_extract_and_equalize(span<cf_t>                  eq_re,
   // Extract the Rx port noise variances from the channel estimation.
   std::array<float, MAX_PORTS> noise_var_estimates;
   for (unsigned i_port = 0; i_port != nof_rx_ports; ++i_port) {
-    noise_var_estimates[i_port] = estimates.get_noise_variance(i_port, 0);
+    noise_var_estimates[i_port] = estimates.get_noise_variance(i_port);
   }
 
   for (unsigned i_symbol = start_symbol_index, i_symbol_end = start_symbol_index + nof_symbols;
@@ -196,7 +197,7 @@ inline void pucch_3_4_extract_and_equalize(span<cf_t>                  eq_re,
     unsigned first_subc = first_prb * NRE;
     if (second_hop_prb.has_value() && (i_symbol >= second_hop_start)) {
       // Intra-slot frequency hopping.
-      first_subc = second_hop_prb.value() * NRE;
+      first_subc = *second_hop_prb * NRE;
     }
 
     // Create modular buffers to hold the spans for this symbol.

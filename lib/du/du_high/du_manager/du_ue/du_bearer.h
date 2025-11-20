@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -102,8 +102,10 @@ struct du_ue_srb {
 /// \brief DRB instance in DU manager. It contains DRB configuration information, RLC entity and adapters between
 /// layers.
 struct du_ue_drb {
-  drb_id_t                               drb_id;
-  lcid_t                                 lcid;
+  drb_id_t  drb_id;
+  lcid_t    lcid;
+  s_nssai_t s_nssai;
+  five_qi_t five_qi; /// multiple 5QIs can exist within a DRB. For now, we take the 5QI of the QoS descriptor.
   std::vector<up_transport_layer_info>   uluptnl_info_list;
   std::vector<up_transport_layer_info>   dluptnl_info_list;
   std::unique_ptr<f1u_du_gateway_bearer> f1u_gw_bearer;
@@ -121,8 +123,11 @@ struct drb_creation_info {
   du_cell_index_t                      pcell_index;
   drb_id_t                             drb_id;
   lcid_t                               lcid;
+  s_nssai_t                            s_nssai;
+  five_qi_t                            five_qi;
   const rlc_config&                    rlc_cfg;
   const f1u_config&                    f1u_cfg;
+  bool                                 is_handover;
   span<const up_transport_layer_info>  uluptnl_info_list;
   gtpu_teid_pool&                      teid_pool;
   const du_manager_params&             du_params;

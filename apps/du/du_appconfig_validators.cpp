@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,7 +21,8 @@
  */
 
 #include "du_appconfig_validators.h"
-#include "apps/services/logger/logger_appconfig_validator.h"
+#include "apps/helpers/f1u/f1u_appconfig_validator.h"
+#include "apps/helpers/logger/logger_appconfig_validator.h"
 
 using namespace srsran;
 
@@ -33,6 +34,10 @@ bool srsran::validate_appconfig(const du_appconfig& config)
 
   if (config.f1ap_cfg.cu_cp_address.empty()) {
     fmt::print("CU-CP F1-C address is mandatory\n");
+    return false;
+  }
+
+  if (!validate_f1u_sockets_appconfig(config.f1u_cfg.f1u_sockets)) {
     return false;
   }
 

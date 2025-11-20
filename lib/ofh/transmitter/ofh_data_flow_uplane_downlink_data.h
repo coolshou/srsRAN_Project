@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include "ofh_data_flow_cuplane_encoding_metrics_collector.h"
+#include "srsran/ofh/transmitter/ofh_transmitter_data_flow_metrics.h"
 #include "srsran/ran/resource_allocation/ofdm_symbol_range.h"
 #include "srsran/ran/slot_point.h"
 
@@ -31,16 +33,18 @@ class shared_resource_grid;
 
 namespace ofh {
 
+class operation_controller;
+
 /// Open Fronthaul User-Plane downlink data flow resource grid context.
 struct data_flow_uplane_resource_grid_context {
   /// Provides the slot context within the system frame.
   slot_point slot;
   /// Provides the sector identifier.
-  unsigned sector;
+  uint8_t sector;
   /// Provides the port identifier.
-  unsigned port;
+  uint8_t port;
   /// eAxC.
-  unsigned eaxc;
+  uint8_t eaxc;
   /// Symbol range.
   ofdm_symbol_range symbol_range;
 };
@@ -52,9 +56,15 @@ public:
   /// Default destructor.
   virtual ~data_flow_uplane_downlink_data() = default;
 
+  /// Returns the controller of this Open Fronthaul User-Plane data flow.
+  virtual operation_controller& get_operation_controller() = 0;
+
   /// Enqueues the User-Plane downlink data messages with the given context and resource grid.
   virtual void enqueue_section_type_1_message(const data_flow_uplane_resource_grid_context& context,
                                               const shared_resource_grid&                   grid) = 0;
+
+  /// Returns the performance metrics collector of this data flow.
+  virtual data_flow_message_encoding_metrics_collector* get_metrics_collector() = 0;
 };
 
 } // namespace ofh

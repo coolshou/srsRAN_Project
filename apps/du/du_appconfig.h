@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,9 +22,15 @@
 
 #pragma once
 
+#include "apps/helpers/f1u/f1u_appconfig.h"
+#include "apps/helpers/hal/hal_appconfig.h"
+#include "apps/helpers/logger/logger_appconfig.h"
+#include "apps/helpers/tracing/tracer_appconfig.h"
+#include "apps/services/app_execution_metrics/executor_metrics_config.h"
+#include "apps/services/app_resource_usage/app_resource_usage_config.h"
 #include "apps/services/buffer_pool/buffer_pool_appconfig.h"
-#include "apps/services/hal/hal_appconfig.h"
-#include "apps/services/logger/logger_appconfig.h"
+#include "apps/services/metrics/metrics_appconfig.h"
+#include "apps/services/remote_control/remote_control_appconfig.h"
 #include "apps/services/worker_manager/worker_manager_appconfig.h"
 #include <optional>
 
@@ -39,17 +45,17 @@ struct f1ap_appconfig {
   std::string bind_address = "127.0.10.2";
 };
 
-struct nru_appconfig {
-  unsigned    pdu_queue_size = 2048;
-  std::string bind_address   = "127.0.10.2";
-  std::string ext_addr       = "auto"; // External address advertised by the F1-U interface
-  float       pool_threshold = 0.9;
+struct f1u_appconfig {
+  unsigned              pdu_queue_size = 2048;
+  f1u_sockets_appconfig f1u_sockets;
 };
 
 /// Metrics report configuration.
 struct metrics_appconfig {
-  std::string addr = "127.0.0.1";
-  uint16_t    port = 55555;
+  app_services::app_resource_usage_config rusage_config;
+  app_services::metrics_appconfig         metrics_service_cfg;
+  app_services::executor_metrics_config   executors_metrics_cfg;
+  bool                                    autostart_stdout_metrics = false;
 };
 
 } // namespace srs_du
@@ -58,22 +64,26 @@ struct metrics_appconfig {
 struct du_appconfig {
   /// Default constructor to update the log filename.
   du_appconfig() { log_cfg.filename = "/tmp/du.log"; }
-  /// DU multicell flag.
-  bool du_multicell_enabled = false;
   /// Loggers configuration.
   logger_appconfig log_cfg;
+  /// Tracers configuration.
+  tracer_appconfig trace_cfg;
   /// Metrics configuration.
   srs_du::metrics_appconfig metrics_cfg;
   /// F1-C configuration.
   srs_du::f1ap_appconfig f1ap_cfg;
   /// F1-U configuration.
-  srs_du::nru_appconfig nru_cfg;
+  srs_du::f1u_appconfig f1u_cfg;
   /// Buffer pool configuration.
-  buffer_pool_appconfig buffer_pool_config;
+  app_services::buffer_pool_appconfig buffer_pool_config;
   /// Expert configuration.
   expert_execution_appconfig expert_execution_cfg;
   /// HAL configuration.
   std::optional<hal_appconfig> hal_config;
+  /// Remote control configuration.
+  remote_control_appconfig remote_control_config;
+  /// Dryrun mode enabled flag.
+  bool enable_dryrun = false;
 };
 
 } // namespace srsran

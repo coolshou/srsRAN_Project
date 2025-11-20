@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,7 +25,7 @@
 #include "srsran/asn1/asn1_utils.h"
 #include "srsran/asn1/rrc_nr/common.h"
 #include "srsran/asn1/rrc_nr/dl_dcch_msg.h"
-#include "srsran/asn1/rrc_nr/meas_timing_cfg.h"
+#include "srsran/asn1/rrc_nr/rrc_nr.h"
 #include "srsran/asn1/rrc_nr/ul_dcch_msg_ies.h"
 #include "srsran/ran/subcarrier_spacing.h"
 #include "srsran/rrc/meas_types.h"
@@ -164,7 +164,11 @@ asn1::rrc_nr::quant_cfg_rs_s quant_cfg_rs_to_rrc_asn1(const rrc_quant_cfg_rs& qu
 /// \param[in] meas_cfg Meas config object.
 /// \return The RRC NR ASN.1 object where the result of the conversion is stored.
 asn1::rrc_nr::meas_cfg_s meas_config_to_rrc_asn1(const rrc_meas_cfg& meas_cfg);
-rrc_meas_quant_results   asn1_to_meas_quant_results(const asn1::rrc_nr::meas_quant_results_s& asn1_meas_quant_results);
+
+/// \brief Convert ASN.1 type \c asn1::rrc_nr::meas_quant_results_s to common type.
+/// \param[in] asn1_meas_quant_results measurement quant result nr ASN.1 object.
+/// \return The common type object where the result of the conversion is stored.
+rrc_meas_quant_results asn1_to_meas_quant_results(const asn1::rrc_nr::meas_quant_results_s& asn1_meas_quant_results);
 
 /// \brief Convert ASN.1 type \c asn1::rrc_nr::meas_result_nr_s to common type.
 /// \param[in] asn1_meas_result_nr measurement result nr ASN.1 object.

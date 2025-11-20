@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -58,7 +58,7 @@ protected:
 
   cell_configuration            cell_cfg;
   cell_config_dedicated         cell_cfg_dedicated;
-  srs_du::pucch_builder_params  pucch_params;
+  pucch_builder_params          pucch_params;
   std::vector<ue_info>          ues;
   unsigned                      ue_cnt = 0;
   pucch_res_builder_test_helper pucch_builder;
@@ -98,7 +98,8 @@ TEST_P(sched_pucch_res_builder_tester, when_ues_are_added_their_cfg_have_differe
     // Each UE should have 2 PUCCH resource sets configured
     ASSERT_EQ(ue_pucch_cfg.pucch_res_set.size(), 2);
     ASSERT_EQ(ue_pucch_cfg.pucch_res_set[0].pucch_res_id_list.size(), pucch_params.nof_ue_pucch_f0_or_f1_res_harq);
-    ASSERT_EQ(ue_pucch_cfg.pucch_res_set[1].pucch_res_id_list.size(), pucch_params.nof_ue_pucch_f2_res_harq);
+    ASSERT_EQ(ue_pucch_cfg.pucch_res_set[1].pucch_res_id_list.size(),
+              pucch_params.nof_ue_pucch_f2_or_f3_or_f4_res_harq);
     // Make sure UE has all PUCCH resources with different cell_res_id.
     {
       std::set<unsigned> pucch_res_idxs;

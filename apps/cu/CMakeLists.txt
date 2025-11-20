@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -29,17 +29,18 @@ install(TARGETS srscu
         RUNTIME)
 
 target_link_libraries(srscu PRIVATE
+        srsran_app_helpers
         srsran_app_services
-        srsran_support
-        srsran_versioning
-        srsran_o_cu_cp_app_unit
-        srsran_o_cu_up_app_unit
-        srsran_ngap
-        srsran_f1c_gateway
         srsran_e1_gateway
         srsran_e2
+        srsran_f1c_gateway
         srsran_f1u_cu_up_split_connector
+        srsran_ngap
+        srsran_o_cu_cp_app_unit
+        srsran_o_cu_up_app_unit
         srsran_pcap
+        srsran_support
+        srsran_versioning
         ngap_asn1
 )
 

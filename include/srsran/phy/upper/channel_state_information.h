@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,8 +22,14 @@
 
 #pragma once
 
+#include "srsran/adt/span.h"
+#include "srsran/adt/static_vector.h"
+#include "srsran/phy/constants.h"
+#include "srsran/ran/cyclic_prefix.h"
 #include "srsran/ran/phy_time_unit.h"
+#include <cmath>
 #include <optional>
+#include <string>
 
 namespace srsran {
 
@@ -118,23 +124,67 @@ public:
     }
   }
 
-  /// \brief Sets the Error Vector Magnitude (EVM).
+  /// \brief Sets the total Error Vector Magnitude (EVM).
   ///
   /// The EVM value is ignored if it is NaN.
-  void set_evm(float evm_)
+  void set_total_evm(float evm_)
   {
     // Ignore measurement if it is NaN.
     if (std::isnan(evm_)) {
       return;
     }
 
-    evm.emplace(evm_);
+    total_evm.emplace(evm_);
   }
 
-  /// \brief Gets the EVM.
+  /// \brief Gets the total EVM.
   ///
   /// \return The measured EVM if present, otherwise \c std::nullopt.
-  std::optional<float> get_evm() const { return evm; }
+  std::optional<float> get_total_evm() const
+  {
+    // If the total EVM has value, use that one.
+    if (total_evm.has_value()) {
+      return total_evm;
+    }
+
+    // Otherwise try to combine all EVM.
+    unsigned count = 0;
+    float    sum   = 0.0f;
+    std::for_each(symbol_evm.begin(), symbol_evm.end(), [&count, &sum](std::optional<float> elem) {
+      // Skip accumulating if it does not contain a value or it is infinity or nan.
+      if (!elem.has_value() || std::isinf(elem.value()) || std::isnan(elem.value())) {
+        return;
+      }
+      sum += elem.value();
+      ++count;
+    });
+
+    if (count == 0) {
+      return std::nullopt;
+    }
+
+    return sum / static_cast<float>(count);
+  }
+
+  /// \brief Sets an OFDM symbol Error Vector Magnitude (EVM).
+  ///
+  /// The EVM value is ignored if it is NaN.
+  void set_symbol_evm(unsigned i_symbol, float evm_)
+  {
+    // Ignore measurement if it is NaN.
+    if (std::isnan(evm_)) {
+      return;
+    }
+
+    srsran_assert(i_symbol < symbol_evm.size(), "The OFDM symbol index (i.e., {}) exceeds slot duration.");
+    symbol_evm[i_symbol].emplace(evm_);
+  }
+
+  /// \brief Gets the EVM per symbol.
+  span<const std::optional<float>> get_symbol_evm() const
+  {
+    return span<const std::optional<float>>(symbol_evm.begin(), symbol_evm.end());
+  }
 
   /// Sets the time alignment measurement in PHY time units.
   void set_time_alignment(const phy_time_unit& time_alignment_) { time_alignment.emplace(time_alignment_); }
@@ -162,16 +212,56 @@ public:
   /// \return The measured EPRE if present, otherwise \c std::nullopt.
   std::optional<float> get_epre_dB() const { return epre_dB; }
 
-  /// \brief Sets the Reference Signal Received Power (RSRP) in normalized dB units.
+  /// \brief Sets an RSRP value that is representative of the received reference signal power across all ports.
   ///
-  /// The RSRP value is ignored if it is NaN.
-  void set_rsrp(float rsrp_dB_)
+  /// The input RSRP value is ignored if it is NaN.
+  void set_rsrp_dB(float rsrp_dB_)
   {
     if (std::isnan(rsrp_dB_)) {
       return;
     }
+    rsrp_dB = rsrp_dB_;
+  }
 
-    rsrp_dB.emplace(rsrp_dB_);
+  /// \brief Sets the Reference Signal Received Power (RSRP) for each antenna port.
+  ///
+  /// Takes a list of port RSRP values in linear units and stores the measurements in normalized dB units. A global RSRP
+  /// metric is also computed as the average of all valid RSRP values. Input RSRP values are ignored if they are NaN.
+  ///
+  /// \param[in] rsrp_per_port_lin RSRP values in linear units for each antenna port.
+  void set_rsrp_lin(span<const float> rsrp_per_port_lin)
+  {
+    unsigned nof_ports = rsrp_per_port_lin.size();
+    srsran_assert(nof_ports <= MAX_PORTS,
+                  "The number of ports (i.e., {}) exceeds the maximum allowed (i.e., {})",
+                  nof_ports,
+                  MAX_PORTS);
+
+    port_rsrp_dB.resize(nof_ports);
+
+    float    rsrp_total_lin        = 0.0f;
+    unsigned nof_valid_rsrp_values = 0;
+    for (unsigned i_port = 0; i_port != nof_ports; ++i_port) {
+      float rsrp_lin = rsrp_per_port_lin[i_port];
+      // Set the RSRP to NaN if the measurement is not valid and don't include it in the total RSRP.
+      if (!std::isnormal(rsrp_lin)) {
+        port_rsrp_dB[i_port] = -std::numeric_limits<float>::infinity();
+        continue;
+      }
+
+      port_rsrp_dB[i_port] = convert_power_to_dB(rsrp_lin);
+
+      // Accumulate all valid RSRP values.
+      rsrp_total_lin += rsrp_lin;
+      ++nof_valid_rsrp_values;
+    }
+
+    // Compute a global RSRP metric as the average of all valid RSRP values.
+    float rsrp_lin = 0;
+    if (nof_valid_rsrp_values != 0) {
+      rsrp_lin = rsrp_total_lin / static_cast<float>(nof_valid_rsrp_values);
+    }
+    rsrp_dB = convert_power_to_dB(rsrp_lin);
   }
 
   /// \brief Gets the Reference Signal Received Power (RSRP) in normalized dB units.
@@ -190,6 +280,10 @@ public:
     cfo_Hz.emplace(cfo_Hz_);
   }
 
+  /// \brief Gets the Reference Signal Received Power (RSRP) in normalized dB units, for each receive port.
+  /// \return The measured RSRP for each port, and \c NaN if not available.
+  span<const float> get_port_rsrp_dB() const { return span<const float>(port_rsrp_dB.begin(), port_rsrp_dB.end()); }
+
   /// \brief Gets the measured Carrier Frequency Offset (CFO) in hertz.
   /// \return The measured CFO if present, \c std::nullopt otherwise.
   std::optional<float> get_cfo_Hz() const { return cfo_Hz; }
@@ -205,16 +299,20 @@ private:
   std::optional<phy_time_unit> time_alignment;
   /// Average post-equalization SINR.
   std::optional<float> sinr_post_eq_dB;
-  /// Error Vector Magnitude, obtained after QAM demodulation.
-  std::optional<float> evm;
+  /// Error Vector Magnitude (EVM), obtained after QAM demodulation.
+  std::optional<float> total_evm;
+  /// Error Vector Magnitude (EVM) per OFDM symbol, obtained after QAM demodulation.
+  std::array<std::optional<float>, MAX_NSYMB_PER_SLOT> symbol_evm;
   /// SINR obtained from EVM.
   std::optional<float> sinr_evm_dB;
   /// Average SINR in decibels, computed by the channel estimator.
   std::optional<float> sinr_ch_estimator_dB;
   /// Average EPRE in decibels.
   std::optional<float> epre_dB;
-  /// Average RSRP in decibels.
+  /// RSRP in decibels, averaged across all antenna ports.
   std::optional<float> rsrp_dB;
+  /// RSRP per antenna port in decibels.
+  static_vector<float, MAX_PORTS> port_rsrp_dB;
   /// CFO measurement in hertz.
   std::optional<float> cfo_Hz;
 };

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -35,31 +35,35 @@ namespace srsran {
 class dummy_io_broker : public io_broker
 {
 public:
-  bool             accept_next_fd     = true;
-  int              last_registered_fd = -1;
+  bool             accept_next_fd = true;
+  unique_fd        last_registered_fd;
   recv_callback_t  handle_receive;
   error_callback_t handle_error;
   int              last_unregistered_fd = -1;
 
   [[nodiscard]] subscriber register_fd(
-      int              fd,
+      unique_fd        fd,
+      task_executor&   executor,
       recv_callback_t  handler_,
       error_callback_t err_handler_ = [](error_code) {}) override
   {
-    last_registered_fd = fd;
+    last_registered_fd = std::move(fd);
     if (not accept_next_fd) {
       return {};
     }
     handle_receive = handler_;
     handle_error   = err_handler_;
-    return subscriber{*this, fd};
+    return subscriber{*this, last_registered_fd.value()};
   }
 
-  [[nodiscard]] bool unregister_fd(int fd) override
+  [[nodiscard]] bool unregister_fd(int fd, std::promise<bool>* complete_notifier) override
   {
     last_unregistered_fd = fd;
     handle_receive       = {};
     handle_error         = {};
+    if (complete_notifier) {
+      complete_notifier->set_value(true);
+    }
     return true;
   }
 };
@@ -123,7 +127,7 @@ public:
                                   &data.msg_flags);
     if (rx_bytes < 0) {
       if (errno != EAGAIN) {
-        logger.error("Recv error: {}", strerror(errno));
+        logger.error("Recv error: {}", ::strerror(errno));
       }
       return std::nullopt;
     }
@@ -159,16 +163,16 @@ public:
   bool send_eof(int ppid, const sockaddr& dest_addr, socklen_t dest_addrlen)
   {
     // Send EOF to SCTP server.
-    int bytes_sent = sctp_sendmsg(socket.fd().value(),
-                                  nullptr,
-                                  0,
-                                  const_cast<struct sockaddr*>(&dest_addr),
-                                  dest_addrlen,
-                                  htonl(ppid),
-                                  SCTP_EOF,
-                                  0,
-                                  0,
-                                  0);
+    int bytes_sent = ::sctp_sendmsg(socket.fd().value(),
+                                    nullptr,
+                                    0,
+                                    const_cast<struct sockaddr*>(&dest_addr),
+                                    dest_addrlen,
+                                    htonl(ppid),
+                                    SCTP_EOF,
+                                    0,
+                                    0,
+                                    0);
     return bytes_sent != -1;
   }
 

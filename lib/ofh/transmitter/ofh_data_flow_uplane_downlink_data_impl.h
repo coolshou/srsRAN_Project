@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "../operation_controller_dummy.h"
 #include "ofh_data_flow_uplane_downlink_data.h"
 #include "sequence_identifier_generator.h"
 #include "srsran/instrumentation/traces/ofh_traces.h"
@@ -43,6 +44,8 @@ namespace ofh {
 
 /// Open Fronthaul User-Plane downlink data flow implementation configuration.
 struct data_flow_uplane_downlink_data_impl_config {
+  /// Radio sector identifier.
+  unsigned sector;
   /// Cyclic prefix.
   cyclic_prefix cp;
   /// RU bandwidth in PRBs.
@@ -107,6 +110,9 @@ public:
   void enqueue_section_type_1_message(const data_flow_uplane_resource_grid_context& context,
                                       const shared_resource_grid&                   grid) override;
 
+  // See interface for documentation.
+  operation_controller& get_operation_controller() override { return controller; }
+
 private:
   /// Enqueues an User-Plane message burst.
   void enqueue_section_type_1_message_symbol_burst(const data_flow_uplane_resource_grid_context& context,
@@ -118,11 +124,16 @@ private:
                                                  unsigned                     eaxc,
                                                  span<uint8_t>                buffer);
 
+  // See interface for documentation.
+  data_flow_message_encoding_metrics_collector* get_metrics_collector() override;
+
 private:
   srslog::basic_logger&                     logger;
   const unsigned                            nof_symbols_per_slot;
   const unsigned                            ru_nof_prbs;
+  const unsigned                            sector_id;
   const ru_compression_params               compr_params;
+  operation_controller_dummy                controller;
   sequence_identifier_generator             up_seq_gen;
   std::shared_ptr<ether::eth_frame_pool>    frame_pool;
   std::unique_ptr<iq_compressor>            compressor_sel;

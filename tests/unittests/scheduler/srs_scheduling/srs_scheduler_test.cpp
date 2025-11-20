@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,14 +22,11 @@
 
 #include "lib/scheduler/srs/srs_scheduler_impl.h"
 #include "tests/test_doubles/scheduler/scheduler_config_helper.h"
-#include "tests/unittests/scheduler/test_utils/config_generators.h"
-#include "tests/unittests/scheduler/test_utils/dummy_test_components.h"
 #include "tests/unittests/scheduler/test_utils/scheduler_test_suite.h"
-#include "srsran/du/du_cell_config_helpers.h"
 #include "srsran/ran/srs/srs_bandwidth_configuration.h"
+#include "srsran/scheduler/config/scheduler_expert_config_factory.h"
 #include "srsran/support/test_utils.h"
 #include <gtest/gtest.h>
-#include <random>
 
 using namespace srsran;
 
@@ -127,9 +124,23 @@ create_sched_ue_creation_request_for_srs_cfg(srs_periodicity                    
   srsran_assert(srs_bw_cfg.has_value(), "C_SRS is required for this unittest");
   srs_res.freq_domain_shift = (nof_ul_crbs - srs_bw_cfg->m_srs) / 2U;
 
-  srs_res.sequence_id = 0U;
+  // Select a non-zero sequence identifier that requires more than 8 bits.
+  srs_res.sequence_id = 666U;
 
   return ue_req;
+}
+
+static positioning_measurement_request::cell_info make_positioning_cell_request(rnti_t                       pos_rnti,
+                                                                                std::optional<du_ue_index_t> ue_index,
+                                                                                du_cell_index_t              cell_index,
+                                                                                const srs_config& srs_to_measure)
+{
+  positioning_measurement_request::cell_info cell{};
+  cell.pos_rnti       = pos_rnti;
+  cell.ue_index       = ue_index;
+  cell.cell_index     = cell_index;
+  cell.srs_to_measure = srs_to_measure;
+  return cell;
 }
 
 namespace srs_periodicity_test {
@@ -157,12 +168,13 @@ public:
   test_bench(srs_test_params params) :
     expert_cfg{config_helpers::make_default_scheduler_expert_config()},
     cell_cfg{[this, &params]() -> const cell_configuration& {
-      cell_cfg_list.emplace(to_du_cell_index(0),
-                            std::make_unique<cell_configuration>(
-                                expert_cfg, make_custom_sched_cell_configuration_request(params.is_tdd)));
+      auto cell_req = make_custom_sched_cell_configuration_request(params.is_tdd);
+      cfg_pool.add_cell(cell_req);
+      cell_cfg_list.emplace(to_du_cell_index(0), std::make_unique<cell_configuration>(expert_cfg, cell_req));
       return *cell_cfg_list[to_du_cell_index(0)];
     }()},
     cell_harqs{MAX_NOF_DU_UES, MAX_NOF_HARQS, std::make_unique<dummy_harq_timeout_notifier>()},
+    cell_ues(ues.add_cell(to_du_cell_index(0))),
     srs_sched(cell_cfg, ues),
     current_sl_tx{to_numerology_value(cell_cfg.dl_cfg_common.init_dl_bwp.generic_params.scs), 0}
   {
@@ -172,10 +184,12 @@ public:
 
   // Class members.
   scheduler_expert_config        expert_cfg;
+  du_cell_group_config_pool      cfg_pool;
   cell_common_configuration_list cell_cfg_list{};
   const cell_configuration&      cell_cfg;
   cell_harq_manager              cell_harqs;
   ue_repository                  ues;
+  ue_cell_repository&            cell_ues;
   std::vector<ue_configuration>  ue_ded_cfgs;
   cell_resource_allocator        res_grid{cell_cfg};
   srs_scheduler_impl             srs_sched;
@@ -191,7 +205,7 @@ public:
         srs_period,
         cell_cfg_list[to_du_cell_index(0)]->ul_cfg_common.init_ul_bwp.generic_params.crbs.length(),
         cell_cfg.tdd_cfg_common);
-    ue_ded_cfgs.emplace_back(ue_req.ue_index, ue_req.crnti, cell_cfg_list, ue_req.cfg);
+    ue_ded_cfgs.emplace_back(ue_req.ue_index, ue_req.crnti, cell_cfg_list, cfg_pool.add_ue(ue_req));
     ues.add_ue(std::make_unique<ue>(ue_creation_command{ue_ded_cfgs.back(), ue_req.starts_in_fallback, cell_harqs}));
     srs_sched.add_ue(ues[ue_req.ue_index].get_pcell().cfg());
   }
@@ -205,8 +219,7 @@ public:
 
   expected<bool, std::string> test_srs_pdu(const srs_info& srs_pdu) const
   {
-    const auto& srs_cfg =
-        ues[to_du_ue_index(0)].get_pcell().cfg().cfg_dedicated().ul_config.value().init_ul_bwp.srs_cfg.value();
+    const auto& srs_cfg     = ues[to_du_ue_index(0)].get_pcell().cfg().init_bwp().ul_ded->srs_cfg.value();
     const auto& srs_res_cfg = srs_cfg.srs_res_list.front();
 
     if (srs_pdu.crnti != ues[to_du_ue_index(0)].crnti) {
@@ -280,9 +293,8 @@ public:
     return ues[to_du_ue_index(0U)]
         .get_pcell()
         .cfg()
-        .cfg_dedicated()
-        .ul_config.value()
-        .init_ul_bwp.srs_cfg.value()
+        .init_bwp()
+        .ul_ded->srs_cfg.value()
         .srs_res_list.front()
         .periodicity_and_offset->offset;
   }
@@ -342,3 +354,97 @@ INSTANTIATE_TEST_SUITE_P(test_srs_scheduler_for_different_periods,
                                          srs_test_params{.is_tdd = true, .period = srs_periodicity::sl160},
                                          srs_test_params{.is_tdd = true, .period = srs_periodicity::sl320},
                                          srs_test_params{.is_tdd = true, .period = srs_periodicity::sl640}));
+
+class srs_positioning_scheduler_test : public test_bench, public ::testing::Test
+{
+public:
+  srs_positioning_scheduler_test() : test_bench(srs_test_params{true, srs_periodicity::sl20}) {}
+
+  const srs_info* next_srs_info(rnti_t rnti, unsigned max_slots = 0)
+  {
+    max_slots = max_slots == 0 ? static_cast<unsigned>(srs_period) * 2 : max_slots;
+
+    for (unsigned sl_cnt = 0; sl_cnt < max_slots; ++sl_cnt) {
+      this->srs_sched.run_slot(this->res_grid);
+
+      if (not res_grid[0].result.ul.srss.empty()) {
+        EXPECT_EQ(res_grid[0].result.ul.srss.size(), 1);
+        EXPECT_TRUE(res_grid[0].result.ul.srss[0].normalized_channel_iq_matrix_requested);
+        if (res_grid[0].result.ul.srss[0].crnti == rnti) {
+          const auto* ret = res_grid[0].result.ul.srss.data();
+          slot_indication(++current_sl_tx);
+          return ret;
+        }
+      }
+
+      // Update the slot indicator.
+      slot_indication(++current_sl_tx);
+    }
+
+    return nullptr;
+  }
+
+  const srs_periodicity srs_period = srs_periodicity::sl20;
+};
+
+TEST_F(srs_positioning_scheduler_test, when_connected_ue_positioning_is_requested_then_srs_pdu_contains_request)
+{
+  add_ue(srs_period);
+  rnti_t rnti = to_rnti(0x4601);
+
+  auto is_positioning_being_requested = [&]() -> bool {
+    const auto* pdu = this->next_srs_info(rnti);
+    report_fatal_error_if_not(pdu != nullptr, "No SRS scheduled");
+    return pdu->positioning_report_requested;
+  };
+
+  // Positioning not requested.
+  ASSERT_FALSE(is_positioning_being_requested());
+
+  // Positioning requested.
+  auto& ue_srs_cfg = ues[to_du_ue_index(0)].ue_cfg_dedicated()->pcell_cfg().init_bwp().ul_ded->srs_cfg.value();
+  this->srs_sched.handle_positioning_measurement_request(
+      make_positioning_cell_request(rnti, to_du_ue_index(0), to_du_cell_index(0), ue_srs_cfg));
+  ASSERT_TRUE(is_positioning_being_requested());
+
+  // Positioning stops being requested.
+  this->srs_sched.handle_positioning_measurement_stop(rnti);
+  ASSERT_FALSE(is_positioning_being_requested());
+}
+
+TEST_F(srs_positioning_scheduler_test, when_neighbor_cell_ue_positioning_is_requested_then_srs_pdu_contains_request)
+{
+  rnti_t pos_rnti = rnti_t::MIN_RESERVED_RNTI;
+
+  // Initiate Positioning measurement.
+  sched_ue_creation_request_message dummy_ue_req = create_sched_ue_creation_request_for_srs_cfg(
+      srs_period,
+      cell_cfg_list[to_du_cell_index(0)]->ul_cfg_common.init_ul_bwp.generic_params.crbs.length(),
+      cell_cfg.tdd_cfg_common);
+  auto& ue_srs_cfg = dummy_ue_req.cfg.cells.value().front().serv_cell_cfg.ul_config.value().init_ul_bwp.srs_cfg.value();
+  this->srs_sched.handle_positioning_measurement_request(
+      make_positioning_cell_request(pos_rnti, std::nullopt, to_du_cell_index(0), ue_srs_cfg));
+
+  // Positioning is being requested.
+  const auto* pdu = this->next_srs_info(pos_rnti);
+  ASSERT_NE(pdu, nullptr);
+  ASSERT_TRUE(pdu->positioning_report_requested);
+
+  // Stop positioning.
+  this->srs_sched.handle_positioning_measurement_stop(pos_rnti);
+
+  // Positioning stops being requested.
+  // Note: given that some SRS were already scheduled in the grid, we have a transition period where SRSs are scheduled
+  // but without positioning.
+  const unsigned max_pdu_count = 6;
+  unsigned       count         = 0;
+  for (; count != max_pdu_count; ++count) {
+    pdu = this->next_srs_info(pos_rnti);
+    if (pdu != nullptr) {
+      ASSERT_FALSE(pdu->positioning_report_requested);
+    } else {
+      break;
+    }
+  }
+  ASSERT_LT(count, max_pdu_count);
+}

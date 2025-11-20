@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -43,8 +43,7 @@ struct formatter<srsran::precoding_weight_matrix> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::precoding_weight_matrix& matrix, FormatContext& ctx)
-
+  auto format(const srsran::precoding_weight_matrix& matrix, FormatContext& ctx) const
   {
     unsigned nof_layers = matrix.get_nof_layers();
     unsigned nof_ports  = matrix.get_nof_ports();

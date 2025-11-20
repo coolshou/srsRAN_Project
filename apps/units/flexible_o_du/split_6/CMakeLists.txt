@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -18,15 +18,8 @@
 # and at http://www.gnu.org/licenses/.
 #
 
-set(SOURCES
-        split6_o_du_application_unit_impl.cpp
-        split6_o_du_factory.cpp
-        split6_o_du_impl.cpp
-        split6_o_du_unit_cli11_schema.cpp
-        split6_o_du_unit_config_validator.cpp)
+# Do not build by default.
+set_directory_properties(PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
-add_library(srsran_flexible_o_du_split6 STATIC ${SOURCES})
-target_include_directories(srsran_flexible_o_du_split6 PRIVATE ${CMAKE_SOURCE_DIR})
-target_link_libraries(srsran_flexible_o_du_split6
-        srsran_o_du
-        srsran_o_du_high_unit_helpers)
+add_subdirectory(o_du_high)
+add_subdirectory(o_du_low)

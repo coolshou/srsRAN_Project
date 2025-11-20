@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,12 +25,12 @@
 
 #pragma once
 
+#include "srsran/adt/bounded_integer.h"
 #include "srsran/adt/static_vector.h"
 #include "srsran/ran/pucch/pucch_mapping.h"
 #include "srsran/ran/sr_configuration.h"
 #include <cstdint>
 #include <variant>
-#include <vector>
 
 namespace srsran {
 
@@ -47,8 +47,15 @@ constexpr size_t MAX_NOF_UE_PUCCH_RESOURCES = 128;
 /// TS 38.213, Section 9.2.1.
 constexpr size_t MAX_NOF_PUCCH_RESOURCES_PER_PUCCH_RESOURCE_SET = 32;
 
+/// Maximum number of PUCCH p0 per set, as per "maxNrofPUCCH-P0-PerSet", TS 38.331.
+constexpr size_t MAX_NOF_PUCCH_P0_PER_SET = 8;
+
+/// Maximum number of PUCCH path-path loss references RSs per set, as per "maxNrofPUCCH-PathlossReferenceRSs",
+/// TS 38.331.
+constexpr size_t MAX_NOF_PUCCH_PATHLOSS_REF_RS_PER_SET = 4;
+
 /// Options for \c occ-Length in \c PUCCH-format4, in \c PUCCH-Config, TS 38.331.
-enum class pucch_f4_occ_len { n2, n4 };
+enum class pucch_f4_occ_len { n2 = 2, n4 = 4 };
 
 /// Options for \c occ-Index in \c PUCCH-format4, in \c PUCCH-Config, TS 38.331.
 enum class pucch_f4_occ_idx { n0, n1, n2, n3 };
@@ -104,56 +111,39 @@ struct pucch_common_all_formats {
 /// Configuration for \c PUCCH-format0, in \c PUCCH-Config, TS 38.331.
 struct pucch_format_0_cfg {
   uint8_t initial_cyclic_shift;
-  uint8_t nof_symbols;
-  uint8_t starting_sym_idx;
 
-  bool operator==(const pucch_format_0_cfg& rhs) const
-  {
-    return initial_cyclic_shift == rhs.initial_cyclic_shift && nof_symbols == rhs.nof_symbols &&
-           starting_sym_idx == rhs.starting_sym_idx;
-  }
+  bool operator==(const pucch_format_0_cfg& rhs) const { return initial_cyclic_shift == rhs.initial_cyclic_shift; }
   bool operator!=(const pucch_format_0_cfg& rhs) const { return !(rhs == *this); }
 };
 
 /// Configuration for \c PUCCH-format1, in \c PUCCH-Config, TS 38.331.
 struct pucch_format_1_cfg {
   uint8_t initial_cyclic_shift;
-  uint8_t nof_symbols;
-  uint8_t starting_sym_idx;
   uint8_t time_domain_occ;
 
   bool operator==(const pucch_format_1_cfg& rhs) const
   {
-    return initial_cyclic_shift == rhs.initial_cyclic_shift && nof_symbols == rhs.nof_symbols &&
-           starting_sym_idx == rhs.starting_sym_idx && time_domain_occ == rhs.time_domain_occ;
+    return initial_cyclic_shift == rhs.initial_cyclic_shift && time_domain_occ == rhs.time_domain_occ;
   }
   bool operator!=(const pucch_format_1_cfg& rhs) const { return !(rhs == *this); }
 };
 
-/// Configuration for \c PUCCH-format2, in \c PUCCH-Config, TS 38.331.
+/// Configuration for \c PUCCH-format2 or \c PUCCH-format3, in \c PUCCH-Config, TS 38.331.
 struct pucch_format_2_3_cfg {
   uint8_t nof_prbs;
-  uint8_t nof_symbols;
-  uint8_t starting_sym_idx;
 
-  bool operator==(const pucch_format_2_3_cfg& rhs) const
-  {
-    return nof_prbs == rhs.nof_prbs && nof_symbols == rhs.nof_symbols && starting_sym_idx == rhs.starting_sym_idx;
-  }
+  bool operator==(const pucch_format_2_3_cfg& rhs) const { return nof_prbs == rhs.nof_prbs; }
   bool operator!=(const pucch_format_2_3_cfg& rhs) const { return !(rhs == *this); }
 };
 
 /// Configuration for \c PUCCH-format4, in \c PUCCH-Config, TS 38.331.
 struct pucch_format_4_cfg {
-  uint8_t          nof_symbols;
   pucch_f4_occ_len occ_length;
   pucch_f4_occ_idx occ_index;
-  uint8_t          starting_sym_idx;
 
   bool operator==(const pucch_format_4_cfg& rhs) const
   {
-    return nof_symbols == rhs.nof_symbols && occ_length == rhs.occ_length && occ_index == rhs.occ_index &&
-           starting_sym_idx == rhs.starting_sym_idx;
+    return occ_length == rhs.occ_length && occ_index == rhs.occ_index;
   }
   bool operator!=(const pucch_format_4_cfg& rhs) const { return !(rhs == *this); }
 };
@@ -163,13 +153,16 @@ struct pucch_resource {
   pucch_res_id_t                                                                                 res_id = {0, 0};
   unsigned                                                                                       starting_prb;
   std::optional<unsigned>                                                                        second_hop_prb;
+  uint8_t                                                                                        nof_symbols;
+  uint8_t                                                                                        starting_sym_idx;
   pucch_format                                                                                   format;
   std::variant<pucch_format_0_cfg, pucch_format_1_cfg, pucch_format_2_3_cfg, pucch_format_4_cfg> format_params;
 
   bool operator==(const pucch_resource& rhs) const
   {
     return res_id == rhs.res_id && starting_prb == rhs.starting_prb && second_hop_prb == rhs.second_hop_prb &&
-           format == rhs.format && format_params == rhs.format_params;
+           nof_symbols == rhs.nof_symbols && starting_sym_idx == rhs.starting_sym_idx && format == rhs.format &&
+           format_params == rhs.format_params;
   }
   bool operator!=(const pucch_resource& rhs) const { return !(rhs == *this); }
 };
@@ -191,6 +184,53 @@ struct pucch_resource_set {
            max_payload_size == rhs.max_payload_size;
   }
   bool operator!=(const pucch_resource_set& rhs) const { return !(rhs == *this); }
+};
+
+/// PUCCH power control configuration, as "PUCCH-PowerControl", TS 38.331.
+struct pucch_power_control {
+  struct p0_pucch {
+    uint8_t                       id;
+    bounded_integer<int, -16, 15> value;
+
+    bool operator==(const p0_pucch& rhs) const { return id == rhs.id && value == rhs.value; }
+    bool operator!=(const p0_pucch& rhs) const { return !(rhs == *this); }
+  };
+
+  ///  PUCCH - PathlossReferenceRS
+  struct pl_reference_rs {
+    uint8_t id;
+    /// If true, the reference signal is a SSB beam, otherwise it is a CSI-RS.
+    bool use_ssb_idx;
+    /// Index of the SSB beam or CSI-RS to be used as reference signal for path-loss estimation.
+    /// Values {0..63} for SSB beam, {0..191} for CSI-RS.
+    uint8_t reference_signal_id;
+
+    bool operator==(const pl_reference_rs& rhs) const
+    {
+      return id == rhs.id && use_ssb_idx == rhs.use_ssb_idx && reference_signal_id == rhs.reference_signal_id;
+    }
+    bool operator!=(const pl_reference_rs& rhs) const { return !(rhs == *this); }
+  };
+
+  std::optional<bounded_integer<int, -16, 15>> delta_pucch_f0;
+  std::optional<bounded_integer<int, -16, 15>> delta_pucch_f1;
+  std::optional<bounded_integer<int, -16, 15>> delta_pucch_f2;
+  std::optional<bounded_integer<int, -16, 15>> delta_pucch_f3;
+  std::optional<bounded_integer<int, -16, 15>> delta_pucch_f4;
+
+  static_vector<p0_pucch, MAX_NOF_PUCCH_P0_PER_SET>                     p0_set;
+  static_vector<pl_reference_rs, MAX_NOF_PUCCH_PATHLOSS_REF_RS_PER_SET> pl_reference_rs_set;
+  bool                                                                  two_states_adjustment = false;
+
+  bool operator==(const pucch_power_control& rhs) const
+  {
+    return delta_pucch_f0 == rhs.delta_pucch_f0 && delta_pucch_f1 == rhs.delta_pucch_f1 &&
+           delta_pucch_f2 == rhs.delta_pucch_f2 && delta_pucch_f3 == rhs.delta_pucch_f3 &&
+           delta_pucch_f4 == rhs.delta_pucch_f4 && p0_set == rhs.p0_set &&
+           pl_reference_rs_set == rhs.pl_reference_rs_set && two_states_adjustment == rhs.two_states_adjustment;
+  }
+
+  bool operator!=(const pucch_power_control& rhs) const { return !(rhs == *this); }
 };
 
 /// \c PUCCH-Config, TS 38.331.
@@ -218,16 +258,26 @@ struct pucch_config {
   /// \remark For Format 0 and 1, only the max number of HARQ-ACK bits are considered.
   static_vector<unsigned, 5> format_max_payload{0, 0, 0, 0, 0};
 
+  /// Helper variable to avoid iterating over several lists to retrieve the PUCCH format.
+  pucch_format set_1_format = pucch_format::NOF_FORMATS;
+
+  std::optional<pucch_power_control> pucch_pw_control;
+
   /// Returns the PUCCH resource max UCI payload for the given format.
   /// \remark For Format 0 and 1, it returns only the max number of HARQ-ACK bits.
   unsigned get_max_payload(pucch_format format) const { return format_max_payload[pucch_format_to_uint(format)]; }
+
+  /// Returns the PUCCH format of the resources from PUCCH resource set 1.
+  /// \remark The PUCCH resource set 1 can only contain PUCCH format 2, 3 or 4.
+  pucch_format get_set_1_format() const { return set_1_format; }
 
   bool operator==(const pucch_config& rhs) const
   {
     return pucch_res_set == rhs.pucch_res_set && pucch_res_list == rhs.pucch_res_list &&
            format_1_common_param == rhs.format_1_common_param && format_2_common_param == rhs.format_2_common_param &&
            format_3_common_param == rhs.format_3_common_param && format_4_common_param == rhs.format_4_common_param &&
-           sr_res_list == rhs.sr_res_list && dl_data_to_ul_ack == rhs.dl_data_to_ul_ack;
+           sr_res_list == rhs.sr_res_list && dl_data_to_ul_ack == rhs.dl_data_to_ul_ack &&
+           pucch_pw_control == rhs.pucch_pw_control;
   }
   bool operator!=(const pucch_config& rhs) const { return !(rhs == *this); }
 };

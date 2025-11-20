@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,13 +26,14 @@
 #include "srsran/phy/upper/channel_processors/pucch/factories.h"
 #include "srsran/ran/pucch/pucch_constants.h"
 #include "srsran/support/benchmark_utils.h"
-#include "srsran/support/complex_normal_random.h"
 #include "srsran/support/executors/task_worker_pool.h"
 #include "srsran/support/executors/unique_thread.h"
+#include "srsran/support/math/complex_normal_random.h"
 #include "srsran/support/math/math_utils.h"
 #include "srsran/support/srsran_test.h"
 #include <getopt.h>
 #include <random>
+#include <variant>
 
 using namespace srsran;
 
@@ -86,7 +87,7 @@ static const unsigned max_nof_threads = std::thread::hardware_concurrency();
 
 // General test configuration parameters.
 static constexpr subcarrier_spacing scs                   = subcarrier_spacing::kHz30;
-static constexpr cyclic_prefix      cp                    = cyclic_prefix::NORMAL;
+static constexpr cyclic_prefix      cy_prefix             = cyclic_prefix::NORMAL;
 static constexpr unsigned           bwp_start_rb          = 0;
 static constexpr unsigned           bwp_size_rb           = MAX_RB;
 static constexpr unsigned           max_nof_ports         = 4;
@@ -95,11 +96,9 @@ static uint64_t                     nof_threads           = 1;
 static uint64_t                     batch_size_per_thread = 100;
 static std::string                  selected_profile_name = "all";
 static benchmark_modes              benchmark_mode        = benchmark_modes::latency;
-static std::unique_ptr<task_worker_pool<concurrent_queue_policy::locking_mpmc>>          worker_pool = nullptr;
-static std::unique_ptr<task_worker_pool_executor<concurrent_queue_policy::locking_mpmc>> executor    = nullptr;
 
 // Thread shared variables.
-static constexpr auto        thread_sync_sleep_duration = std::chrono::nanoseconds(100U);
+static constexpr auto        thread_sync_sleep_duration = std::chrono::nanoseconds(10U);
 static std::atomic<bool>     thread_quit                = {};
 static std::atomic<int>      pending_count              = {0};
 static std::atomic<unsigned> finish_count               = {0};
@@ -122,7 +121,7 @@ static const auto profile_set = to_array<test_profile>({
             "PUCCH Format 0 with frequency hopping, the maximum number of cyclic shifts and four receive ports.",
         .pucch_config = pucch_processor::format0_configuration{.context      = std::nullopt,
                                                                .slot         = slot_point(to_numerology_value(scs), 0),
-                                                               .cp           = cp,
+                                                               .cp           = cy_prefix,
                                                                .bwp_size_rb  = bwp_size_rb,
                                                                .bwp_start_rb = bwp_start_rb,
                                                                .starting_prb = 0,
@@ -143,7 +142,7 @@ static const auto profile_set = to_array<test_profile>({
                                                                .slot         = slot_point(to_numerology_value(scs), 0),
                                                                .bwp_size_rb  = bwp_size_rb,
                                                                .bwp_start_rb = bwp_start_rb,
-                                                               .cp           = cp,
+                                                               .cp           = cy_prefix,
                                                                .starting_prb = 0,
                                                                .second_hop_prb       = 5,
                                                                .n_id                 = 0,
@@ -160,7 +159,7 @@ static const auto profile_set = to_array<test_profile>({
             "PUCCH Format 2 with frequency hopping, the maximum HARQ-ACK feedback bits and four receive ports.",
         .pucch_config = pucch_processor::format2_configuration{.context      = std::nullopt,
                                                                .slot         = slot_point(to_numerology_value(scs), 0),
-                                                               .cp           = cp,
+                                                               .cp           = cy_prefix,
                                                                .ports        = {0, 1, 2, 3},
                                                                .bwp_size_rb  = bwp_size_rb,
                                                                .bwp_start_rb = bwp_start_rb,
@@ -182,7 +181,7 @@ static const auto profile_set = to_array<test_profile>({
             "PUCCH Format 2 with frequency hopping, the maximum HARQ-ACK feedback bits and four receive ports.",
         .pucch_config = pucch_processor::format2_configuration{.context      = std::nullopt,
                                                                .slot         = slot_point(to_numerology_value(scs), 0),
-                                                               .cp           = cp,
+                                                               .cp           = cy_prefix,
                                                                .ports        = {0, 1, 2, 3},
                                                                .bwp_size_rb  = bwp_size_rb,
                                                                .bwp_start_rb = bwp_start_rb,
@@ -204,7 +203,7 @@ static const auto profile_set = to_array<test_profile>({
             "PUCCH Format 2 with frequency hopping, the maximum HARQ-ACK feedback bits and four receive ports.",
         .pucch_config = pucch_processor::format2_configuration{.context      = std::nullopt,
                                                                .slot         = slot_point(to_numerology_value(scs), 0),
-                                                               .cp           = cp,
+                                                               .cp           = cy_prefix,
                                                                .ports        = {0, 1, 2, 3},
                                                                .bwp_size_rb  = bwp_size_rb,
                                                                .bwp_start_rb = bwp_start_rb,
@@ -272,7 +271,7 @@ static int parse_args(int argc, char** argv)
       case 'h':
       default:
         usage(argv[0]);
-        exit(0);
+        std::exit(0);
     }
   }
 
@@ -310,7 +309,7 @@ static pucch_processor_factory& get_pucch_processor_factory()
   std::shared_ptr<channel_equalizer_factory> equalizer_factory = create_channel_equalizer_generic_factory();
   TESTASSERT(equalizer_factory);
 
-  std::shared_ptr<channel_modulation_factory> demod_factory = create_channel_modulation_sw_factory();
+  std::shared_ptr<demodulation_mapper_factory> demod_factory = create_demodulation_mapper_factory();
   TESTASSERT(demod_factory);
 
   std::shared_ptr<pseudo_random_generator_factory> prg_factory = create_pseudo_random_generator_sw_factory();
@@ -351,7 +350,7 @@ static pucch_processor_factory& get_pucch_processor_factory()
 
   // Create PUCCH detector factory.
   std::shared_ptr<pucch_detector_factory> detector_factory =
-      create_pucch_detector_factory_sw(lpc_factory, prg_factory, equalizer_factory);
+      create_pucch_detector_factory_sw(lpc_factory, prg_factory, equalizer_factory, dft_factory);
   TESTASSERT(detector_factory);
 
   // Create short block detector factory.
@@ -373,7 +372,7 @@ static pucch_processor_factory& get_pucch_processor_factory()
 
   // Create PUCCH processor factory.
   channel_estimate::channel_estimate_dimensions max_dimensions = {.nof_prb       = bwp_size_rb,
-                                                                  .nof_symbols   = get_nsymb_per_slot(cp),
+                                                                  .nof_symbols   = get_nsymb_per_slot(cy_prefix),
                                                                   .nof_rx_ports  = max_nof_ports,
                                                                   .nof_tx_layers = pucch_constants::MAX_LAYERS};
   pucch_proc_factory                                           = create_pucch_processor_factory_sw(
@@ -434,7 +433,7 @@ static void thread_process(pucch_processor& proc, const pucch_configuration& con
     if (auto pucch0 = get_config<pucch_processor::format0_configuration>(config)) {
       proc.process(grid, *pucch0);
     } else if (auto pucch1 = get_config<pucch_processor::format1_configuration>(config)) {
-      proc.process(grid, *pucch1);
+      proc.process(grid, pucch_processor::format1_batch_configuration(*pucch1));
     } else if (auto pucch2 = get_config<pucch_processor::format2_configuration>(config)) {
       proc.process(grid, *pucch2);
     } else if (auto pucch3 = get_config<pucch_processor::format3_configuration>(config)) {
@@ -479,7 +478,8 @@ int main(int argc, char** argv)
   std::mt19937 rgen(0);
 
   // Create resource grid.
-  std::unique_ptr<resource_grid> grid = create_resource_grid(max_nof_ports, get_nsymb_per_slot(cp), NRE * bwp_size_rb);
+  std::unique_ptr<resource_grid> grid =
+      create_resource_grid(max_nof_ports, get_nsymb_per_slot(cy_prefix), NRE * bwp_size_rb);
   TESTASSERT(grid);
 
   // Standard complex normal distribution with zero mean.
@@ -487,7 +487,7 @@ int main(int argc, char** argv)
 
   // Fill the grid with the random RE.
   for (unsigned i_rx_port = 0; i_rx_port != max_nof_ports; ++i_rx_port) {
-    for (unsigned i_symbol = 0, i_symbol_end = get_nsymb_per_slot(cp); i_symbol != i_symbol_end; ++i_symbol) {
+    for (unsigned i_symbol = 0, i_symbol_end = get_nsymb_per_slot(cy_prefix); i_symbol != i_symbol_end; ++i_symbol) {
       // Obtain view of the OFDM symbol.
       span<cbf16_t> re_view = grid->get_writer().get_view(i_rx_port, i_symbol);
 
@@ -579,10 +579,6 @@ int main(int argc, char** argv)
   if ((benchmark_mode == benchmark_modes::throughput_thread) || (benchmark_mode == benchmark_modes::all)) {
     fmt::print("\n--- Thread throughput ---\n");
     perf_meas.print_percentiles_throughput("transmissions", 1.0 / static_cast<double>(nof_threads));
-  }
-
-  if (worker_pool) {
-    worker_pool->stop();
   }
 
   return 0;

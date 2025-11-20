@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,7 +26,9 @@
 #pragma once
 
 #include "srsran/phy/upper/channel_estimation.h"
+#include "srsran/phy/upper/channel_processors/pucch/pucch_format1_map.h"
 #include "srsran/phy/upper/channel_processors/pucch/pucch_uci_message.h"
+#include "srsran/phy/upper/channel_state_information.h"
 #include "srsran/ran/pucch/pucch_mapping.h"
 #include "srsran/ran/slot_point.h"
 
@@ -105,16 +107,6 @@ public:
     static_vector<uint8_t, MAX_PORTS> ports;
     /// Amplitude scaling factor.
     float beta_pucch;
-    /// \brief Time-domain orthogonal cover code index {0, ..., 6}.
-    ///
-    /// Parameter \e timeDomainOCC in TS38.213 Section 9.2.1. Corresponds to the index \f$i\f$ of the time-domain
-    /// orthogonal spreading sequence \f$w_i(m)\f$ in TS38.211 Section 6.3.2.4.1.
-    unsigned time_domain_occ;
-    /// \brief Cyclic shift initial index {0, ..., 11}.
-    ///
-    /// Index used to retrieve the cyclic shift for generating the low-PAPR sequence. Specifically, it corresponds to
-    /// parameter \f$m_0\f$ in the formula for the cyclic shift \f$\alpha\f$ in TS38.211 Section 6.3.2.2.2.
-    unsigned initial_cyclic_shift;
     /// \brief Pseudorandom generator initialization seed {0, ..., 1023}.
     ///
     /// Corresponds to parameter \f$n_{\textup{ID}}\f$ in TS38.211 Section 6.3.2.2.1.
@@ -123,10 +115,6 @@ public:
     /// Element \e PUCCH-ConfigCommon) if it is configured. Otherwise, it must be equal to the physical cell identifier
     /// \f$N_{\textup{ID}}^{\textup{cell}}\f$.
     unsigned n_id;
-    /// \brief Number of expected HARQ-ACK bits {0, 1, 2}.
-    ///
-    /// This parameter should be set to zero when trying to detect a positive scheduling request only.
-    unsigned nof_harq_ack;
   };
 
   /// Gathers the data obtained from detecting a PUCCH transmission.
@@ -135,6 +123,14 @@ public:
     pucch_uci_message uci_message;
     /// Detection metric normalized with respect to the detection threshold.
     float detection_metric;
+  };
+
+  /// Pairs the detection result and CSI information of a PUCCH transmission.
+  struct pucch_detection_result_csi {
+    /// Detection result.
+    pucch_detection_result detection_result;
+    /// Channel state information.
+    channel_state_information csi;
   };
 
   /// Default destructor.
@@ -147,17 +143,20 @@ public:
   virtual std::pair<pucch_uci_message, channel_state_information> detect(const resource_grid_reader&  grid,
                                                                          const format0_configuration& config) = 0;
 
-  /// \brief Detects a PUCCH Format 1 transmission.
+  /// \brief Detects multiplexed PUCCH Format 1 transmissions.
   ///
-  /// Reverts the operations described in TS38.211 Section 6.3.2.4. See also TS38.213 Section 9.2 for more information
-  /// about the configuration parameters and the format of the output UCI message. In particular, note that no SR bit is
-  /// transmitted if HARQ-ACK bits are and that the UE does not transmit anything (DTX) if the UCI message only consists
-  /// of a 0-valued SR bit.
-  /// \param[in]  grid      Input resource grid.
-  /// \param[in]  estimates Estimated channel.
-  /// \param[in]  config    PUCCH Format 1 configuration parameters.
-  /// \return The detected PUCCH message.
-  virtual pucch_detection_result
-  detect(const resource_grid_reader& grid, const channel_estimate& estimates, const format1_configuration& config) = 0;
+  /// All multiplexed PUCCH transmissions share the configuration parameters in \c config, except for the initial cyclic
+  /// shift, the time domain orthogonal cover code and the number of ACK bits, which are specified in \c mux_map.
+  /// \param[in]  grid               Input resource grid.
+  /// \param[in]  config             PUCCH Format 1 common configuration parameters.
+  /// \param[in]  mux_nof_harq_ack   Multiplexed PUCCHs - each (initial cyclic shift, time domain OCC) pair is mapped to
+  ///                                the number of HARQ-ACK bits, if the corresponding PUCCH is scheduled, or to
+  ///                                \c nullopt otherwise.
+  /// \return A reference to a map of results - each (initial cyclic shift, time domain OCC) pair is mapped to the
+  ///         corresponding detection result, if the PUCCH is scheduled, or to \c nullopt otherwise.
+  virtual const pucch_format1_map<pucch_detection_result_csi>&
+  detect(const resource_grid_reader&        grid,
+         const format1_configuration&       config,
+         const pucch_format1_map<unsigned>& mux_nof_harq_ack) = 0;
 };
 } // namespace srsran

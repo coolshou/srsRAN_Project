@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,6 +21,7 @@
  */
 
 #include "dynamic_o_du_unit_cli11_schema.h"
+#include "apps/helpers/metrics/metrics_config_cli11_schema.h"
 #include "apps/services/worker_manager/cli11_cpu_affinities_parser_helper.h"
 #include "apps/units/flexible_o_du/o_du_high/o_du_high_unit_config_cli11_schema.h"
 #include "apps/units/flexible_o_du/o_du_low/du_low_config_cli11_schema.h"
@@ -90,6 +91,12 @@ static void configure_cli11_expert_execution_args(CLI::App& app, ru_dummy_unit_c
       "Sets the cell CPU affinities configuration on a per cell basis");
 }
 
+static void configure_cli11_metrics_args(CLI::App& app, ru_dummy_unit_metrics_config& config)
+{
+  CLI::App* layers_subcmd = add_subcommand(app, "layers", "Layer basis metrics configuration")->configurable();
+  add_option(*layers_subcmd, "--enable_ru", config.enable_ru_metrics, "Enable Radio Unit metrics");
+}
+
 void srsran::configure_cli11_with_dynamic_o_du_unit_config_schema(CLI::App& app, dynamic_o_du_unit_config& parsed_cfg)
 {
   configure_cli11_with_o_du_high_config_schema(app, parsed_cfg.odu_high_cfg);
@@ -99,6 +106,11 @@ void srsran::configure_cli11_with_dynamic_o_du_unit_config_schema(CLI::App& app,
 
   CLI::App* ru_dummy_subcmd = add_subcommand(app, "ru_dummy", "Dummy Radio Unit configuration")->configurable();
   configure_cli11_ru_dummy_args(*ru_dummy_subcmd, dummy_cfg);
+
+  // Metrics section.
+  app_helpers::configure_cli11_with_metrics_appconfig_schema(app, dummy_cfg.metrics_cfg.metrics_cfg);
+  CLI::App* metrics_subcmd = add_subcommand(app, "metrics", "Metrics configuration")->configurable();
+  configure_cli11_metrics_args(*metrics_subcmd, dummy_cfg.metrics_cfg);
 
   // Expert execution section.
   CLI::App* expert_subcmd = add_subcommand(app, "expert_execution", "Expert execution configuration")->configurable();
@@ -168,10 +180,5 @@ void srsran::autoderive_dynamic_o_du_parameters_after_parsing(CLI::App& app, dyn
   // Auto derive DU low parameters.
   const auto&   cell = parsed_cfg.odu_high_cfg.du_high_cfg.config.cells_cfg.front().cell;
   const nr_band band = cell.band ? cell.band.value() : band_helper::get_band_from_dl_arfcn(cell.dl_f_ref_arfcn);
-  bool          is_zmq_rf_driver = false;
-  if (std::holds_alternative<ru_sdr_unit_config>(parsed_cfg.ru_cfg)) {
-    is_zmq_rf_driver = std::get<ru_sdr_unit_config>(parsed_cfg.ru_cfg).device_driver == "zmq";
-  }
-  autoderive_du_low_parameters_after_parsing(
-      app, parsed_cfg.du_low_cfg, band_helper::get_duplex_mode(band), is_zmq_rf_driver, nof_cells);
+  autoderive_du_low_parameters_after_parsing(app, parsed_cfg.du_low_cfg, band_helper::get_duplex_mode(band));
 }

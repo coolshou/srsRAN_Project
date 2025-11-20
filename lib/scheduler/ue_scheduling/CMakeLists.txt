@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -23,6 +23,9 @@ set(SOURCES
         ue_event_manager.cpp
         ue_fallback_scheduler.cpp
         ue_scheduler_impl.cpp
-        ue_repository.cpp)
+        ../ue_context/ue_repository.cpp
+        grant_params_selector.cpp
+        intra_slice_scheduler.cpp
+)
 
 add_library(ue_sched OBJECT ${SOURCES})

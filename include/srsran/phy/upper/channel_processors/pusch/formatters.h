@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -28,7 +28,7 @@
 #include "srsran/phy/upper/channel_state_information_formatters.h"
 #include "srsran/ran/pusch/pusch_context_formatter.h"
 #include "srsran/ran/uci/uci_formatters.h"
-#include "srsran/support/format/fmt_optional.h"
+#include <fmt/std.h>
 
 namespace srsran {
 namespace detail {
@@ -65,12 +65,11 @@ struct formatter<srsran::pusch_processor::codeword_description> {
   }
 
   template <typename FormatContext>
-  auto format(const std::optional<srsran::pusch_processor::codeword_description>& codeword, FormatContext& ctx)
-
+  auto format(const srsran::pusch_processor::codeword_description& codeword, FormatContext& ctx) const
   {
-    helper.format_always(ctx, "rv={}", codeword.value().rv);
-    helper.format_if_verbose(ctx, "bg={}", codeword.value().ldpc_base_graph);
-    helper.format_if_verbose(ctx, "new_data={}", codeword.value().new_data);
+    helper.format_always(ctx, "rv={}", codeword.rv);
+    helper.format_if_verbose(ctx, "bg={}", fmt::underlying(codeword.ldpc_base_graph));
+    helper.format_if_verbose(ctx, "new_data={}", codeword.new_data);
 
     return ctx.out();
   }
@@ -92,8 +91,7 @@ struct formatter<srsran::pusch_processor::uci_description> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::pusch_processor::uci_description& uci_desc, FormatContext& ctx)
-
+  auto format(const srsran::pusch_processor::uci_description& uci_desc, FormatContext& ctx) const
   {
     // Number of ACK, CSI Part 1 and CSI Part 2 bits.
     helper.format_if_verbose(ctx, "oack={}", uci_desc.nof_harq_ack);
@@ -129,11 +127,10 @@ struct formatter<srsran::pusch_processor::pdu_t> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::pusch_processor::pdu_t& pdu, FormatContext& ctx)
-
+  auto format(const srsran::pusch_processor::pdu_t& pdu, FormatContext& ctx) const
   {
     if (pdu.context.has_value()) {
-      helper.format_always(ctx, pdu.context.value());
+      helper.format_always(ctx, *pdu.context);
     } else {
       helper.format_always(ctx, "rnti=0x{:04x}", pdu.rnti);
     }
@@ -150,7 +147,7 @@ struct formatter<srsran::pusch_processor::pdu_t> {
 
     // PUSCH data codeword if available.
     if (pdu.codeword.has_value()) {
-      helper.format_always(ctx, pdu.codeword.value());
+      helper.format_always(ctx, *pdu.codeword);
     }
 
     helper.format_if_verbose(ctx, "n_id={}", pdu.n_id);
@@ -193,8 +190,7 @@ struct formatter<srsran::pusch_decoder_result> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::pusch_decoder_result& result, FormatContext& ctx)
-
+  auto format(const srsran::pusch_decoder_result& result, FormatContext& ctx) const
   {
     helper.format_always(ctx, "crc={}", result.tb_crc_ok ? "OK" : "KO");
     helper.format_always(ctx, "iter={:.1f}", result.ldpc_decoder_stats.get_mean());
@@ -223,8 +219,7 @@ struct formatter<srsran::pusch_processor_result_data> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::pusch_processor_result_data& result, FormatContext& ctx)
-
+  auto format(const srsran::pusch_processor_result_data& result, FormatContext& ctx) const
   {
     helper.format_always(ctx, result.data);
     return ctx.out();
@@ -247,26 +242,25 @@ struct formatter<srsran::pusch_processor_result_control> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::pusch_processor_result_control& result, FormatContext& ctx)
-
+  auto format(const srsran::pusch_processor_result_control& result, FormatContext& ctx) const
   {
     if ((!result.harq_ack.payload.empty())) {
       if (result.harq_ack.status == srsran::uci_status::valid) {
-        helper.format_always(ctx, "ack={:b}", result.harq_ack.payload);
+        helper.format_always(ctx, "ack={:br}", result.harq_ack.payload);
       } else {
         helper.format_always(ctx, "ack={:#}", srsran::detail::uci_bad_payload(result.harq_ack.payload.size()).get());
       }
     }
     if ((!result.csi_part1.payload.empty())) {
       if (result.csi_part1.status == srsran::uci_status::valid) {
-        helper.format_always(ctx, "csi1={:b}", result.csi_part1.payload);
+        helper.format_always(ctx, "csi1={:br}", result.csi_part1.payload);
       } else {
         helper.format_always(ctx, "csi1={:#}", srsran::detail::uci_bad_payload(result.csi_part1.payload.size()).get());
       }
     }
     if ((!result.csi_part2.payload.empty())) {
       if (result.csi_part2.status == srsran::uci_status::valid) {
-        helper.format_always(ctx, "csi2={:b}", result.csi_part2.payload);
+        helper.format_always(ctx, "csi2={:br}", result.csi_part2.payload);
       } else {
         helper.format_always(ctx, "csi2={:#}", srsran::detail::uci_bad_payload(result.csi_part2.payload.size()).get());
       }

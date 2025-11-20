@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,7 +21,7 @@
  */
 
 #include "../../../support/resource_grid_test_doubles.h"
-#include "../../signal_processors/dmrs_pdsch_processor_test_doubles.h"
+#include "../../signal_processors/pdsch/dmrs_pdsch_processor_test_doubles.h"
 #include "../../signal_processors/ptrs/ptrs_pdsch_generator_test_doubles.h"
 #include "pdsch_encoder_test_doubles.h"
 #include "pdsch_modulator_test_doubles.h"
@@ -167,14 +167,14 @@ TEST_P(PdschProcessorFixture, UnitTest)
   pdu.scrambling_id               = dist_u16(rgen);
   pdu.n_scid                      = static_cast<bool>(dist_bool(rgen));
   pdu.nof_cdm_groups_without_data = 1;
-  pdu.freq_alloc                  = rb_allocation::make_custom({1, 2, 3, 4});
-  pdu.start_symbol_index          = dist_start_symb(rgen);
-  pdu.nof_symbols                 = get_nsymb_per_slot(cp) - pdu.start_symbol_index;
-  pdu.ldpc_base_graph             = static_cast<ldpc_base_graph_type>(dist_bool(rgen));
-  pdu.tbs_lbrm                    = units::bytes(50);
-  pdu.reserved                    = {};
-  pdu.ratio_pdsch_dmrs_to_sss_dB  = get_power();
-  pdu.ratio_pdsch_data_to_sss_dB  = get_power();
+  pdu.freq_alloc                 = rb_allocation::make_custom({1, 2, 3, 4}, vrb_to_prb::create_non_interleaved_other());
+  pdu.start_symbol_index         = dist_start_symb(rgen);
+  pdu.nof_symbols                = get_nsymb_per_slot(cp) - pdu.start_symbol_index;
+  pdu.ldpc_base_graph            = static_cast<ldpc_base_graph_type>(dist_bool(rgen));
+  pdu.tbs_lbrm                   = units::bytes(50);
+  pdu.reserved                   = {};
+  pdu.ratio_pdsch_dmrs_to_sss_dB = get_power();
+  pdu.ratio_pdsch_data_to_sss_dB = get_power();
 
   // Generate reserved element pattern for DM-RS.
   re_pattern dmrs_reserved_pattern = pdu.dmrs.get_dmrs_pattern(
@@ -184,8 +184,8 @@ TEST_P(PdschProcessorFixture, UnitTest)
   re_pattern_list reserved = pdu.reserved;
   reserved.merge(dmrs_reserved_pattern);
 
-  // Get physical RB allocation mask.
-  bounded_bitset<MAX_RB> rb_mask = pdu.freq_alloc.get_prb_mask(pdu.bwp_start_rb, pdu.bwp_size_rb);
+  // Get RB allocation mask.
+  crb_bitmap rb_mask = pdu.freq_alloc.get_crb_mask(pdu.bwp_start_rb, pdu.bwp_size_rb);
 
   // Count number of resource elements.
   unsigned Nre = pdu.freq_alloc.get_nof_rb() * NRE * pdu.nof_symbols -
@@ -253,15 +253,15 @@ TEST_P(PdschProcessorFixture, UnitTest)
     const auto& entries = modulator_spy->get_entries();
     const auto& entry   = entries.front();
     ASSERT_EQ(entry.config.rnti, pdu.rnti);
-    ASSERT_EQ(entry.config.bwp_size_rb, pdu.bwp_size_rb);
-    ASSERT_EQ(entry.config.bwp_start_rb, pdu.bwp_start_rb);
+    ASSERT_EQ(entry.config.bwp.length(), pdu.bwp_size_rb);
+    ASSERT_EQ(entry.config.bwp.start(), pdu.bwp_start_rb);
     ASSERT_EQ(entry.config.modulation1, pdu.codewords[0].modulation);
     if (nof_codewords > 1) {
       ASSERT_EQ(entry.config.modulation2, pdu.codewords[1].modulation);
     }
     ASSERT_EQ(entry.config.freq_allocation, pdu.freq_alloc);
-    ASSERT_EQ(entry.config.start_symbol_index, pdu.start_symbol_index);
-    ASSERT_EQ(entry.config.nof_symbols, pdu.nof_symbols);
+    ASSERT_EQ(entry.config.time_alloc.start(), pdu.start_symbol_index);
+    ASSERT_EQ(entry.config.time_alloc.length(), pdu.nof_symbols);
     ASSERT_EQ(entry.config.n_id, pdu.n_id);
     ASSERT_NEAR(entry.config.scaling, convert_dB_to_amplitude(-pdu.ratio_pdsch_data_to_sss_dB), amplitude_max_error);
     ASSERT_EQ(entry.config.reserved, pdu.reserved);

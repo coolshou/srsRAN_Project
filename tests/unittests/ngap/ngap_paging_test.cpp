@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,7 +21,6 @@
  */
 
 #include "ngap_test_helpers.h"
-#include "srsran/support/format/fmt_optional.h"
 #include <gtest/gtest.h>
 
 using namespace srsran;

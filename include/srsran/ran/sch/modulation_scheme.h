@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -31,7 +31,7 @@
 namespace srsran {
 
 /// Maximum number of bits per symbol.
-static constexpr unsigned MODULATION_MAX_BITS_PER_SYMBOL = 8;
+constexpr unsigned MODULATION_MAX_BITS_PER_SYMBOL = 8;
 
 /// \brief Modulation schemes as described in TS38.211 Section 5.1.
 ///
@@ -97,7 +97,7 @@ inline modulation_scheme modulation_scheme_from_string(const std::string& mod_sc
 /// \brief Bits per symbol for a given modulation scheme.
 /// \param[in] mod Modulation scheme.
 /// \returns The number of bits per modulated symbol (sometimes referred to as modulation order).
-inline constexpr unsigned get_bits_per_symbol(modulation_scheme mod)
+constexpr unsigned get_bits_per_symbol(modulation_scheme mod)
 {
   if (mod == modulation_scheme::PI_2_BPSK) {
     return 1;

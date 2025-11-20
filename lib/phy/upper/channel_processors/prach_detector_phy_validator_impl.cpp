@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -30,6 +30,7 @@
 
 #include "prach_detector_generic_thresholds.h"
 #include "srsran/phy/upper/channel_processors/prach_detector_phy_validator.h"
+#include "fmt/format.h"
 
 using namespace srsran;
 
@@ -48,11 +49,6 @@ error_type<std::string> srsran::validate_prach_detector_phy(prach_format_type   
   auto flag = detail::get_threshold_flag(th_params);
 
   if (flag == detail::threshold_flag::red) {
-    fmt::print("\nThe PRACH detector does not support the configuration {{Format {}, ZCZ {}, SCS {}, Rx ports {}}}.\n",
-               to_string(format),
-               zero_correlation_zone,
-               to_string(scs),
-               nof_rx_ports);
     return make_unexpected(fmt::format(
         "The PRACH detector does not support the configuration {{Format {}, ZCZ {}, SCS {}, Rx ports {}}}.\n",
         to_string(format),

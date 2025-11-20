@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,15 +24,15 @@
 
 #include "lib/cu_cp/cu_cp_controller/node_connection_notifier.h"
 #include "lib/cu_cp/cu_cp_impl_interface.h"
-#include "lib/cu_cp/cu_up_processor/cu_up_processor_impl_interface.h"
+#include "lib/cu_cp/cu_up_processor/cu_up_processor.h"
 #include "lib/cu_cp/du_processor/du_processor.h"
 #include "lib/cu_cp/ue_manager/ue_manager_impl.h"
+#include "srsran/asn1/f1ap/f1ap.h"
 #include "srsran/cu_cp/cu_cp_types.h"
 #include "srsran/support/async/async_task.h"
 #include "srsran/support/async/fifo_async_task_scheduler.h"
 #include <cstdint>
 #include <list>
-#include <memory>
 #include <variant>
 
 namespace srsran {
@@ -47,6 +47,9 @@ byte_buffer generate_rrc_setup_complete();
 // Generate RRC Reconfiguration Complete PDU.
 byte_buffer generate_rrc_reconfiguration_complete_pdu(unsigned transaction_id, uint8_t count);
 
+// Extract RRC timers from F1 Setup Request.
+rrc_timers_t get_timers(const asn1::f1ap::f1_setup_request_s& f1_setup_req);
+
 struct dummy_du_processor_cu_cp_notifier : public du_processor_cu_cp_notifier {
 public:
   explicit dummy_du_processor_cu_cp_notifier(ue_manager* ue_mng_ = nullptr) : ue_mng(ue_mng_) {}
@@ -55,6 +58,13 @@ public:
   {
     cu_cp_handler      = cu_cp_handler_;
     ue_removal_handler = ue_removal_handler_;
+  }
+
+  bool on_cell_config_update_request(nr_cell_identity nci, const serving_cell_meas_config& serv_cell_cfg) override
+  {
+    logger.info("Received a cell config update request for nci={}", nci);
+
+    return true;
   }
 
   void on_rrc_ue_created(ue_index_t ue_index, rrc_ue_interface& rrc_ue) override
@@ -102,7 +112,7 @@ public:
     });
   }
 
-  async_task<void> on_transaction_info_loss(const f1_ue_transaction_info_loss_event& ev) override
+  async_task<void> on_transaction_info_loss(const ue_transaction_info_loss_event& ev) override
   {
     return launch_async([](coro_context<async_task<void>>& ctx) mutable {
       CORO_BEGIN(ctx);
@@ -120,8 +130,6 @@ private:
 
 struct dummy_cu_cp_ue_context_manipulation_handler : public cu_cp_ue_context_manipulation_handler {
 public:
-  void set_rrc_reconfiguration_outcome(bool outcome) { rrc_reconfiguration_outcome = outcome; }
-
   async_task<void> handle_ue_context_release(const cu_cp_ue_context_release_request& request) override
   {
     logger.info("ue={}: Received UE release request", request.ue_index);
@@ -132,24 +140,12 @@ public:
     });
   }
 
-  async_task<bool> handle_ue_context_transfer(ue_index_t ue_index, ue_index_t old_ue_index) override
+  void handle_handover_reconfiguration_sent(const cu_cp_intra_cu_handover_target_request& request) override
   {
-    logger.info("ue={} old_ue={}: Received UE transfer required", ue_index, old_ue_index);
-
-    return launch_async([this](coro_context<async_task<bool>>& ctx) mutable {
-      CORO_BEGIN(ctx);
-      CORO_RETURN(ue_transfer_outcome);
-    });
-  }
-
-  async_task<bool> handle_handover_reconfiguration_sent(ue_index_t target_ue_index, uint8_t transaction_id_) override
-  {
-    logger.info("ue={}: Awaiting a RRC Reconfiguration Complete (transaction_id={})", target_ue_index, transaction_id_);
-    last_transaction_id = transaction_id_;
-    return launch_async([this](coro_context<async_task<bool>>& ctx) mutable {
-      CORO_BEGIN(ctx);
-      CORO_RETURN(rrc_reconfiguration_outcome);
-    });
+    logger.info("ue={}: Awaiting a RRC Reconfiguration Complete (transaction_id={})",
+                request.target_ue_index,
+                request.transaction_id);
+    last_transaction_id = request.transaction_id;
   }
 
   void handle_handover_ue_context_push(ue_index_t source_ue_index, ue_index_t target_ue_index) override
@@ -157,12 +153,17 @@ public:
     logger.info("source_ue={} target_ue={}: Received handover ue context push", source_ue_index, target_ue_index);
   }
 
+  void initialize_handover_ue_release_timer(ue_index_t                              ue_index,
+                                            std::chrono::milliseconds               handover_ue_release_timeout,
+                                            const cu_cp_ue_context_release_request& ue_context_release_request) override
+  {
+    logger.info("ue={}: Initializing UE release timer", ue_index);
+  }
+
   unsigned last_transaction_id = 99999;
 
 private:
-  srslog::basic_logger& logger                      = srslog::fetch_basic_logger("TEST");
-  bool                  ue_transfer_outcome         = true;
-  bool                  rrc_reconfiguration_outcome = true;
+  srslog::basic_logger& logger = srslog::fetch_basic_logger("TEST");
 };
 
 class dummy_cu_cp_ue_removal_handler : public cu_cp_ue_removal_handler
@@ -191,7 +192,7 @@ private:
 class dummy_du_connection_notifier : public du_connection_notifier
 {
 public:
-  bool on_du_setup_request(du_index_t du_index, const du_setup_request& req) override { return true; }
+  bool on_du_setup_request(du_index_t du_index, const std::set<plmn_identity>& plmn_ids) override { return true; }
 };
 
 struct dummy_ngap_ue_context_removal_handler : public ngap_ue_context_removal_handler {
@@ -420,7 +421,7 @@ public:
 
   void handle_inter_cu_ho_rrc_recfg_complete(const ue_index_t           ue_index,
                                              const nr_cell_global_id_t& cgi,
-                                             const unsigned             tac) override
+                                             const tac_t                tac) override
   {
     logger.info("Received a RRC Reconfiguration Complete for Inter-CU Handover");
   }
@@ -437,6 +438,7 @@ struct ue_context_outcome_t {
   std::list<unsigned> drb_success_list; // List of DRB IDs that were successful to setup.
   std::list<unsigned> drb_failed_list;  // List of DRB IDs that failed to be setup.
   std::list<unsigned> drb_removed_list; // List of DRB IDs that were removed.
+  byte_buffer         cell_group_cfg = make_byte_buffer("5800b24223c853a0120c7c080408c008").value();
 };
 
 struct dummy_f1ap_ue_context_manager : public f1ap_ue_context_manager {
@@ -445,11 +447,14 @@ public:
 
   void set_ue_context_setup_outcome(bool outcome) { ue_context_setup_outcome = outcome; }
 
-  void set_ue_context_modification_outcome(ue_context_outcome_t outcome) { ue_context_modification_outcome = outcome; }
+  void set_ue_context_modification_outcome(ue_context_outcome_t outcome)
+  {
+    ue_context_modification_outcome = std::move(outcome);
+  }
 
   async_task<f1ap_ue_context_setup_response>
-  handle_ue_context_setup_request(const f1ap_ue_context_setup_request&   request,
-                                  std::optional<rrc_ue_transfer_context> rrc_context) override
+  handle_ue_context_setup_request(const f1ap_ue_context_setup_request&          request,
+                                  const std::optional<rrc_ue_transfer_context>& rrc_context) override
   {
     logger.info("Received a new UE context setup request");
 
@@ -483,7 +488,7 @@ public:
         drb_item.drb_id = uint_to_drb_id(drb_id); // set ID
         res.drbs_setup_list.push_back(drb_item);
       }
-      res.du_to_cu_rrc_info.cell_group_cfg = make_byte_buffer("5800b24223c853a0120c7c080408c008").value();
+      res.du_to_cu_rrc_info.cell_group_cfg = ue_context_modification_outcome.cell_group_cfg.copy();
       // TODO: add failed list and other fields here ..
 
       CORO_RETURN(res);
@@ -615,6 +620,8 @@ public:
       CORO_RETURN();
     });
   }
+
+  void handle_rrc_reconf_complete_indicator(ue_index_t ue_index) override {}
 
   cu_cp_ue_context_release_request last_cu_cp_ue_context_release_request;
 

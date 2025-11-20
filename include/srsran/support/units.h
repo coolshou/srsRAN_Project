@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -118,13 +118,13 @@ constexpr bytes bits::round_up_to_bytes() const
 namespace literals {
 
 /// User defined literal for byte units.
-constexpr bytes operator"" _bytes(unsigned long long n)
+constexpr bytes operator""_bytes(unsigned long long n)
 {
   return bytes(n);
 }
 
 /// User defined literal for bit units.
-constexpr bits operator"" _bits(unsigned long long n)
+constexpr bits operator""_bits(unsigned long long n)
 {
   return bits(n);
 }
@@ -139,7 +139,7 @@ namespace fmt {
 template <>
 struct formatter<srsran::units::bits> : public formatter<srsran::units::bits::value_type> {
   template <typename FormatContext>
-  auto format(srsran::units::bits s, FormatContext& ctx)
+  auto format(srsran::units::bits s, FormatContext& ctx) const
   {
     return fmt::format_to(ctx.out(), "{}{}", s.value(), srsran::units::bits::tag_type::str());
   }
@@ -164,7 +164,7 @@ struct formatter<srsran::units::bytes> : public formatter<srsran::units::bytes::
   }
 
   template <typename FormatContext>
-  auto format(srsran::units::bytes s, FormatContext& ctx)
+  auto format(srsran::units::bytes s, FormatContext& ctx) const
   {
     return fmt::format_to(ctx.out(), "{}{}", s.value(), print_units ? srsran::units::bytes::tag_type::str() : "");
   }

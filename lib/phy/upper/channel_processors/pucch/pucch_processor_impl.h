@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,8 +27,9 @@
 #include "srsran/phy/upper/channel_processors/pucch/pucch_detector.h"
 #include "srsran/phy/upper/channel_processors/pucch/pucch_processor.h"
 #include "srsran/phy/upper/channel_processors/uci/uci_decoder.h"
-#include "srsran/phy/upper/signal_processors/dmrs_pucch_estimator.h"
+#include "srsran/phy/upper/signal_processors/pucch/dmrs_pucch_estimator.h"
 #include "srsran/ran/pucch/pucch_constants.h"
+#include "srsran/ran/slot_pdu_capacity_constants.h"
 
 namespace srsran {
 
@@ -63,19 +64,20 @@ private:
 class pucch_processor_impl : public pucch_processor
 {
 public:
-  // See interface for documentation.
+  // See pucch_processor interface for documentation.
   pucch_processor_result process(const resource_grid_reader& grid, const format0_configuration& config) override;
 
-  // See interface for documentation.
-  pucch_processor_result process(const resource_grid_reader& grid, const format1_configuration& config) override;
+  // See pucch_processor interface for documentation.
+  pucch_format1_map<pucch_processor_result> process(const resource_grid_reader&        grid,
+                                                    const format1_batch_configuration& config) override;
 
-  // See interface for documentation.
+  // See pucch_processor interface for documentation.
   pucch_processor_result process(const resource_grid_reader& grid, const format2_configuration& config) override;
 
-  // See interface for documentation.
+  // See pucch_processor interface for documentation.
   pucch_processor_result process(const resource_grid_reader& grid, const format3_configuration& config) override;
 
-  // See interface for documentation.
+  // See pucch_processor interface for documentation.
   pucch_processor_result process(const resource_grid_reader& grid, const format4_configuration& config) override;
 
   /// PUCCH processor constructor.

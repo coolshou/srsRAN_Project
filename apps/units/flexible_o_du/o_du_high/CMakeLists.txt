@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -24,4 +24,8 @@ add_subdirectory(fapi)
 
 add_library(srsran_o_du_high_unit_helpers STATIC o_du_high_unit_factory.cpp)
 target_include_directories(srsran_o_du_high_unit_helpers PRIVATE ${CMAKE_SOURCE_DIR})
-target_link_libraries(srsran_o_du_high_unit_helpers PRIVATE srsran_du_high_unit_helpers srsran_fapi_app_unit srsran_o_du_high_app_unit_e2)
+target_link_libraries(srsran_o_du_high_unit_helpers PRIVATE
+        srsran_du_high_unit_helpers
+        srsran_fapi_app_unit
+        srsran_o_du_high_app_unit_e2
+        srsran_o_du_high)

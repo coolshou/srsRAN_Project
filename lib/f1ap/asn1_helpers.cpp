@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,6 +23,8 @@
 #include "asn1_helpers.h"
 #include "cu_cp/f1ap_asn1_converters.h"
 #include "srsran/asn1/f1ap/common.h"
+#include "srsran/asn1/f1ap/f1ap_ies.h"
+#include "srsran/ran/qos/five_qi_qos_mapping.h"
 
 using namespace srsran;
 using namespace asn1::f1ap;
@@ -45,7 +47,7 @@ f1ap_cause_t srsran::asn1_to_cause(asn1::f1ap::cause_c asn1_cause)
       cause = static_cast<cause_misc_t>(asn1_cause.misc().value);
       break;
     default:
-      report_fatal_error("Cannot convert F1AP ASN.1 cause {} to common type", asn1_cause.type());
+      report_fatal_error("Cannot convert F1AP ASN.1 cause {} to common type", fmt::underlying(asn1_cause.type().value));
   }
 
   return cause;
@@ -129,7 +131,7 @@ static pdcp_sn_len_e pdcp_sn_size_to_f1ap_asn1(pdcp_sn_size sn_size)
   }
 }
 
-// helper function to fill asn1 DRBs-SetupMod and DRBs-Modified types.
+// Helper function to fill asn1 DRBs-SetupMod and DRBs-Modified types.
 template <typename ASN1Type>
 static void fill_drb_setup_mod_common(ASN1Type& asn1obj, const f1ap_drb_setupmod& drb)
 {
@@ -220,7 +222,8 @@ static f1ap_drb_info drb_info_from_f1ap_asn1(const asn1::f1ap::qos_info_c& asn1_
   f1ap_drb_info out;
 
   // TODO: Handle Dynamic 5QI.
-  const drb_info_s&               asn1_drb_info    = asn1_qos.choice_ext().value().drb_info();
+  const drb_info_s& asn1_drb_info = asn1_qos.choice_ext().value().drb_info();
+  // Convert non-dynamic 5QI descriptor.
   const non_dyn_5qi_descriptor_s& asn1_non_dyn_5qi = asn1_drb_info.drb_qos.qos_characteristics.non_dyn_5qi();
   out.drb_qos.qos_desc                             = non_dyn_5qi_descriptor{};
   non_dyn_5qi_descriptor& nondyn_5qi               = out.drb_qos.qos_desc.get_nondyn_5qi();
@@ -230,8 +233,13 @@ static f1ap_drb_info drb_info_from_f1ap_asn1(const asn1::f1ap::qos_info_c& asn1_
   if (asn1_drb_info.snssai.sd_present) {
     out.s_nssai.sd = slice_differentiator::create(asn1_drb_info.snssai.sd.to_number()).value();
   }
-  // TODO: Do not populate gbr_flow_info for non-GBR flows.
-  if (asn1_drb_info.drb_qos.gbr_qos_flow_info_present) {
+
+  const auto* five_qi_params = get_5qi_to_qos_characteristics_mapping(nondyn_5qi.five_qi);
+  const bool  is_gbr         = five_qi_params && (five_qi_params->res_type == qos_flow_resource_type::gbr ||
+                                         five_qi_params->res_type == qos_flow_resource_type::delay_critical_gbr);
+
+  // Note: As per TS 48.473, 9.3.1.45, "This IE shall be present for GBR QoS Flows only and is ignored otherwise."
+  if (is_gbr and asn1_drb_info.drb_qos.gbr_qos_flow_info_present) {
     auto& gbr     = out.drb_qos.gbr_qos_info.emplace();
     gbr.max_br_dl = asn1_drb_info.drb_qos.gbr_qos_flow_info.max_flow_bit_rate_dl;
     gbr.max_br_ul = asn1_drb_info.drb_qos.gbr_qos_flow_info.max_flow_bit_rate_ul;
@@ -258,7 +266,7 @@ static asn1::f1ap::qos_characteristics_c qos_characteristics_to_f1ap_asn1(const 
   if (qos_desc.is_dyn_5qi()) {
     auto&                     asn1_dyn_5qi      = asn1_qos_characteristics.set_dyn_5qi();
     const dyn_5qi_descriptor& dyn_5qi           = qos_desc.get_dyn_5qi();
-    asn1_dyn_5qi.qos_prio_level                 = qos_prio_level_to_uint(dyn_5qi.qos_prio_level);
+    asn1_dyn_5qi.qos_prio_level                 = dyn_5qi.qos_prio_level.value();
     asn1_dyn_5qi.packet_delay_budget            = dyn_5qi.packet_delay_budget;
     asn1_dyn_5qi.packet_error_rate.per_scalar   = dyn_5qi.per.scalar;
     asn1_dyn_5qi.packet_error_rate.per_exponent = dyn_5qi.per.exponent;
@@ -293,7 +301,7 @@ static asn1::f1ap::qos_characteristics_c qos_characteristics_to_f1ap_asn1(const 
 
     if (non_dyn_5qi.qos_prio_level.has_value()) {
       asn1_non_dyn_5qi.qos_prio_level_present = true;
-      asn1_non_dyn_5qi.qos_prio_level         = qos_prio_level_to_uint(non_dyn_5qi.qos_prio_level.value());
+      asn1_non_dyn_5qi.qos_prio_level         = non_dyn_5qi.qos_prio_level.value().value();
     }
 
     if (non_dyn_5qi.averaging_win.has_value()) {
@@ -310,9 +318,64 @@ static asn1::f1ap::qos_characteristics_c qos_characteristics_to_f1ap_asn1(const 
   return asn1_qos_characteristics;
 }
 
+static gbr_qos_flow_info_s gbr_qos_info_to_f1ap_asn1(const gbr_qos_flow_information& gbr_qos_info)
+{
+  gbr_qos_flow_info_s asn1_gbr_qos_info;
+  asn1_gbr_qos_info.max_flow_bit_rate_dl        = gbr_qos_info.max_br_dl;
+  asn1_gbr_qos_info.max_flow_bit_rate_ul        = gbr_qos_info.max_br_ul;
+  asn1_gbr_qos_info.guaranteed_flow_bit_rate_dl = gbr_qos_info.gbr_dl;
+  asn1_gbr_qos_info.guaranteed_flow_bit_rate_ul = gbr_qos_info.gbr_ul;
+
+  if (gbr_qos_info.max_packet_loss_rate_dl.has_value()) {
+    asn1_gbr_qos_info.max_packet_loss_rate_dl_present = true;
+    asn1_gbr_qos_info.max_packet_loss_rate_dl         = gbr_qos_info.max_packet_loss_rate_dl.value();
+  }
+
+  if (gbr_qos_info.max_packet_loss_rate_ul.has_value()) {
+    asn1_gbr_qos_info.max_packet_loss_rate_ul_present = true;
+    asn1_gbr_qos_info.max_packet_loss_rate_ul         = gbr_qos_info.max_packet_loss_rate_ul.value();
+  }
+
+  return asn1_gbr_qos_info;
+}
+
+static qos_flow_level_qos_params_s
+qos_flow_level_qos_params_to_f1ap_asn1(const qos_flow_level_qos_parameters& qos_params)
+{
+  qos_flow_level_qos_params_s asn1_qos_params;
+
+  // Fill QoS characteristics.
+  asn1_qos_params.qos_characteristics = qos_characteristics_to_f1ap_asn1(qos_params.qos_desc);
+
+  // Fill alloc and retention prio.
+  asn1_qos_params.ngra_nalloc_retention_prio.prio_level = qos_params.alloc_retention_prio.prio_level_arp.value();
+  asn1_qos_params.ngra_nalloc_retention_prio.pre_emption_cap.value =
+      qos_params.alloc_retention_prio.may_trigger_preemption
+          ? asn1::f1ap::pre_emption_cap_opts::may_trigger_pre_emption
+          : asn1::f1ap::pre_emption_cap_opts::shall_not_trigger_pre_emption;
+  asn1_qos_params.ngra_nalloc_retention_prio.pre_emption_vulnerability.value =
+      qos_params.alloc_retention_prio.is_preemptable ? asn1::f1ap::pre_emption_vulnerability_opts::pre_emptable
+                                                     : asn1::f1ap::pre_emption_vulnerability_opts::not_pre_emptable;
+
+  // Fill GBR QoS info.
+  if (qos_params.gbr_qos_info.has_value()) {
+    asn1_qos_params.gbr_qos_flow_info_present = true;
+    asn1_qos_params.gbr_qos_flow_info         = gbr_qos_info_to_f1ap_asn1(qos_params.gbr_qos_info.value());
+  }
+
+  // Fill reflective QoS attribute.
+  if (qos_params.reflective_qos_attribute_subject_to) {
+    asn1_qos_params.reflective_qos_attribute_present = true;
+    asn1_qos_params.reflective_qos_attribute.value =
+        asn1::f1ap::qos_flow_level_qos_params_s::reflective_qos_attribute_opts::subject_to;
+  }
+
+  return asn1_qos_params;
+}
+
 /// \brief Convert QoS info to F1AP ASN.1.
-/// \param[in] qos_info The common type qos info.
-/// \return The ASN.1 qos info.
+/// \param[in] qos_info The common type QoS info.
+/// \return The ASN.1 QoS info.
 static qos_info_c qos_info_to_f1ap_asn1(const f1ap_drb_info& drb_info)
 {
   qos_info_c asn1type;
@@ -321,56 +384,17 @@ static qos_info_c qos_info_to_f1ap_asn1(const f1ap_drb_info& drb_info)
   choice_ext.load_info_obj(ASN1_F1AP_ID_DRB_INFO);
   auto& asn1_drb_info = choice_ext.value().drb_info();
 
-  // qos characteristics
-  asn1_drb_info.drb_qos.qos_characteristics = qos_characteristics_to_f1ap_asn1(drb_info.drb_qos.qos_desc);
+  // Fill QoS flow level qos params.
+  asn1_drb_info.drb_qos = qos_flow_level_qos_params_to_f1ap_asn1(drb_info.drb_qos);
 
-  // alloc and retention prio
-  asn1_drb_info.drb_qos.ngra_nalloc_retention_prio.prio_level = drb_info.drb_qos.alloc_retention_prio.prio_level_arp;
-  asn1_drb_info.drb_qos.ngra_nalloc_retention_prio.pre_emption_cap.value =
-      drb_info.drb_qos.alloc_retention_prio.may_trigger_preemption
-          ? asn1::f1ap::pre_emption_cap_opts::may_trigger_pre_emption
-          : asn1::f1ap::pre_emption_cap_opts::shall_not_trigger_pre_emption;
-  asn1_drb_info.drb_qos.ngra_nalloc_retention_prio.pre_emption_vulnerability.value =
-      drb_info.drb_qos.alloc_retention_prio.is_preemptable
-          ? asn1::f1ap::pre_emption_vulnerability_opts::pre_emptable
-          : asn1::f1ap::pre_emption_vulnerability_opts::not_pre_emptable;
-
-  // gbr qos info
-  if (drb_info.drb_qos.gbr_qos_info.has_value()) {
-    asn1_drb_info.drb_qos.gbr_qos_flow_info_present              = true;
-    asn1_drb_info.drb_qos.gbr_qos_flow_info.max_flow_bit_rate_dl = drb_info.drb_qos.gbr_qos_info.value().max_br_dl;
-    asn1_drb_info.drb_qos.gbr_qos_flow_info.max_flow_bit_rate_ul = drb_info.drb_qos.gbr_qos_info.value().max_br_ul;
-    asn1_drb_info.drb_qos.gbr_qos_flow_info.guaranteed_flow_bit_rate_dl = drb_info.drb_qos.gbr_qos_info.value().gbr_dl;
-    asn1_drb_info.drb_qos.gbr_qos_flow_info.guaranteed_flow_bit_rate_ul = drb_info.drb_qos.gbr_qos_info.value().gbr_ul;
-
-    if (drb_info.drb_qos.gbr_qos_info.value().max_packet_loss_rate_dl.has_value()) {
-      asn1_drb_info.drb_qos.gbr_qos_flow_info.max_packet_loss_rate_dl_present = true;
-      asn1_drb_info.drb_qos.gbr_qos_flow_info.max_packet_loss_rate_dl =
-          drb_info.drb_qos.gbr_qos_info.value().max_packet_loss_rate_dl.value();
-    }
-
-    if (drb_info.drb_qos.gbr_qos_info.value().max_packet_loss_rate_ul.has_value()) {
-      asn1_drb_info.drb_qos.gbr_qos_flow_info.max_packet_loss_rate_ul_present = true;
-      asn1_drb_info.drb_qos.gbr_qos_flow_info.max_packet_loss_rate_ul =
-          drb_info.drb_qos.gbr_qos_info.value().max_packet_loss_rate_ul.value();
-    }
-  }
-
-  // reflective qos attribute
-  if (drb_info.drb_qos.reflective_qos_attribute_subject_to) {
-    asn1_drb_info.drb_qos.reflective_qos_attribute_present = true;
-    asn1_drb_info.drb_qos.reflective_qos_attribute.value =
-        asn1::f1ap::qos_flow_level_qos_params_s::reflective_qos_attribute_opts::subject_to;
-  }
-
-  // s nssai
+  // Fill S-NSSAI.
   asn1_drb_info.snssai.sst.from_number(drb_info.s_nssai.sst.value());
   if (drb_info.s_nssai.sd.is_set()) {
     asn1_drb_info.snssai.sd_present = true;
     asn1_drb_info.snssai.sd.from_number(drb_info.s_nssai.sd.value());
   }
 
-  // notif ctrl
+  // Fill notif ctrl.
   if (drb_info.notif_ctrl.has_value()) {
     asn1_drb_info.notif_ctrl_present = true;
     asn1_drb_info.notif_ctrl         = drb_info.notif_ctrl.value() == srsran::drb_notification_control::active
@@ -378,11 +402,11 @@ static qos_info_c qos_info_to_f1ap_asn1(const f1ap_drb_info& drb_info)
                                            : notif_ctrl_opts::options::not_active;
   }
 
-  // flows mapped to drb list
+  // Fill flows mapped to DRB list.
   for (const auto& qos_flow : drb_info.flows_mapped_to_drb_list) {
     asn1::f1ap::flows_mapped_to_drb_item_s asn1_flow;
     asn1_flow.qos_flow_id               = qos_flow_id_to_uint(qos_flow.qos_flow_id);
-    asn1_flow.qos_flow_level_qos_params = asn1_drb_info.drb_qos;
+    asn1_flow.qos_flow_level_qos_params = qos_flow_level_qos_params_to_f1ap_asn1(qos_flow.qos_flow_level_qos_params);
 
     asn1_drb_info.flows_mapped_to_drb_list.push_back(asn1_flow);
   }
@@ -462,7 +486,7 @@ f1ap_srb_failed_to_setup srsran::make_srb_failed_to_setupmod(const srbs_failed_t
   return srb_item;
 }
 
-// Helper method common to DRBs-toBeSetup-Item and DRBs-toBeSetupMod-Item
+// Helper method common to DRBs-toBeSetup-Item and DRBs-toBeSetupMod-Item.
 template <typename T, typename ASN1Type>
 static void fill_drb_setup_common_fields(T& drb_obj, const ASN1Type& asn1_type)
 {
@@ -670,6 +694,16 @@ srsran::make_drbs_failed_to_be_modified_list(span<const f1ap_drb_failed_to_setup
   for (unsigned i = 0; i != failed_drbs.size(); ++i) {
     list[i].load_info_obj(ASN1_F1AP_ID_DRBS_FAILED_TO_BE_MODIFIED_ITEM);
     fill_drb_failed_item(list[i]->drbs_failed_to_be_modified_item(), failed_drbs[i]);
+  }
+  return list;
+}
+
+asn1::f1ap::serving_cell_mo_encoded_in_cgc_list_l
+srsran::make_serving_cell_mo_encoded_in_cgc_list(span<const uint8_t> serving_cell_mos)
+{
+  asn1::f1ap::serving_cell_mo_encoded_in_cgc_list_l list(serving_cell_mos.size());
+  for (unsigned i = 0; i != serving_cell_mos.size(); ++i) {
+    list[i].serving_cell_mo = serving_cell_mos[i];
   }
   return list;
 }

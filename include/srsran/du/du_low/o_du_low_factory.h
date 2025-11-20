@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -29,11 +29,11 @@
 namespace srsran {
 namespace srs_du {
 
-struct du_cell_config;
 struct o_du_low_config;
+struct o_du_low_dependencies;
 
 /// Creates and returns an O-RAN Distributed Unit (O-DU) low.
-std::unique_ptr<o_du_low> make_o_du_low(const o_du_low_config& config, span<const du_cell_config> du_cells);
+std::unique_ptr<o_du_low> make_o_du_low(const o_du_low_config& config, o_du_low_dependencies& o_du_low_deps);
 
 } // namespace srs_du
 } // namespace srsran

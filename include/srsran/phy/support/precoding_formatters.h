@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -43,8 +43,7 @@ struct formatter<srsran::precoding_configuration> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::precoding_configuration& config, FormatContext& ctx)
-
+  auto format(const srsran::precoding_configuration& config, FormatContext& ctx) const
   {
     format_to(ctx.out(), "prg_size={} ", config.get_prg_size());
 

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,7 +23,6 @@
 #include "log_helpers.h"
 #include "ngap_asn1_utils.h"
 #include "srsran/support/format/custom_formattable.h"
-#include "srsran/support/format/fmt_optional.h"
 
 using namespace srsran;
 
@@ -32,7 +31,7 @@ namespace fmt {
 template <>
 struct formatter<asn1::ngap::ngap_pdu_c> : public basic_parser {
   template <typename FormatContext>
-  auto format(const asn1::ngap::ngap_pdu_c& p, FormatContext& ctx)
+  auto format(const asn1::ngap::ngap_pdu_c& p, FormatContext& ctx) const
   {
     asn1::json_writer js;
     p.to_json(js);
@@ -52,12 +51,12 @@ void srsran::srs_cu_cp::log_ngap_pdu(srslog::basic_logger&            logger,
     return;
   }
 
-  std::optional<ran_ue_id_t> ran_ue_id = get_ran_ue_id(pdu);
-  std::optional<amf_ue_id_t> amf_ue_id = get_amf_ue_id(pdu);
+  std::optional<ran_ue_id_t> ran_ue_id = asn1_utils::get_ran_ue_id(pdu);
+  std::optional<amf_ue_id_t> amf_ue_id = asn1_utils::get_amf_ue_id(pdu);
 
   // Custom formattable object whose formatting function will run in the log backend.
-  auto pdu_log_entry =
-      make_formattable([is_rx, ran_ue_id, amf_ue_id, ue_idx, msg_name = get_message_type_str(pdu)](auto& ctx) {
+  auto pdu_log_entry = make_formattable(
+      [is_rx, ran_ue_id, amf_ue_id, ue_idx, msg_name = asn1_utils::get_message_type_str(pdu)](auto& ctx) {
         return fmt::format_to(ctx.out(),
                               "{} PDU{}{}{}: {}",
                               is_rx ? "Rx" : "Tx",

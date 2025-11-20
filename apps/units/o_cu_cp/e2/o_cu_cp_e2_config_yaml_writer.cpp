@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,7 +21,7 @@
  */
 
 #include "o_cu_cp_e2_config_yaml_writer.h"
-#include "apps/services/e2/e2_config_yaml_writer.h"
+#include "apps/helpers/e2/e2_config_yaml_writer.h"
 #include "o_cu_cp_e2_config.h"
 
 using namespace srsran;

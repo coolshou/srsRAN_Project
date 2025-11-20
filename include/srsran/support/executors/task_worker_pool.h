@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include "srsran/adt/moodycamel_bounded_mpmc_queue.h"
+#include "srsran/adt/moodycamel_mpmc_queue.h"
 #include "srsran/adt/mpmc_queue.h"
 #include "srsran/adt/mutexed_mpmc_queue.h"
 #include "srsran/srslog/srslog.h"
@@ -84,7 +86,10 @@ template <>
 class base_task_queue<concurrent_queue_policy::lockfree_mpmc>
 {
 protected:
-  base_task_queue(size_t qsize, std::chrono::microseconds wait_sleep_time) : queue(qsize, wait_sleep_time) {}
+  base_task_queue(size_t qsize, std::chrono::microseconds wait_sleep_time, unsigned /* unused */) :
+    queue(qsize, wait_sleep_time)
+  {
+  }
 
   // Queue of pending tasks.
   concurrent_queue<unique_task, concurrent_queue_policy::lockfree_mpmc, concurrent_queue_wait_policy::sleep> queue;
@@ -94,12 +99,40 @@ template <>
 class base_task_queue<concurrent_queue_policy::locking_mpmc>
 {
 protected:
-  base_task_queue(size_t qsize, std::chrono::microseconds wait_sleep_time = std::chrono::microseconds{0}) : queue(qsize)
+  base_task_queue(size_t qsize, std::chrono::microseconds wait_sleep_time, unsigned /* unused */) : queue(qsize) {}
+
+  // Queue of pending tasks.
+  concurrent_queue<unique_task, concurrent_queue_policy::locking_mpmc, concurrent_queue_wait_policy::condition_variable>
+      queue;
+};
+
+template <>
+class base_task_queue<concurrent_queue_policy::moodycamel_lockfree_mpmc>
+{
+protected:
+  base_task_queue(size_t qsize, std::chrono::microseconds wait_sleep_time, unsigned nof_prereserved_producers) :
+    queue(qsize, nof_prereserved_producers, wait_sleep_time)
   {
   }
 
   // Queue of pending tasks.
-  concurrent_queue<unique_task, concurrent_queue_policy::locking_mpmc, concurrent_queue_wait_policy::condition_variable>
+  concurrent_queue<unique_task, concurrent_queue_policy::moodycamel_lockfree_mpmc, concurrent_queue_wait_policy::sleep>
+      queue;
+};
+
+template <>
+class base_task_queue<concurrent_queue_policy::moodycamel_lockfree_bounded_mpmc>
+{
+protected:
+  base_task_queue(size_t qsize, std::chrono::microseconds wait_sleep_time, unsigned nof_prereserved_producers) :
+    queue(qsize, nof_prereserved_producers, wait_sleep_time)
+  {
+  }
+
+  // Queue of pending tasks.
+  concurrent_queue<unique_task,
+                   concurrent_queue_policy::moodycamel_lockfree_bounded_mpmc,
+                   concurrent_queue_wait_policy::sleep>
       queue;
 };
 
@@ -138,10 +171,7 @@ public:
   /// \brief Push a new task to be processed by the worker pool. If the task queue is full, blocks.
   /// \param prio Priority of the dispatched task.
   /// \param task Task to be run in the thread pool.
-  bool push_task_blocking(enqueue_priority prio, unique_task task)
-  {
-    return queue.push_blocking(prio, std::move(task));
-  }
+  void push_task_blocking(enqueue_priority prio, unique_task task) { queue.push_blocking(prio, std::move(task)); }
 
   /// Stop task worker pool, if running.
   void stop();
@@ -172,9 +202,10 @@ public:
   task_worker_pool(std::string                           worker_pool_name,
                    unsigned                              nof_workers_,
                    unsigned                              qsize_,
-                   std::chrono::microseconds             wait_sleep_time = std::chrono::microseconds{100},
-                   os_thread_realtime_priority           prio            = os_thread_realtime_priority::no_realtime(),
-                   span<const os_sched_affinity_bitmask> cpu_masks       = {});
+                   std::chrono::microseconds             wait_sleep_time           = std::chrono::microseconds{100},
+                   unsigned                              nof_prereserved_producers = 2,
+                   os_thread_realtime_priority           prio      = os_thread_realtime_priority::no_realtime(),
+                   span<const os_sched_affinity_bitmask> cpu_masks = {});
   ~task_worker_pool();
 
   /// \brief Push a new task to be processed by the worker pool. If the task queue is full, it skips the task and
@@ -203,6 +234,8 @@ public:
 
 extern template class task_worker_pool<concurrent_queue_policy::lockfree_mpmc>;
 extern template class task_worker_pool<concurrent_queue_policy::locking_mpmc>;
+extern template class task_worker_pool<concurrent_queue_policy::moodycamel_lockfree_mpmc>;
+extern template class task_worker_pool<concurrent_queue_policy::moodycamel_lockfree_bounded_mpmc>;
 
 template <concurrent_queue_policy QueuePolicy>
 class task_worker_pool_executor final : public task_executor

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -54,14 +54,16 @@ sched_cell_configuration_request_message srsran::sched_config_helper::make_defau
   // SIB1 parameters.
   sched_req.coreset0          = *params.coreset0_index;
   sched_req.searchspace0      = params.search_space0_index;
-  sched_req.sib1_payload_size = 101; // Random size.
+  sched_req.sib1_payload_size = units::bytes{101}; // Random size.
 
-  srs_du::pucch_builder_params default_pucch_builder_params   = srs_du::du_cell_config{}.pucch_cfg;
-  default_pucch_builder_params.nof_ue_pucch_f0_or_f1_res_harq = 3;
-  default_pucch_builder_params.nof_ue_pucch_f2_res_harq       = 6;
-  default_pucch_builder_params.nof_sr_resources               = 2;
+  pucch_builder_params default_pucch_builder_params;
+  default_pucch_builder_params.nof_ue_pucch_f0_or_f1_res_harq       = 3;
+  default_pucch_builder_params.nof_ue_pucch_f2_or_f3_or_f4_res_harq = 6;
+  default_pucch_builder_params.nof_sr_resources                     = 2;
+  default_pucch_builder_params.f0_or_f1_params.emplace<pucch_f1_params>();
+  default_pucch_builder_params.f2_or_f3_or_f4_params.emplace<pucch_f2_params>();
 
-  sched_req.pucch_guardbands = config_helpers::build_pucch_guardbands_list(
+  sched_req.ded_pucch_resources = config_helpers::build_pucch_resource_list(
       default_pucch_builder_params, sched_req.ul_cfg_common.init_ul_bwp.generic_params.crbs.length());
 
   if (params.csi_rs_enabled) {
@@ -113,11 +115,6 @@ sched_config_helper::create_default_sched_ue_creation_request(const cell_config_
   for (lcid_t lcid : lcid_to_cfg) {
     if (lcid >= lcid_t::LCID_SRB2) {
       msg.cfg.lc_config_list->push_back(config_helpers::create_default_logical_channel_config(lcid));
-    }
-    if (not is_srb(lcid)) {
-      sched_drb_info drb;
-      drb.lcid = lcid;
-      msg.cfg.drb_info_list.push_back(drb);
     }
   }
 

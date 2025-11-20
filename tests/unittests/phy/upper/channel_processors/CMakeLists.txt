@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -18,9 +18,11 @@
 # and at http://www.gnu.org/licenses/.
 #
 
+add_subdirectory(pdcch)
 add_subdirectory(pdsch)
 add_subdirectory(pucch)
 add_subdirectory(pusch)
+add_subdirectory(ssb)
 add_subdirectory(uci)
 
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/test_data)
@@ -28,49 +30,12 @@ set(TEST_DATA_DIR ${CMAKE_CURRENT_BINARY_DIR}/test_data)
 
 set_directory_properties(PROPERTIES LABELS "phy")
 
-add_executable(pdcch_processor_unittest pdcch_processor_unittest.cpp)
-target_link_libraries(pdcch_processor_unittest srsran_channel_processors srslog)
-add_test(pdcch_processor_unittest pdcch_processor_unittest)
-
-add_executable(ssb_processor_unittest ssb_processor_unittest.cpp)
-target_link_libraries(ssb_processor_unittest srsran_channel_processors srslog)
-add_test(ssb_processor_unittest ssb_processor_unittest)
-
 if (USE_PHY_TESTVECTORS)
-    add_executable(pbch_encoder_test pbch_encoder_test.cpp)
-    target_link_libraries(pbch_encoder_test srsran_channel_processors srslog)
-    add_test_vector(pbch_encoder_test pbch_encoder_test_data.tar.gz "")
-
-    add_executable(pbch_modulator_test pbch_modulator_test.cpp)
-    target_link_libraries(pbch_modulator_test srsran_channel_processors srslog)
-    add_test_vector(pbch_modulator_test pbch_modulator_test_data.tar.gz "")
-
-    add_executable(pdcch_encoder_test pdcch_encoder_test.cpp)
-    target_link_libraries(pdcch_encoder_test srsran_channel_processors srslog)
-    add_test_vector(pdcch_encoder_test pdcch_encoder_test_data.tar.gz "")
-
-    add_executable(pdcch_modulator_test pdcch_modulator_test.cpp)
-    target_link_libraries(pdcch_modulator_test
-            srsran_channel_processors
-            srsran_channel_precoder
-            srslog
-            srsran_channel_modulation
-            srsran_sequence_generators)
-    add_test_vector(pdcch_modulator_test pdcch_modulator_test_data.tar.gz "")
-
-    add_executable(pdcch_processor_vectortest pdcch_processor_vectortest.cpp)
-    target_link_libraries(pdcch_processor_vectortest srsran_channel_processors srsran_channel_precoder srslog gtest gtest_main)
-    add_test_vector(pdcch_processor_vectortest pdcch_processor_test_data.tar.gz "")
-
     add_executable(prach_detector_vectortest prach_detector_vectortest.cpp)
-    target_link_libraries(prach_detector_vectortest srsran_channel_processors srsran_generic_funcs srsran_phy_support srslog gtest gtest_main)
+    target_link_libraries(prach_detector_vectortest srsran_channel_processors srsran_dft srsran_phy_support srslog gtest gtest_main)
     add_test_vector(prach_detector_vectortest prach_detector_test_data.tar.gz "")
 
     add_executable(prach_generator_vectortest prach_generator_vectortest.cpp)
-    target_link_libraries(prach_generator_vectortest srsran_channel_processors srsran_generic_funcs srslog gtest gtest_main)
+    target_link_libraries(prach_generator_vectortest srsran_channel_processors srsran_dft srslog gtest gtest_main)
     add_test_vector(prach_generator_vectortest prach_generator_test_data.tar.gz "")
-
-    add_executable(ssb_processor_vectortest ssb_processor_vectortest.cpp)
-    target_link_libraries(ssb_processor_vectortest srsran_channel_processors srslog)
-    add_test_vector(ssb_processor_vectortest ssb_processor_test_data.tar.gz "")
 endif (USE_PHY_TESTVECTORS)

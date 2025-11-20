@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -20,13 +20,10 @@
  *
  */
 
-#include "../../../support/resource_grid_test_doubles.h"
-#include "../../rx_buffer_test_doubles.h"
-#include "pusch_processor_result_test_doubles.h"
 #include "srsran/phy/upper/channel_processors/pusch/factories.h"
 #include "srsran/phy/upper/channel_processors/pusch/formatters.h"
 #include "srsran/phy/upper/equalization/equalization_factories.h"
-#include "srsran/support/format/fmt_optional.h"
+#include "srsran/support/executors/inline_task_executor.h"
 #include "fmt/ostream.h"
 #include "gtest/gtest.h"
 #include <regex>
@@ -211,6 +208,7 @@ class PuschProcessorFixture : public ::testing::TestWithParam<test_case_t>
 protected:
   static std::unique_ptr<pusch_processor>     pusch_proc;
   static std::unique_ptr<pusch_pdu_validator> pdu_validator;
+  static inline_task_executor                 ch_est_executor;
 
   static void SetUpTestSuite()
   {
@@ -228,15 +226,16 @@ protected:
     ASSERT_NE(low_papr_sequence_gen_factory, nullptr);
 
     // Create demodulator mapper factory.
-    std::shared_ptr<channel_modulation_factory> chan_modulation_factory = create_channel_modulation_sw_factory();
-    ASSERT_NE(chan_modulation_factory, nullptr);
+    std::shared_ptr<demodulation_mapper_factory> chan_demodulation_factory = create_demodulation_mapper_factory();
+    ASSERT_NE(chan_demodulation_factory, nullptr);
 
     // Create CRC calculator factory.
     std::shared_ptr<crc_calculator_factory> crc_calc_factory = create_crc_calculator_factory_sw("auto");
     ASSERT_NE(crc_calc_factory, nullptr) << "Cannot create CRC calculator factory.";
 
     // Create LDPC decoder factory.
-    std::shared_ptr<ldpc_decoder_factory> ldpc_dec_factory = create_ldpc_decoder_factory_sw("generic");
+    std::shared_ptr<ldpc_decoder_factory> ldpc_dec_factory =
+        create_ldpc_decoder_factory_sw("generic", {.force_decoding = false});
     ASSERT_NE(ldpc_dec_factory, nullptr);
 
     // Create LDPC rate dematcher factory.
@@ -268,7 +267,13 @@ protected:
 
     // Create DM-RS for PUSCH channel estimator.
     std::shared_ptr<dmrs_pusch_estimator_factory> dmrs_pusch_chan_estimator_factory =
-        create_dmrs_pusch_estimator_factory_sw(prg_factory, low_papr_sequence_gen_factory, port_chan_estimator_factory);
+        create_dmrs_pusch_estimator_factory_sw(prg_factory,
+                                               low_papr_sequence_gen_factory,
+                                               port_chan_estimator_factory,
+                                               ch_est_executor,
+                                               port_channel_estimator_fd_smoothing_strategy::filter,
+                                               port_channel_estimator_td_interpolation_strategy::average,
+                                               true);
     ASSERT_NE(dmrs_pusch_chan_estimator_factory, nullptr);
 
     // Create channel equalizer factory.
@@ -281,7 +286,7 @@ protected:
 
     // Create PUSCH demodulator factory.
     std::shared_ptr<pusch_demodulator_factory> pusch_demod_factory = create_pusch_demodulator_factory_sw(
-        eq_factory, precoding_factory, chan_modulation_factory, prg_factory, MAX_RB, false, false);
+        eq_factory, precoding_factory, chan_demodulation_factory, nullptr, prg_factory, MAX_RB, false);
     ASSERT_NE(pusch_demod_factory, nullptr);
 
     // Create PUSCH demultiplexer factory.
@@ -342,6 +347,7 @@ protected:
 
 std::unique_ptr<pusch_processor>     PuschProcessorFixture::pusch_proc;
 std::unique_ptr<pusch_pdu_validator> PuschProcessorFixture::pdu_validator;
+inline_task_executor                 PuschProcessorFixture::ch_est_executor;
 
 TEST_P(PuschProcessorFixture, PuschProcessorValidatortest)
 {
@@ -355,23 +361,6 @@ TEST_P(PuschProcessorFixture, PuschProcessorValidatortest)
   ASSERT_FALSE(validator_out.has_value()) << "Validation should fail.";
   ASSERT_TRUE(std::regex_match(validator_out.error(), std::regex(param.expr)))
       << "The assertion message doesn't match the expected pattern.";
-
-  // Prepare resource grid.
-  resource_grid_reader_spy grid;
-
-  // Prepare receive data.
-  std::vector<uint8_t> data;
-
-  // Prepare buffer.
-  rx_buffer_spy    rm_buffer_spy(ldpc::MAX_CODEBLOCK_SIZE, 0);
-  unique_rx_buffer rm_buffer(rm_buffer_spy);
-
-  // Process PUSCH PDU.
-#ifdef ASSERTS_ENABLED
-  pusch_processor_result_notifier_spy result_notifier_spy;
-  ASSERT_DEATH({ pusch_proc->process(data, std::move(rm_buffer), result_notifier_spy, grid, param.get_pdu()); },
-               param.expr);
-#endif // ASSERTS_ENABLED
 }
 
 // Creates test suite that combines all possible parameters.

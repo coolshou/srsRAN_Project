@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,7 +27,9 @@
 
 using namespace srsran;
 
-// Generic optimized modulator for any modulation order QM > 2 and QM % 2 == 0.
+namespace {
+
+/// Generic optimized modulator for any modulation order QM > 2 and QM % 2 == 0.
 template <unsigned QM>
 struct modulator_table_s {
   // The indexing provides the complex symbol corresponding to the binary expansion of the index.
@@ -61,13 +63,12 @@ struct modulator_table_s {
 
     // Perform scaling.
     scaling = std::sqrt(1 / avg_power);
-    srsvec::sc_prod(cf_table, scaling, cf_table);
+    srsvec::sc_prod(cf_table, cf_table, scaling);
   }
 
   // Modulates the input bits.
   template <typename Type>
-  inline constexpr void
-  modulate(span<Type> symbols, const bit_buffer& input, const std::array<Type, pow2(QM)>& table) const
+  constexpr void modulate(span<Type> symbols, const bit_buffer& input, const std::array<Type, pow2(QM)>& table) const
   {
     unsigned       i_symbol    = 0;
     Type*          symbols_ptr = symbols.data();
@@ -148,7 +149,7 @@ struct modulator_table_s {
   }
 };
 
-// Generic optimized modulator for BSPK.
+/// Generic optimized modulator for BSPK.
 struct modulator_table_bpsk {
   // The indexing provides the complex symbol corresponding to the binary expansion of the index.
   const std::array<cf_t, 2>  cf_table  = {{{M_SQRT1_2, M_SQRT1_2}, {-M_SQRT1_2, -M_SQRT1_2}}};
@@ -176,7 +177,7 @@ struct modulator_table_bpsk {
   }
 };
 
-// Generic optimized modulator for π/2-BPSK.
+/// Generic optimized modulator for π/2-BPSK.
 struct modulator_table_pi_2_bpsk {
   // The indexing provides the complex symbol corresponding to the binary expansion of the index.
   const std::array<cf_t, 2>  cf_table_even  = {{{M_SQRT1_2, M_SQRT1_2}, {-M_SQRT1_2, -M_SQRT1_2}}};
@@ -206,7 +207,9 @@ struct modulator_table_pi_2_bpsk {
   }
 };
 
-// Modulation tables.
+} // namespace
+
+/// Modulation tables.
 static const modulator_table_pi_2_bpsk pi_2_bpsk_modulator;
 static const modulator_table_bpsk      bpsk_modulator;
 static const modulator_table_s<2>      qpsk_modulator;
@@ -220,7 +223,7 @@ void modulation_mapper_lut_impl::modulate(span<cf_t> symbols, const bit_buffer& 
                 "The number of bits {} is not consistent with the number of symbols {} for modulation scheme {}.",
                 input.size(),
                 symbols.size(),
-                scheme);
+                fmt::underlying(scheme));
 
   switch (scheme) {
     case modulation_scheme::PI_2_BPSK:
@@ -271,7 +274,7 @@ float modulation_mapper_lut_impl::modulate(span<ci8_t> symbols, const bit_buffer
                 "The number of bits {} is not consistent with the number of symbols {} for modulation scheme {}.",
                 input.size(),
                 symbols.size(),
-                scheme);
+                fmt::underlying(scheme));
 
   float scaling = 0.0;
 

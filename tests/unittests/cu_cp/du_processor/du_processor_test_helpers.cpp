@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,9 +22,8 @@
 
 #include "du_processor_test_helpers.h"
 #include "../du_processor_test_messages.h"
-#include "lib/cu_cp/cu_cp_controller/common_task_scheduler.h"
 #include "tests/unittests/cu_cp/test_helpers.h"
-#include "tests/unittests/f1ap/cu_cp/f1ap_cu_test_helpers.h"
+#include "srsran/cu_cp/common_task_scheduler.h"
 #include "srsran/cu_cp/cu_cp_configuration_helpers.h"
 #include "srsran/ran/plmn_identity.h"
 #include <memory>
@@ -44,17 +43,17 @@ private:
 };
 
 struct dummy_cu_cp_ue_admission_controller : public cu_cp_ue_admission_controller {
-  bool request_ue_setup(plmn_identity plmn) const override { return true; }
+  bool request_ue_setup() const override { return true; }
 };
 
 struct dummy_cu_cp_measurement_handler : public cu_cp_measurement_handler {
   std::optional<rrc_meas_cfg>
-  handle_measurement_config_request(ue_index_t                  ue_index,
-                                    nr_cell_identity            nci,
-                                    std::optional<rrc_meas_cfg> current_meas_config = {}) override
+  handle_measurement_config_request(ue_index_t                         ue_index,
+                                    nr_cell_identity                   nci,
+                                    const std::optional<rrc_meas_cfg>& current_meas_config = std::nullopt) override
   {
     return std::nullopt;
-  };
+  }
   void handle_measurement_report(const ue_index_t ue_index, const rrc_meas_results& meas_results) override {}
 };
 
@@ -64,6 +63,7 @@ struct dummy_cu_cp_ue_removal_handler : public cu_cp_ue_removal_handler {
 };
 
 struct dummy_cu_cp_rrc_ue_interface : public cu_cp_rrc_ue_interface {
+  bool handle_ue_plmn_selected(ue_index_t ue_index, const plmn_identity& plmn) override { return true; }
   rrc_ue_reestablishment_context_response
   handle_rrc_reestablishment_request(pci_t old_pci, rnti_t old_c_rnti, ue_index_t ue_index) override
   {
@@ -83,6 +83,8 @@ struct dummy_cu_cp_rrc_ue_interface : public cu_cp_rrc_ue_interface {
   {
     return launch_no_op_task();
   }
+
+  void handle_rrc_reconf_complete_indicator(ue_index_t ue_index) override {}
 };
 
 struct dummy_cu_cp_du_event_handler : public cu_cp_du_event_handler {
@@ -98,7 +100,7 @@ public:
                                                             meas_handler);
   }
   byte_buffer handle_target_cell_sib1_required(du_index_t du_index, nr_cell_global_id_t cgi) override { return {}; }
-  async_task<void> handle_transaction_info_loss(const f1_ue_transaction_info_loss_event& ev) override
+  async_task<void> handle_transaction_info_loss(const ue_transaction_info_loss_event& ev) override
   {
     return launch_no_op_task();
   }
@@ -118,14 +120,14 @@ du_processor_test::du_processor_test() :
     cu_cp_configuration cucfg     = config_helpers::make_default_cu_cp_config();
     cucfg.services.timers         = &timers;
     cucfg.services.cu_cp_executor = &ctrl_worker;
-    cu_cp_cfg.ngaps.push_back(
-        cu_cp_configuration::ngap_params{nullptr, {{7, {{plmn_identity::test_value(), {{slice_service_type{1}}}}}}}});
+    cu_cp_cfg.ngap.ngaps.push_back(
+        cu_cp_configuration::ngap_config{nullptr, {{7, {{plmn_identity::test_value(), {{slice_service_type{1}}}}}}}});
 
     return cucfg;
   }()),
   common_task_sched(std::make_unique<dummy_task_sched>()),
 
-  du_cfg_mgr{cu_cp_cfg.node.gnb_id, config_helpers::get_supported_plmns(cu_cp_cfg.ngaps)}
+  du_cfg_mgr{cu_cp_cfg.node.gnb_id, config_helpers::get_supported_plmns(cu_cp_cfg.ngap.ngaps)}
 {
   test_logger.set_level(srslog::basic_levels::debug);
   cu_cp_logger.set_level(srslog::basic_levels::debug);
@@ -137,8 +139,8 @@ du_processor_test::du_processor_test() :
                                   srslog::fetch_basic_logger("CU-CP"),
                                   &du_conn_notifier,
                                   du_cfg_mgr.create_du_handler()};
-  du_processor_obj             = create_du_processor(
-      std::move(du_cfg), cu_cp_notifier, f1ap_pdu_notifier, rrc_du_cu_cp_notifier, *common_task_sched, ue_mng);
+  du_processor_obj =
+      create_du_processor(std::move(du_cfg), cu_cp_notifier, f1ap_pdu_notifier, *common_task_sched, ue_mng);
 
   cu_cp_event_handler = std::make_unique<dummy_cu_cp_du_event_handler>(ue_mng);
   cu_cp_notifier.attach_handler(&*cu_cp_event_handler, nullptr);

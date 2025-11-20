@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,6 +23,7 @@
 #include "radio_uhd_tx_stream.h"
 #include "srsran/gateways/baseband/buffer/baseband_gateway_buffer_reader_view.h"
 #include "srsran/srsvec/zero.h"
+#include <uhd/version.hpp>
 
 using namespace srsran;
 
@@ -72,6 +73,11 @@ void radio_uhd_tx_stream::recv_async_msg()
     case uhd::async_metadata_t::EVENT_CODE_USER_PAYLOAD:
       event_description.type = radio_notification_handler::event_type::OTHER;
       break;
+#if UHD_VERSION >= 4090000
+    case uhd::async_metadata_t::EVENT_CODE_OK:
+      // This is not an error. Do nothing.
+      break;
+#endif // UHD_VERSION >= 4090000
   }
 
   // Notify event if it is defined.
@@ -141,7 +147,7 @@ radio_uhd_tx_stream::radio_uhd_tx_stream(uhd::usrp::multi_usrp::sptr& usrp,
 
   // Build stream arguments.
   uhd::stream_args_t stream_args = {};
-  stream_args.cpu_format         = "fc32";
+  stream_args.cpu_format         = "sc16";
   switch (description.otw_format) {
     case radio_configuration::over_the_wire_format::DEFAULT:
     case radio_configuration::over_the_wire_format::SC16:
@@ -161,7 +167,7 @@ radio_uhd_tx_stream::radio_uhd_tx_stream(uhd::usrp::multi_usrp::sptr& usrp,
         stream          = usrp->get_tx_stream(stream_args);
         max_packet_size = stream->get_max_num_samps();
       })) {
-    printf("Error:  failed to create transmit stream %d. %s.\n", stream_id, get_error_message().c_str());
+    fmt::println("Error: failed to create transmit stream {}. {}.\n", stream_id, get_error_message().c_str());
     return;
   }
 
@@ -262,11 +268,11 @@ void radio_uhd_tx_stream::transmit(const baseband_gateway_buffer_reader&        
               baseband_gateway_buffer_reader_view(power_ramping_buffer.get_reader(), 0, nof_padding_samples);
 
           if (!transmit_block(txd_samples, tx_padding, txd_padding_sps_total, power_ramping_metadata)) {
-            printf("Error: failed transmitting power ramping padding. %s.\n", get_error_message().c_str());
+            fmt::println("Error: failed transmitting power ramping padding. {}.\n", get_error_message().c_str());
             return;
           }
 
-          power_ramping_metadata.time_spec += txd_samples * srate_hz;
+          power_ramping_metadata.time_spec += uhd::time_spec_t::from_ticks(txd_samples, srate_hz);
           txd_padding_sps_total += txd_samples;
 
         } while (txd_padding_sps_total < nof_padding_samples);
@@ -302,12 +308,12 @@ void radio_uhd_tx_stream::transmit(const baseband_gateway_buffer_reader&        
   do {
     unsigned txd_samples = 0;
     if (!transmit_block(txd_samples, tx_data, txd_samples_total, uhd_metadata)) {
-      printf("Error: failed transmitting packet. %s.\n", get_error_message().c_str());
+      fmt::println("Error: failed transmitting packet. %s.{}", get_error_message().c_str());
       return;
     }
 
     // Increment timespec.
-    uhd_metadata.time_spec += txd_samples * srate_hz;
+    uhd_metadata.time_spec += uhd::time_spec_t::from_ticks(txd_samples, srate_hz);
 
     // Increment the total amount of received samples.
     txd_samples_total += txd_samples;

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -37,7 +37,9 @@ namespace fapi_adaptor {
 class phy_to_fapi_results_event_translator : public upper_phy_rx_results_notifier
 {
 public:
-  explicit phy_to_fapi_results_event_translator(srslog::basic_logger& logger_);
+  phy_to_fapi_results_event_translator(unsigned              sector_id_,
+                                       float                 dBFS_calibration_value_,
+                                       srslog::basic_logger& logger_);
 
   // See interface for documentation.
   void on_new_prach_results(const ul_prach_results& result) override;
@@ -71,12 +73,14 @@ private:
   void notify_pusch_uci_indication(const ul_pusch_results_control& result);
 
 private:
+  /// Radio sector identifier.
+  const unsigned sector_id;
+  /// dBFS calibration value.
+  const float dBFS_calibration_value;
   /// FAPI logger.
   srslog::basic_logger& logger;
   /// FAPI slot-based, data-specific message notifier.
   std::reference_wrapper<fapi::slot_data_message_notifier> data_notifier;
-  /// dBFS calibration value.
-  const float dBFS_calibration_value = 1;
 };
 
 } // namespace fapi_adaptor

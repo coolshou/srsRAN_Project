@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "srsran/e1ap/cu_up/e1ap_cu_up.h"
 #include "srsran/pdcp/pdcp_rx.h"
 #include "srsran/pdcp/pdcp_tx.h"
 #include "srsran/sdap/sdap.h"
@@ -55,10 +56,10 @@ public:
   pdcp_rx_e1ap_adapter()  = default;
   ~pdcp_rx_e1ap_adapter() = default;
 
-  void connect_e1ap()
+  void connect_e1ap(ue_index_t ue_index_, e1ap_pdcp_error_handler* e1ap_)
   {
-    // TODO: Connect a E1AP handler
-    srslog::fetch_basic_logger("PDCP").debug("No E1AP handler for PDCP Rx control events. All events will be ignored.");
+    e1ap     = e1ap_;
+    ue_index = ue_index_;
   }
 
   void on_protocol_failure() override
@@ -73,8 +74,16 @@ public:
 
   void on_max_count_reached() override
   {
-    srslog::fetch_basic_logger("PDCP").warning("Ignoring on_max_count_reached() from PDCP Rx: No E1AP handler.");
+    if (e1ap == nullptr) {
+      srslog::fetch_basic_logger("PDCP").debug(
+          "Max COUNT reached from PDCP Rx, but no E1AP handler present. Ignoring.");
+      return;
+    }
+    e1ap->handle_pdcp_max_count_reached(ue_index);
   }
+
+  e1ap_pdcp_error_handler* e1ap     = nullptr;
+  ue_index_t               ue_index = INVALID_UE_INDEX;
 };
 
 /// Adapter between PDCP and F1-U
@@ -98,8 +107,11 @@ public:
 
   void on_discard_pdu(uint32_t pdcp_sn) override
   {
-    srsran_assert(f1u_handler != nullptr, "F1-U handler must not be nullptr");
-    f1u_handler->discard_sdu(pdcp_sn);
+    if (f1u_handler == nullptr) {
+      srslog::fetch_basic_logger("PDCP").info("Dropped discard command. F1-U handler is not connected");
+    } else {
+      f1u_handler->discard_sdu(pdcp_sn);
+    }
   }
 
 private:
@@ -113,10 +125,10 @@ public:
   pdcp_tx_e1ap_adapter()  = default;
   ~pdcp_tx_e1ap_adapter() = default;
 
-  void connect_e1ap()
+  void connect_e1ap(ue_index_t ue_index_, e1ap_pdcp_error_handler* e1ap_)
   {
-    // TODO: connect a E1AP handler
-    srslog::fetch_basic_logger("PDCP").debug("No E1AP handler for PDCP Tx control events. All events will be ignored.");
+    e1ap     = e1ap_;
+    ue_index = ue_index_;
   }
 
   void on_protocol_failure() override
@@ -126,8 +138,17 @@ public:
 
   void on_max_count_reached() override
   {
-    srslog::fetch_basic_logger("PDCP").warning("Ignoring on_max_count_reached() from PDCP Tx: No E1AP handler.");
+    if (e1ap == nullptr) {
+      srslog::fetch_basic_logger("PDCP").debug(
+          "No E1AP handler for PDCP Tx control events. All events will be ignored.");
+      return;
+    }
+    e1ap->handle_pdcp_max_count_reached(ue_index);
   }
+
+private:
+  e1ap_pdcp_error_handler* e1ap     = nullptr;
+  ue_index_t               ue_index = INVALID_UE_INDEX;
 };
 
 } // namespace srs_cu_up

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,6 +23,7 @@
 #include "asn1_rrc_config_helpers.h"
 #include "asn1_csi_meas_config_helpers.h"
 #include "srsran/asn1/asn1_diff_utils.h"
+#include "srsran/ran/band_helper.h"
 #include "srsran/support/error_handling.h"
 
 using namespace srsran;
@@ -30,11 +31,6 @@ using namespace srsran::srs_du;
 using namespace asn1::rrc_nr;
 
 namespace {
-
-asn1::rrc_nr::subcarrier_spacing_e get_asn1_scs(subcarrier_spacing scs)
-{
-  return asn1::rrc_nr::subcarrier_spacing_e{static_cast<asn1::rrc_nr::subcarrier_spacing_opts::options>(scs)};
-}
 
 /// Helper type used to generate ASN.1 diff
 struct rlc_bearer_config {
@@ -51,7 +47,9 @@ struct rlc_bearer_config {
   }
 };
 
-rlc_bearer_cfg_s make_asn1_rrc_rlc_bearer(const rlc_bearer_config& cfg)
+} // namespace
+
+static rlc_bearer_cfg_s make_asn1_rrc_rlc_bearer(const rlc_bearer_config& cfg)
 {
   rlc_bearer_cfg_s out;
 
@@ -172,7 +170,7 @@ rlc_bearer_cfg_s make_asn1_rrc_rlc_bearer(const rlc_bearer_config& cfg)
           lc_ch_cfg_s::ul_specific_params_s_::prioritised_bit_rate_opts::infinity;
       break;
     default:
-      report_fatal_error("Invalid Prioritised Bit Rate {}", cfg.mac_cfg->pbr);
+      report_fatal_error("Invalid Prioritised Bit Rate {}", fmt::underlying(cfg.mac_cfg->pbr));
   }
   switch (cfg.mac_cfg->bsd) {
     case bucket_size_duration::ms5:
@@ -212,7 +210,7 @@ rlc_bearer_cfg_s make_asn1_rrc_rlc_bearer(const rlc_bearer_config& cfg)
           lc_ch_cfg_s::ul_specific_params_s_::bucket_size_dur_opts::ms1000;
       break;
     default:
-      report_fatal_error("Invalid Bucket size duration {}", cfg.mac_cfg->bsd);
+      report_fatal_error("Invalid Bucket size duration {}", fmt::underlying(cfg.mac_cfg->bsd));
   }
   out.mac_lc_ch_cfg.ul_specific_params.lc_ch_group_present          = true;
   out.mac_lc_ch_cfg.ul_specific_params.lc_ch_group                  = cfg.mac_cfg->lcg_id;
@@ -223,8 +221,6 @@ rlc_bearer_cfg_s make_asn1_rrc_rlc_bearer(const rlc_bearer_config& cfg)
 
   return out;
 }
-
-} // namespace
 
 asn1::rrc_nr::coreset_s srsran::srs_du::make_asn1_rrc_coreset(const coreset_configuration& cfg)
 {
@@ -745,90 +741,46 @@ static void ssb_per_rach_occasion_and_cb_preambles_per_ssb_to_asn1(const float  
   report_fatal_error("Invalid nof. SSB per RACH occasion value {}", nof_ssb_per_ro);
 }
 
+static asn1::rrc_nr::rach_cfg_generic_s make_asn1_rach_cfg_generic(const rach_config_generic& cfg)
+{
+  rach_cfg_generic_s out;
+
+  out.prach_cfg_idx             = cfg.prach_config_index;
+  out.msg1_fdm.value            = rach_msg1_fdm_convert_to_asn1(cfg.msg1_fdm);
+  out.msg1_freq_start           = static_cast<uint16_t>(cfg.msg1_frequency_start);
+  out.zero_correlation_zone_cfg = static_cast<uint8_t>(cfg.zero_correlation_zone_config);
+  out.preamb_rx_target_pwr      = cfg.preamble_rx_target_pw.value();
+  report_fatal_error_if_not(asn1::number_to_enum(out.preamb_trans_max, cfg.preamble_trans_max),
+                            "Invalid preamble transmission max value");
+  report_fatal_error_if_not(asn1::number_to_enum(out.pwr_ramp_step, cfg.power_ramping_step_db),
+                            "Invalid power ramping step value");
+  report_fatal_error_if_not(asn1::number_to_enum(out.ra_resp_win, cfg.ra_resp_window), "Invalid ra-WindowSize");
+
+  return out;
+}
+
 asn1::rrc_nr::bwp_ul_common_s srsran::srs_du::make_asn1_rrc_initial_up_bwp(const ul_config_common& cfg)
 {
   asn1::rrc_nr::bwp_ul_common_s init_ul_bwp;
 
   // > genericParameters BWP
   init_ul_bwp.generic_params.subcarrier_spacing.value = get_asn1_scs(cfg.init_ul_bwp.generic_params.scs);
-  init_ul_bwp.generic_params.location_and_bw =
-      sliv_from_s_and_l(275, cfg.init_ul_bwp.generic_params.crbs.start(), cfg.init_ul_bwp.generic_params.crbs.length());
+  init_ul_bwp.generic_params.location_and_bw          = sliv_from_s_and_l(
+      MAX_NOF_PRBS, cfg.init_ul_bwp.generic_params.crbs.start(), cfg.init_ul_bwp.generic_params.crbs.length());
 
   // > rach-ConfigCommon SetupRelease { RACH-ConfigCommon } OPTIONAL, -- Need M
-  const rach_config_common& rach_cfg    = *cfg.init_ul_bwp.rach_cfg_common;
-  init_ul_bwp.rach_cfg_common_present   = true;
-  rach_cfg_common_s& rach               = init_ul_bwp.rach_cfg_common.set_setup();
-  rach.rach_cfg_generic.prach_cfg_idx   = rach_cfg.rach_cfg_generic.prach_config_index;
-  rach.rach_cfg_generic.msg1_fdm.value  = rach_msg1_fdm_convert_to_asn1(rach_cfg.rach_cfg_generic.msg1_fdm);
-  rach.rach_cfg_generic.msg1_freq_start = static_cast<uint16_t>(rach_cfg.rach_cfg_generic.msg1_frequency_start);
-  rach.rach_cfg_generic.zero_correlation_zone_cfg =
-      static_cast<uint8_t>(rach_cfg.rach_cfg_generic.zero_correlation_zone_config);
-  rach.rach_cfg_generic.preamb_rx_target_pwr = rach_cfg.rach_cfg_generic.preamble_rx_target_pw.to_int();
-  switch (rach_cfg.rach_cfg_generic.preamble_trans_max) {
-    case 3:
-      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n3;
-      break;
-    case 4:
-      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n4;
-      break;
-    case 5:
-      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n5;
-      break;
-    case 6:
-      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n6;
-      break;
-    case 7:
-      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n7;
-      break;
-    case 8:
-      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n8;
-      break;
-    case 10:
-      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n10;
-      break;
-    case 20:
-      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n20;
-      break;
-    case 50:
-      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n50;
-      break;
-    case 100:
-      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n100;
-      break;
-    case 200:
-      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n200;
-      break;
-    default:
-      report_fatal_error("Invalid preamble transmission max value");
-  }
-  switch (rach_cfg.rach_cfg_generic.power_ramping_step_db) {
-    case 0:
-      rach.rach_cfg_generic.pwr_ramp_step.value = asn1::rrc_nr::rach_cfg_generic_s::pwr_ramp_step_opts::db0;
-      break;
-    case 2:
-      rach.rach_cfg_generic.pwr_ramp_step.value = asn1::rrc_nr::rach_cfg_generic_s::pwr_ramp_step_opts::db2;
-      break;
-    case 4:
-      rach.rach_cfg_generic.pwr_ramp_step.value = asn1::rrc_nr::rach_cfg_generic_s::pwr_ramp_step_opts::db4;
-      break;
-    case 6:
-      rach.rach_cfg_generic.pwr_ramp_step.value = asn1::rrc_nr::rach_cfg_generic_s::pwr_ramp_step_opts::db6;
-      break;
-    default:
-      report_fatal_error("Invalid power ramping step value");
-  }
-
-  bool success = asn1::number_to_enum(rach.rach_cfg_generic.ra_resp_win, rach_cfg.rach_cfg_generic.ra_resp_window);
-  srsran_assert(success, "Invalid ra-WindowSize");
-  if (rach_cfg.total_nof_ra_preambles.has_value()) {
+  const rach_config_common& rach_cfg  = *cfg.init_ul_bwp.rach_cfg_common;
+  init_ul_bwp.rach_cfg_common_present = true;
+  rach_cfg_common_s& rach             = init_ul_bwp.rach_cfg_common.set_setup();
+  rach.rach_cfg_generic               = make_asn1_rach_cfg_generic(rach_cfg.rach_cfg_generic);
+  if (rach_cfg.total_nof_ra_preambles != MAX_NOF_RA_PREAMBLES_PER_OCCASION) {
     rach.total_nof_ra_preambs_present = true;
-    rach.total_nof_ra_preambs         = rach_cfg.total_nof_ra_preambles.value();
-    rach.total_nof_ra_preambs -= 1; // Account for zero-indexed ASN field.
+    rach.total_nof_ra_preambs         = rach_cfg.total_nof_ra_preambles;
   }
   ssb_per_rach_occasion_and_cb_preambles_per_ssb_to_asn1(
-      rach_cfg.nof_ssb_per_ro, rach_cfg.nof_cb_preambles_per_ssb, rach);
-  rach.ra_contention_resolution_timer.value =
-      asn1::rrc_nr::rach_cfg_common_s::ra_contention_resolution_timer_opts::sf64;
+      ssb_per_rach_occ_to_float(rach_cfg.nof_ssb_per_ro), rach_cfg.nof_cb_preambles_per_ssb, rach);
+  bool success = asn1::number_to_enum(rach.ra_contention_resolution_timer, rach_cfg.ra_con_res_timer.count());
+  srsran_assert(success, "Invalid ra-ContentionResolutionTimer");
   if (rach_cfg.msg3_transform_precoder) {
     rach.msg3_transform_precoder_present = true;
   }
@@ -953,9 +905,8 @@ static asn1::rrc_nr::tdd_ul_dl_pattern_s make_asn1_rrc_tdd_ul_dl_pattern(subcarr
       out.dl_ul_tx_periodicity.value         = asn1::rrc_nr::tdd_ul_dl_pattern_s::dl_ul_tx_periodicity_opts::ms0p5;
       out.ext                                = true;
       out.dl_ul_tx_periodicity_v1530_present = true;
-      out.dl_ul_tx_periodicity_v1530.value =
-          (asn1::rrc_nr::tdd_ul_dl_pattern_s::dl_ul_tx_periodicity_v1530_opts::options)(
-              std::distance(ext_periods.begin(), it));
+      out.dl_ul_tx_periodicity_v1530.value = static_cast<tdd_ul_dl_pattern_s::dl_ul_tx_periodicity_v1530_opts::options>(
+          std::distance(ext_periods.begin(), it));
     } else {
       report_fatal_error("Unsupported TDD UL/DL periodicity {}ms", periodicity_ms);
     }
@@ -1022,7 +973,7 @@ static void make_asn1_rrc_dmrs_dl_for_pdsch(asn1::rrc_nr::dmrs_dl_cfg_s& out, co
         out.dmrs_add_position = dmrs_dl_cfg_s::dmrs_add_position_opts::pos3;
         break;
       default:
-        srsran_assertion_failure("Invalid DMRS DL Add. Position={}", cfg.additional_positions);
+        srsran_assertion_failure("Invalid DMRS DL Add. Position={}", fmt::underlying(cfg.additional_positions));
     }
   }
 
@@ -1072,11 +1023,11 @@ static void make_asn1_rrc_qcl_info(asn1::rrc_nr::qcl_info_s& out, const qcl_info
       out.qcl_type = qcl_info_s::qcl_type_opts::type_d;
       break;
     default:
-      srsran_assertion_failure("Invalid QCL Type={}", cfg.qcl_type);
+      srsran_assertion_failure("Invalid QCL Type={}", fmt::underlying(cfg.qcl_type));
   }
 }
 
-asn1::rrc_nr::pdsch_time_domain_res_alloc_s
+static asn1::rrc_nr::pdsch_time_domain_res_alloc_s
 make_asn1_rrc_pdsch_time_domain_alloc_list(const pdsch_time_domain_resource_allocation& cfg)
 {
   pdsch_time_domain_res_alloc_s out{};
@@ -1090,7 +1041,7 @@ make_asn1_rrc_pdsch_time_domain_alloc_list(const pdsch_time_domain_resource_allo
       out.map_type = pdsch_time_domain_res_alloc_s::map_type_opts::type_b;
       break;
     default:
-      srsran_assertion_failure("Invalid SCH mapping Type={}", cfg.map_type);
+      srsran_assertion_failure("Invalid SCH mapping Type={}", fmt::underlying(cfg.map_type));
   }
 
   out.start_symbol_and_len = ofdm_symbol_range_to_sliv(cfg.symbols);
@@ -1153,17 +1104,17 @@ calculate_pdsch_config_diff(asn1::rrc_nr::pdsch_cfg_s& out, const pdsch_config& 
       [](const tci_state& st) { return st.state_id; });
 
   // VRB-to-PRB Interleaver.
-  if (dest.vrb_to_prb_itlvr.has_value()) {
+  if (dest.vrb_to_prb_interleaving != srsran::vrb_to_prb::mapping_type::non_interleaved) {
     out.vrb_to_prb_interleaver_present = true;
-    switch (dest.vrb_to_prb_itlvr.value()) {
-      case pdsch_config::vrb_to_prb_interleaver::n2:
+    switch (dest.vrb_to_prb_interleaving) {
+      case srsran::vrb_to_prb::mapping_type::interleaved_n2:
         out.vrb_to_prb_interleaver = pdsch_cfg_s::vrb_to_prb_interleaver_opts::n2;
         break;
-      case pdsch_config::vrb_to_prb_interleaver::n4:
+      case srsran::vrb_to_prb::mapping_type::interleaved_n4:
         out.vrb_to_prb_interleaver = pdsch_cfg_s::vrb_to_prb_interleaver_opts::n4;
         break;
       default:
-        srsran_assertion_failure("Invalid VRB-to-PRB Interleaver={}", dest.vrb_to_prb_itlvr.value());
+        srsran_assertion_failure("Invalid VRB-to-PRB Interleaver={}", fmt::underlying(dest.vrb_to_prb_interleaving));
     }
   }
 
@@ -1179,7 +1130,7 @@ calculate_pdsch_config_diff(asn1::rrc_nr::pdsch_cfg_s& out, const pdsch_config& 
       out.res_alloc = pdsch_cfg_s::res_alloc_opts::dyn_switch;
       break;
     default:
-      srsran_assertion_failure("Invalid resource allocation type={}", dest.res_alloc);
+      srsran_assertion_failure("Invalid resource allocation type={}", fmt::underlying(dest.res_alloc));
   }
 
   // PDSCH Time Domain Allocation.
@@ -1205,22 +1156,24 @@ calculate_pdsch_config_diff(asn1::rrc_nr::pdsch_cfg_s& out, const pdsch_config& 
       out.rbg_size = pdsch_cfg_s::rbg_size_opts::cfg2;
       break;
     default:
-      srsran_assertion_failure("Invalid RBG size={}", dest.rbg_sz);
+      srsran_assertion_failure("Invalid RBG size={}", fmt::underlying(dest.rbg_sz));
   }
 
   // PRB Bundling.
   if (const auto* result = std::get_if<prb_bundling::static_bundling>(&dest.prb_bndlg.bundling)) {
-    auto& st_bundling               = out.prb_bundling_type.set_static_bundling();
-    st_bundling.bundle_size_present = true;
-    switch (result->sz.value()) {
-      case prb_bundling::static_bundling::bundling_size::n4:
-        st_bundling.bundle_size = pdsch_cfg_s::prb_bundling_type_c_::static_bundling_s_::bundle_size_opts::n4;
-        break;
-      case prb_bundling::static_bundling::bundling_size::wideband:
-        st_bundling.bundle_size = pdsch_cfg_s::prb_bundling_type_c_::static_bundling_s_::bundle_size_opts::wideband;
-        break;
-      default:
-        srsran_assertion_failure("Invalid static PRB bundling size={}", result->sz.value());
+    auto& st_bundling = out.prb_bundling_type.set_static_bundling();
+    if (result->sz.has_value()) {
+      st_bundling.bundle_size_present = true;
+      switch (result->sz.value()) {
+        case prb_bundling::static_bundling::bundling_size::n4:
+          st_bundling.bundle_size = pdsch_cfg_s::prb_bundling_type_c_::static_bundling_s_::bundle_size_opts::n4;
+          break;
+        case prb_bundling::static_bundling::bundling_size::wideband:
+          st_bundling.bundle_size = pdsch_cfg_s::prb_bundling_type_c_::static_bundling_s_::bundle_size_opts::wideband;
+          break;
+        default:
+          srsran_assertion_failure("Invalid static PRB bundling size={}", fmt::underlying(result->sz.value()));
+      }
     }
   } else {
     // Dynamic bundling.
@@ -1244,7 +1197,7 @@ calculate_pdsch_config_diff(asn1::rrc_nr::pdsch_cfg_s& out, const pdsch_config& 
             pdsch_cfg_s::prb_bundling_type_c_::dyn_bundling_s_::bundle_size_set1_opts::n4_wideband;
         break;
       default:
-        srsran_assertion_failure("Invalid dynamic PRB bundling set 1 size={}", bdlng.sz_set1.value());
+        srsran_assertion_failure("Invalid dynamic PRB bundling set 1 size={}", fmt::underlying(bdlng.sz_set1.value()));
     }
     dy_bundling.bundle_size_set2_present = true;
     switch (bdlng.sz_set2.value()) {
@@ -1256,7 +1209,7 @@ calculate_pdsch_config_diff(asn1::rrc_nr::pdsch_cfg_s& out, const pdsch_config& 
             pdsch_cfg_s::prb_bundling_type_c_::dyn_bundling_s_::bundle_size_set2_opts::wideband;
         break;
       default:
-        srsran_assertion_failure("Invalid dynamic PRB bundling set 2 size={}", bdlng.sz_set2.value());
+        srsran_assertion_failure("Invalid dynamic PRB bundling set 2 size={}", fmt::underlying(bdlng.sz_set2.value()));
     }
   }
 
@@ -1270,7 +1223,7 @@ calculate_pdsch_config_diff(asn1::rrc_nr::pdsch_cfg_s& out, const pdsch_config& 
         out.mcs_table.value = pdsch_cfg_s::mcs_table_opts::qam256;
         break;
       default:
-        report_fatal_error("Invalid PDSCH MCS Table={}", dest.mcs_table);
+        report_fatal_error("Invalid PDSCH MCS Table={}", fmt::underlying(dest.mcs_table));
     }
   }
 
@@ -1287,7 +1240,66 @@ calculate_pdsch_config_diff(asn1::rrc_nr::pdsch_cfg_s& out, const pdsch_config& 
         return make_asn1_zp_csi_rs_resource_set(s);
       });
 
+  // DCI Format 1_1 size.
+  if (dest.harq_process_num_size_dci_1_1.has_value() and
+      dest.harq_process_num_size_dci_1_1 == pdsch_config::harq_process_num_dci_1_1_size::n5) {
+    out.ext                                       = true;
+    out.harq_process_num_size_dci_1_1_r17_present = true;
+    out.harq_process_num_size_dci_1_1_r17         = 5;
+  }
+
+  // DCI Format 1_2 size.
+  if (dest.harq_process_num_size_dci_1_2.has_value() and
+      dest.harq_process_num_size_dci_1_2 == pdsch_config::harq_process_num_dci_1_2_size::n5) {
+    out.ext                                         = true;
+    out.harq_process_num_size_dci_1_2_v1700_present = true;
+    out.harq_process_num_size_dci_1_2_v1700         = 5;
+  }
+
   // TODO: Remaining.
+}
+
+static asn1::rrc_nr::radio_link_monitoring_rs_s
+make_asn1_rrc_rlm_resource(const radio_link_monitoring_config::radio_link_monitoring_rs& cfg)
+{
+  radio_link_monitoring_rs_s rlm_res;
+
+  rlm_res.radio_link_monitoring_rs_id = static_cast<uint8_t>(cfg.res_id);
+  switch (cfg.resource_purpose) {
+    case radio_link_monitoring_config::radio_link_monitoring_rs::purpose::beam_failure:
+      rlm_res.purpose = radio_link_monitoring_rs_s::purpose_opts::beam_fail;
+      break;
+    case radio_link_monitoring_config::radio_link_monitoring_rs::purpose::rlf:
+      rlm_res.purpose = radio_link_monitoring_rs_s::purpose_opts::rlf;
+      break;
+    case radio_link_monitoring_config::radio_link_monitoring_rs::purpose::both:
+      rlm_res.purpose = radio_link_monitoring_rs_s::purpose_opts::both;
+    default:
+      srsran_assertion_failure("Invalid RLM resource purpose={}", fmt::underlying(cfg.resource_purpose));
+  }
+
+  if (std::holds_alternative<ssb_id_t>(cfg.detection_resource)) {
+    rlm_res.detection_res.set_ssb_idx() = std::get<ssb_id_t>(cfg.detection_resource);
+  } else {
+    rlm_res.detection_res.set_csi_rs_idx() = std::get<nzp_csi_rs_res_id_t>(cfg.detection_resource);
+  }
+
+  return rlm_res;
+}
+
+static void calculate_rlmonitoring_config_diff(asn1::rrc_nr::radio_link_monitoring_cfg_s& out,
+                                               const radio_link_monitoring_config&        src,
+                                               const radio_link_monitoring_config&        dest)
+{
+  calculate_addmodremlist_diff(
+      out.fail_detection_res_to_add_mod_list,
+      out.fail_detection_res_to_release_list,
+      src.rlm_resources,
+      dest.rlm_resources,
+      [](const radio_link_monitoring_config::radio_link_monitoring_rs& res) { return make_asn1_rrc_rlm_resource(res); },
+      [](const radio_link_monitoring_config::radio_link_monitoring_rs& res) {
+        return static_cast<uint8_t>(res.res_id);
+      });
 }
 
 static bool calculate_bwp_dl_dedicated_diff(asn1::rrc_nr::bwp_dl_ded_s&   out,
@@ -1315,9 +1327,21 @@ static bool calculate_bwp_dl_dedicated_diff(asn1::rrc_nr::bwp_dl_ded_s&   out,
     out.pdsch_cfg_present = true;
     out.pdsch_cfg.set_release();
   }
-  // TODO: sps-Config and radioLinkMonitoringConfig.
 
-  return out.pdcch_cfg_present || out.pdsch_cfg_present;
+  if ((dest.rlm_cfg.has_value() && not src.rlm_cfg.has_value()) ||
+      (dest.rlm_cfg.has_value() && src.rlm_cfg.has_value() && dest.rlm_cfg != src.rlm_cfg)) {
+    out.radio_link_monitoring_cfg_present = true;
+    calculate_rlmonitoring_config_diff(out.radio_link_monitoring_cfg.set_setup(),
+                                       src.rlm_cfg.has_value() ? src.rlm_cfg.value() : radio_link_monitoring_config{},
+                                       dest.rlm_cfg.value());
+  } else if (src.rlm_cfg.has_value() && not dest.rlm_cfg.has_value()) {
+    out.radio_link_monitoring_cfg_present = true;
+    out.radio_link_monitoring_cfg.set_release();
+  }
+
+  // TODO: sps-Config.
+
+  return out.pdcch_cfg_present || out.pdsch_cfg_present || out.radio_link_monitoring_cfg_present;
 }
 
 asn1::rrc_nr::pucch_res_set_s srsran::srs_du::make_asn1_rrc_pucch_resource_set(const pucch_resource_set& cfg)
@@ -1367,7 +1391,7 @@ static void make_asn1_rrc_pucch_formats_common_param(asn1::rrc_nr::pucch_format_
         out.max_code_rate = pucch_max_code_rate_opts::zero_dot80;
         break;
       default:
-        srsran_assertion_failure("Invalid PUCCH Common Format 1 Max. Code Rate={}", cfg.max_c_rate);
+        srsran_assertion_failure("Invalid PUCCH Common Format 1 Max. Code Rate={}", fmt::underlying(cfg.max_c_rate));
     }
   }
   if (cfg.nof_slots == pucch_common_all_formats::num_of_slots::not_set) {
@@ -1385,7 +1409,7 @@ static void make_asn1_rrc_pucch_formats_common_param(asn1::rrc_nr::pucch_format_
         out.nrof_slots = pucch_format_cfg_s::nrof_slots_opts::n8;
         break;
       default:
-        srsran_assertion_failure("Invalid PUCCH Common Format 1 No. of slots={}", cfg.nof_slots);
+        srsran_assertion_failure("Invalid PUCCH Common Format 1 No. of slots={}", fmt::underlying(cfg.nof_slots));
     }
   }
 }
@@ -1405,36 +1429,36 @@ asn1::rrc_nr::pucch_res_s srsran::srs_du::make_asn1_rrc_pucch_resource(const puc
       const auto& f0            = std::get<pucch_format_0_cfg>(cfg.format_params);
       auto&       format0       = pucch_res.format.set_format0();
       format0.init_cyclic_shift = f0.initial_cyclic_shift;
-      format0.nrof_symbols      = f0.nof_symbols;
-      format0.start_symbol_idx  = f0.starting_sym_idx;
+      format0.nrof_symbols      = cfg.nof_symbols;
+      format0.start_symbol_idx  = cfg.starting_sym_idx;
     } break;
     case pucch_format::FORMAT_1: {
       const auto& f1            = std::get<pucch_format_1_cfg>(cfg.format_params);
       auto&       format1       = pucch_res.format.set_format1();
       format1.init_cyclic_shift = f1.initial_cyclic_shift;
-      format1.nrof_symbols      = f1.nof_symbols;
-      format1.start_symbol_idx  = f1.starting_sym_idx;
+      format1.nrof_symbols      = cfg.nof_symbols;
+      format1.start_symbol_idx  = cfg.starting_sym_idx;
       format1.time_domain_occ   = f1.time_domain_occ;
     } break;
     case pucch_format::FORMAT_2: {
       const auto& f2           = std::get<pucch_format_2_3_cfg>(cfg.format_params);
       auto&       format2      = pucch_res.format.set_format2();
-      format2.start_symbol_idx = f2.starting_sym_idx;
-      format2.nrof_symbols     = f2.nof_symbols;
+      format2.start_symbol_idx = cfg.starting_sym_idx;
+      format2.nrof_symbols     = cfg.nof_symbols;
       format2.nrof_prbs        = f2.nof_prbs;
     } break;
     case pucch_format::FORMAT_3: {
       const auto& f3           = std::get<pucch_format_2_3_cfg>(cfg.format_params);
       auto&       format3      = pucch_res.format.set_format3();
-      format3.start_symbol_idx = f3.starting_sym_idx;
-      format3.nrof_symbols     = f3.nof_symbols;
+      format3.start_symbol_idx = cfg.starting_sym_idx;
+      format3.nrof_symbols     = cfg.nof_symbols;
       format3.nrof_prbs        = f3.nof_prbs;
     } break;
     case pucch_format::FORMAT_4: {
       const auto& f4           = std::get<pucch_format_4_cfg>(cfg.format_params);
       auto&       format4      = pucch_res.format.set_format4();
-      format4.start_symbol_idx = f4.starting_sym_idx;
-      format4.nrof_symbols     = f4.nof_symbols;
+      format4.start_symbol_idx = cfg.starting_sym_idx;
+      format4.nrof_symbols     = cfg.nof_symbols;
       switch (f4.occ_index) {
         case pucch_f4_occ_idx::n0:
           format4.occ_idx = pucch_format4_s::occ_idx_opts::n0;
@@ -1449,7 +1473,7 @@ asn1::rrc_nr::pucch_res_s srsran::srs_du::make_asn1_rrc_pucch_resource(const puc
           format4.occ_idx = pucch_format4_s::occ_idx_opts::n3;
           break;
         default:
-          srsran_assertion_failure("Invalid PUCCH Format 4 index={}", f4.occ_index);
+          srsran_assertion_failure("Invalid PUCCH Format 4 index={}", fmt::underlying(f4.occ_index));
       }
       switch (f4.occ_length) {
         case pucch_f4_occ_len::n2:
@@ -1459,11 +1483,11 @@ asn1::rrc_nr::pucch_res_s srsran::srs_du::make_asn1_rrc_pucch_resource(const puc
           format4.occ_len = pucch_format4_s::occ_len_opts::n4;
           break;
         default:
-          srsran_assertion_failure("Invalid PUCCH Format 4 length={}", f4.occ_length);
+          srsran_assertion_failure("Invalid PUCCH Format 4 length={}", fmt::underlying(f4.occ_length));
       }
     } break;
     default:
-      srsran_assertion_failure("Invalid PDCCH resource format={}", cfg.format);
+      srsran_assertion_failure("Invalid PDCCH resource format={}", fmt::underlying(cfg.format));
   }
   return pucch_res;
 }
@@ -1536,7 +1560,7 @@ srsran::srs_du::make_asn1_rrc_sr_resource(const scheduling_request_resource_conf
       period_and_offset       = cfg.offset;
     } break;
     default:
-      srsran_assertion_failure("Invalid SR periodicity={}", cfg.period);
+      srsran_assertion_failure("Invalid SR periodicity={}", fmt::underlying(cfg.period));
   }
   return sr_res_cfg;
 }
@@ -1644,7 +1668,7 @@ static void make_asn1_rrc_ptrs_ul_cfg(asn1::rrc_nr::ptrs_ul_cfg_s& out, const pt
         out_trans_preco_dis.max_nrof_ports = ptrs_ul_cfg_s::transform_precoder_disabled_s_::max_nrof_ports_opts::n2;
         break;
       default:
-        srsran_assertion_failure("Invalid PTRS UL Cfg Max. Ports={}", cfg_trans_preco_dis.max_ports);
+        srsran_assertion_failure("Invalid PTRS UL Cfg Max. Ports={}", fmt::underlying(cfg_trans_preco_dis.max_ports));
     }
 
     if (cfg_trans_preco_dis.res_elem_offset !=
@@ -1663,7 +1687,8 @@ static void make_asn1_rrc_ptrs_ul_cfg(asn1::rrc_nr::ptrs_ul_cfg_s& out, const pt
               ptrs_ul_cfg_s::transform_precoder_disabled_s_::res_elem_offset_opts::offset11;
           break;
         default:
-          srsran_assertion_failure("Invalid Resource Element Offset={}", cfg_trans_preco_dis.res_elem_offset);
+          srsran_assertion_failure("Invalid Resource Element Offset={}",
+                                   fmt::underlying(cfg_trans_preco_dis.res_elem_offset));
       }
     }
 
@@ -1681,7 +1706,7 @@ static void make_asn1_rrc_ptrs_ul_cfg(asn1::rrc_nr::ptrs_ul_cfg_s& out, const pt
         out_trans_preco_dis.ptrs_pwr = ptrs_ul_cfg_s::transform_precoder_disabled_s_::ptrs_pwr_opts::p11;
         break;
       default:
-        srsran_assertion_failure("Invalid PTRS UL Cfg Power={}", cfg_trans_preco_dis.power);
+        srsran_assertion_failure("Invalid PTRS UL Cfg Power={}", fmt::underlying(cfg_trans_preco_dis.power));
     }
   }
 
@@ -1721,7 +1746,7 @@ static void make_asn1_rrc_dmrs_ul_for_pusch(asn1::rrc_nr::dmrs_ul_cfg_s& out,
         out.dmrs_add_position = dmrs_ul_cfg_s::dmrs_add_position_opts::pos3;
         break;
       default:
-        srsran_assertion_failure("Invalid UL DMRS Add. pos={}", dest.additional_positions);
+        srsran_assertion_failure("Invalid UL DMRS Add. pos={}", fmt::underlying(dest.additional_positions));
     }
   }
 
@@ -1800,7 +1825,7 @@ srsran::srs_du::make_asn1_rrc_sri_pusch_pwr_ctrl(const pusch_config::pusch_power
       sri_pwr_ctl.sri_pusch_closed_loop_idx = sri_pusch_pwr_ctrl_s::sri_pusch_closed_loop_idx_opts::i1;
       break;
     default:
-      srsran_assertion_failure("Invalid SRI Closed loop idx={}", cfg.closed_loop_idx);
+      srsran_assertion_failure("Invalid SRI Closed loop idx={}", fmt::underlying(cfg.closed_loop_idx));
   }
   return sri_pwr_ctl;
 }
@@ -1833,7 +1858,7 @@ static void make_asn1_rrc_alpha(asn1::rrc_nr::alpha_e& out, alpha cfg)
       out = alpha_opts::alpha1;
       break;
     default:
-      srsran_assertion_failure("Invalid alpha={}", cfg);
+      srsran_assertion_failure("Invalid alpha={}", fmt::underlying(cfg));
   }
 }
 
@@ -1958,7 +1983,7 @@ static void fill_uci_on_pusch(asn1::rrc_nr::uci_on_pusch_s& uci_asn1, const uci_
       uci_asn1.scaling.value = uci_on_pusch_s::scaling_opts::f1;
       break;
     default:
-      srsran_assertion_failure("Invalid Alpha Value Scaling={}", uci_in.scaling);
+      srsran_assertion_failure("Invalid Alpha Value Scaling={}", fmt::underlying(uci_in.scaling));
   }
 
   if (uci_in.beta_offsets_cfg.has_value()) {
@@ -1982,7 +2007,7 @@ static void fill_uci_on_pusch(asn1::rrc_nr::uci_on_pusch_s& uci_asn1, const uci_
   }
 }
 
-asn1::rrc_nr::pusch_time_domain_res_alloc_s
+static asn1::rrc_nr::pusch_time_domain_res_alloc_s
 make_asn1_rrc_pusch_time_domain_alloc_list(const pusch_time_domain_resource_allocation& cfg)
 {
   pusch_time_domain_res_alloc_s out{};
@@ -1996,7 +2021,7 @@ make_asn1_rrc_pusch_time_domain_alloc_list(const pusch_time_domain_resource_allo
       out.map_type = pusch_time_domain_res_alloc_s::map_type_opts::type_b;
       break;
     default:
-      srsran_assertion_failure("Invalid SCH mapping Type={}", cfg.map_type);
+      srsran_assertion_failure("Invalid SCH mapping Type={}", fmt::underlying(cfg.map_type));
   }
 
   out.start_symbol_and_len = ofdm_symbol_range_to_sliv(cfg.symbols);
@@ -2092,7 +2117,7 @@ calculate_pusch_config_diff(asn1::rrc_nr::pusch_cfg_s& out, const pusch_config& 
       out.res_alloc = pusch_cfg_s::res_alloc_opts::dyn_switch;
       break;
     default:
-      srsran_assertion_failure("Invalid PUSCH Resource Allocation={}", dest.res_alloc);
+      srsran_assertion_failure("Invalid PUSCH Resource Allocation={}", fmt::underlying(dest.res_alloc));
   }
 
   // PUSCH Time Domain Allocation.
@@ -2119,7 +2144,7 @@ calculate_pusch_config_diff(asn1::rrc_nr::pusch_cfg_s& out, const pusch_config& 
         out.mcs_table.value = pusch_cfg_s::mcs_table_opts::qam256;
         break;
       default:
-        report_fatal_error("Invalid PUSCH MCS Table={}", dest.mcs_table);
+        report_fatal_error("Invalid PUSCH MCS Table={}", fmt::underlying(dest.mcs_table));
     }
   }
 
@@ -2133,7 +2158,21 @@ calculate_pusch_config_diff(asn1::rrc_nr::pusch_cfg_s& out, const pusch_config& 
         out.transform_precoder = pusch_cfg_s::transform_precoder_opts::disabled;
         break;
       default:
-        srsran_assertion_failure("Invalid PUSCH Transform Precoder={}", dest.trans_precoder);
+        srsran_assertion_failure("Invalid PUSCH Transform Precoder={}", fmt::underlying(dest.trans_precoder));
+    }
+
+    if (dest.mcs_table != pusch_mcs_table::qam64) {
+      out.mcs_table_transform_precoder_present = true;
+      switch (dest.mcs_table) {
+        case pusch_mcs_table::qam64LowSe:
+          out.mcs_table_transform_precoder.value = pusch_cfg_s::mcs_table_transform_precoder_opts::qam64_low_se;
+          break;
+        case pusch_mcs_table::qam256:
+          out.mcs_table_transform_precoder.value = pusch_cfg_s::mcs_table_transform_precoder_opts::qam256;
+          break;
+        default:
+          report_fatal_error("Invalid PUSCH MCS Table={}", fmt::underlying(dest.mcs_table));
+      }
     }
   }
 
@@ -2145,6 +2184,22 @@ calculate_pusch_config_diff(asn1::rrc_nr::pusch_cfg_s& out, const pusch_config& 
   } else if (src.uci_cfg.has_value() && not dest.uci_cfg.has_value()) {
     out.uci_on_pusch_present = true;
     out.uci_on_pusch.set_release();
+  }
+
+  // DCI Format 0_1 size.
+  if (dest.harq_process_num_size_dci_0_1.has_value() and
+      dest.harq_process_num_size_dci_0_1 == pusch_config::harq_process_num_dci_0_1_size::n5) {
+    out.ext                                       = true;
+    out.harq_process_num_size_dci_0_1_r17_present = true;
+    out.harq_process_num_size_dci_0_1_r17         = 5;
+  }
+
+  // DCI Format 0_2 size.
+  if (dest.harq_process_num_size_dci_0_2.has_value() and
+      dest.harq_process_num_size_dci_0_2 == pusch_config::harq_process_num_dci_0_2_size::n5) {
+    out.ext                                         = true;
+    out.harq_process_num_size_dci_0_2_v1700_present = true;
+    out.harq_process_num_size_dci_0_2_v1700         = 5;
   }
 }
 
@@ -2204,7 +2259,7 @@ static srs_res_set_s make_asn1_rrc_srs_res_set(const srs_config::srs_resource_se
       srs_res_set.usage = srs_res_set_s::usage_opts::ant_switching;
       break;
     default:
-      srsran_assertion_failure("Invalid SRS resource set usage={}", cfg.srs_res_set_usage);
+      srsran_assertion_failure("Invalid SRS resource set usage={}", fmt::underlying(cfg.srs_res_set_usage));
   }
 
   if (cfg.srs_pwr_ctrl_alpha != alpha::not_set) {
@@ -2228,7 +2283,7 @@ static srs_res_set_s make_asn1_rrc_srs_res_set(const srs_config::srs_resource_se
             srs_res_set_s::srs_pwr_ctrl_adjustment_states_opts::separate_closed_loop;
         break;
       default:
-        srsran_assertion_failure("Invalid Power Control Adj. state={}", cfg.pwr_ctrl_adj_states);
+        srsran_assertion_failure("Invalid Power Control Adj. state={}", fmt::underlying(cfg.pwr_ctrl_adj_states));
     }
   }
 
@@ -2322,7 +2377,7 @@ static void make_asn1_rrc_srs_config_perioidicity_and_offset(asn1::rrc_nr::srs_p
       p_and_o       = cfg.offset;
     } break;
     default:
-      srsran_assertion_failure("Invalid periodicity and offset={}", cfg.period);
+      srsran_assertion_failure("Invalid periodicity and offset={}", fmt::underlying(cfg.period));
   }
 }
 
@@ -2342,7 +2397,7 @@ static srs_res_s make_asn1_rrc_srs_res(const srs_config::srs_resource& cfg)
       res.nrof_srs_ports = srs_res_s::nrof_srs_ports_opts::ports4;
       break;
     default:
-      srsran_assertion_failure("Invalid number of SRS ports={}", cfg.nof_ports);
+      srsran_assertion_failure("Invalid number of SRS ports={}", fmt::underlying(cfg.nof_ports));
   }
 
   if (cfg.ptrs_port != srs_config::srs_resource::ptrs_port_index::not_set) {
@@ -2355,7 +2410,7 @@ static srs_res_s make_asn1_rrc_srs_res(const srs_config::srs_resource& cfg)
         res.ptrs_port_idx = srs_res_s::ptrs_port_idx_opts::n1;
         break;
       default:
-        srsran_assertion_failure("Invalid PTRS port={}", cfg.ptrs_port);
+        srsran_assertion_failure("Invalid PTRS port={}", fmt::underlying(cfg.ptrs_port));
     }
   }
 
@@ -2381,7 +2436,7 @@ static srs_res_s make_asn1_rrc_srs_res(const srs_config::srs_resource& cfg)
       res.res_map.nrof_symbols = srs_res_s::res_map_s_::nrof_symbols_opts::n4;
       break;
     default:
-      srsran_assertion_failure("Invalid number of OFDM symb={}", cfg.res_mapping.nof_symb);
+      srsran_assertion_failure("Invalid number of OFDM symb={}", fmt::underlying(cfg.res_mapping.nof_symb));
   }
   switch (cfg.res_mapping.rept_factor) {
     case srs_nof_symbols::n1:
@@ -2394,7 +2449,7 @@ static srs_res_s make_asn1_rrc_srs_res(const srs_config::srs_resource& cfg)
       res.res_map.repeat_factor = srs_res_s::res_map_s_::repeat_factor_opts::n4;
       break;
     default:
-      srsran_assertion_failure("Invalid repetition factor={}", cfg.res_mapping.rept_factor);
+      srsran_assertion_failure("Invalid repetition factor={}", fmt::underlying(cfg.res_mapping.rept_factor));
   }
 
   res.freq_domain_position = cfg.freq_domain_pos;
@@ -2408,14 +2463,14 @@ static srs_res_s make_asn1_rrc_srs_res(const srs_config::srs_resource& cfg)
     case srs_group_or_sequence_hopping::neither:
       res.group_or_seq_hop = srs_res_s::group_or_seq_hop_opts::neither;
       break;
-    case srs_group_or_sequence_hopping::groupHopping:
+    case srs_group_or_sequence_hopping::group_hopping:
       res.group_or_seq_hop = srs_res_s::group_or_seq_hop_opts::group_hop;
       break;
-    case srs_group_or_sequence_hopping::sequenceHopping:
+    case srs_group_or_sequence_hopping::sequence_hopping:
       res.group_or_seq_hop = srs_res_s::group_or_seq_hop_opts::seq_hop;
       break;
     default:
-      srsran_assertion_failure("Invalid grp or seq hop={}", cfg.grp_or_seq_hop);
+      srsran_assertion_failure("Invalid grp or seq hop={}", fmt::underlying(cfg.grp_or_seq_hop));
   }
 
   switch (cfg.res_type) {
@@ -2436,7 +2491,7 @@ static srs_res_s make_asn1_rrc_srs_res(const srs_config::srs_resource& cfg)
                                                        cfg.periodicity_and_offset.value());
     } break;
     default:
-      srsran_assertion_failure("Invalid resource type={}", cfg.res_type);
+      srsran_assertion_failure("Invalid resource type={}", fmt::underlying(cfg.res_type));
   }
 
   res.seq_id = cfg.sequence_id;
@@ -2529,14 +2584,46 @@ static bool calculate_bwp_ul_dedicated_diff(asn1::rrc_nr::bwp_ul_ded_s& out,
   return out.pucch_cfg_present || out.pusch_cfg_present || out.srs_cfg_present;
 }
 
+static void calculate_pusch_serving_cell_cfg_diff(asn1::rrc_nr::pusch_serving_cell_cfg_s& out,
+                                                  const pusch_serving_cell_config&        src,
+                                                  const pusch_serving_cell_config&        dest)
+{
+  if (dest.nof_harq_proc != pusch_serving_cell_config::nof_harq_proc_for_pusch::n16) {
+    out.ext                                       = true;
+    out.nrof_harq_processes_for_pusch_r17_present = true;
+  }
+
+  if (dest.harq_mode_b) {
+    out.ext = true;
+    out.ul_harq_mode_r17.set_present();
+    auto* ul_harq_mode_b_ptr = out.ul_harq_mode_r17.get();
+    auto& ul_harq_mode_b     = ul_harq_mode_b_ptr->set_setup();
+    ul_harq_mode_b.from_number(0xffffffff);
+  }
+
+  // TODO: Remaining.
+}
+
 static bool
 calculate_uplink_config_diff(asn1::rrc_nr::ul_cfg_s& out, const uplink_config& src, const uplink_config& dest)
 {
   out.init_ul_bwp_present = calculate_bwp_ul_dedicated_diff(out.init_ul_bwp, src.init_ul_bwp, dest.init_ul_bwp);
 
+  if ((dest.pusch_serv_cell_cfg.has_value() && not src.pusch_serv_cell_cfg.has_value()) ||
+      (dest.pusch_serv_cell_cfg.has_value() && src.pusch_serv_cell_cfg.has_value() &&
+       dest.pusch_serv_cell_cfg != src.pusch_serv_cell_cfg)) {
+    out.pusch_serving_cell_cfg_present = true;
+    calculate_pusch_serving_cell_cfg_diff(out.pusch_serving_cell_cfg.set_setup(),
+                                          src.pusch_serv_cell_cfg.has_value() ? src.pusch_serv_cell_cfg.value()
+                                                                              : pusch_serving_cell_config{},
+                                          dest.pusch_serv_cell_cfg.value());
+  } else if (src.pusch_serv_cell_cfg.has_value() && not dest.pusch_serv_cell_cfg.has_value()) {
+    out.pusch_serving_cell_cfg_present = true;
+    out.pusch_serving_cell_cfg.set_release();
+  }
   // TODO: Remaining.
 
-  return out.init_ul_bwp_present;
+  return out.init_ul_bwp_present || out.pusch_serving_cell_cfg_present;
 }
 
 static void calculate_pdsch_serving_cell_cfg_diff(asn1::rrc_nr::pdsch_serving_cell_cfg_s& out,
@@ -2567,7 +2654,7 @@ static void calculate_pdsch_serving_cell_cfg_diff(asn1::rrc_nr::pdsch_serving_ce
             pdsch_code_block_group_tx_s::max_code_block_groups_per_transport_block_opts::n8;
         break;
       default:
-        srsran_assertion_failure("Invalid xOverhead={}", dest.x_ov_head);
+        srsran_assertion_failure("Invalid xOverhead={}", fmt::underlying(dest.x_ov_head));
     }
   } else if (src.code_block_group_tx.has_value() && not dest.code_block_group_tx.has_value()) {
     out.code_block_group_tx_present = true;
@@ -2587,7 +2674,7 @@ static void calculate_pdsch_serving_cell_cfg_diff(asn1::rrc_nr::pdsch_serving_ce
         out.xoverhead = pdsch_serving_cell_cfg_s::xoverhead_opts::xoh18;
         break;
       default:
-        srsran_assertion_failure("Invalid xOverhead={}", dest.x_ov_head);
+        srsran_assertion_failure("Invalid xOverhead={}", fmt::underlying(dest.x_ov_head));
     }
   }
 
@@ -2612,8 +2699,13 @@ static void calculate_pdsch_serving_cell_cfg_diff(asn1::rrc_nr::pdsch_serving_ce
       case pdsch_serving_cell_config::nof_harq_proc_for_pdsch::n16:
         out.nrof_harq_processes_for_pdsch = pdsch_serving_cell_cfg_s::nrof_harq_processes_for_pdsch_opts::n16;
         break;
+      case pdsch_serving_cell_config::nof_harq_proc_for_pdsch::n32:
+        out.nrof_harq_processes_for_pdsch_present       = false;
+        out.ext                                         = true;
+        out.nrof_harq_processes_for_pdsch_v1700_present = true;
+        break;
       default:
-        srsran_assertion_failure("Invalid max. nof.HARQ process for PDSCH={}", dest.nof_harq_proc);
+        srsran_assertion_failure("Invalid max. nof.HARQ process for PDSCH={}", fmt::underlying(dest.nof_harq_proc));
     }
   }
 
@@ -2710,7 +2802,7 @@ static sched_request_to_add_mod_s make_asn1_rrc_scheduling_request(const schedul
         req.sr_prohibit_timer = sched_request_to_add_mod_s::sr_prohibit_timer_opts::ms128;
         break;
       default:
-        srsran_assertion_failure("Invalid SR prohibit timer={}", cfg.prohibit_timer.value());
+        srsran_assertion_failure("Invalid SR prohibit timer={}", fmt::underlying(cfg.prohibit_timer.value()));
     }
   }
 
@@ -2731,7 +2823,7 @@ static sched_request_to_add_mod_s make_asn1_rrc_scheduling_request(const schedul
       req.sr_trans_max = sched_request_to_add_mod_s::sr_trans_max_opts::n64;
       break;
     default:
-      srsran_assertion_failure("Invalid SR trans. max={}", cfg.max_tx);
+      srsran_assertion_failure("Invalid SR trans. max={}", fmt::underlying(cfg.max_tx));
   }
 
   return req;
@@ -2750,8 +2842,12 @@ static asn1::rrc_nr::drx_cfg_s make_asn1_drx_config(const drx_config& cfg)
     report_fatal_error("Invalid Inactivity timer value {}", cfg.inactivity_timer.count());
   }
 
-  out.drx_retx_timer_dl.value = drx_cfg_s::drx_retx_timer_dl_opts::sl0;
-  out.drx_retx_timer_ul.value = drx_cfg_s::drx_retx_timer_ul_opts::sl0;
+  if (not asn1::number_to_enum(out.drx_retx_timer_dl, cfg.retx_timer_dl)) {
+    report_fatal_error("Invalid Retransmission DL timer value {}", cfg.retx_timer_dl);
+  }
+  if (not asn1::number_to_enum(out.drx_retx_timer_ul, cfg.retx_timer_ul)) {
+    report_fatal_error("Invalid Retransmission UL timer value {}", cfg.retx_timer_ul);
+  }
 
   auto&    out_cycle = out.drx_long_cycle_start_offset;
   unsigned offset    = cfg.long_start_offset.count();
@@ -2860,7 +2956,7 @@ static void make_asn1_rrc_bsr_config(asn1::rrc_nr::bsr_cfg_s& out, const bsr_con
       out.retx_bsr_timer = bsr_cfg_s::retx_bsr_timer_opts::sf10240;
       break;
     default:
-      srsran_assertion_failure("Invalid BSR Retx. Timer={}", cfg.retx_timer);
+      srsran_assertion_failure("Invalid BSR Retx. Timer={}", fmt::underlying(cfg.retx_timer));
   }
 
   switch (cfg.periodic_timer) {
@@ -2913,7 +3009,7 @@ static void make_asn1_rrc_bsr_config(asn1::rrc_nr::bsr_cfg_s& out, const bsr_con
       out.periodic_bsr_timer = bsr_cfg_s::periodic_bsr_timer_opts::infinity;
       break;
     default:
-      srsran_assertion_failure("Invalid Periodic BSR Timer={}", cfg.periodic_timer);
+      srsran_assertion_failure("Invalid Periodic BSR Timer={}", fmt::underlying(cfg.periodic_timer));
   }
 
   if (cfg.lc_sr_delay_timer.has_value()) {
@@ -2941,7 +3037,7 @@ static void make_asn1_rrc_bsr_config(asn1::rrc_nr::bsr_cfg_s& out, const bsr_con
         out.lc_ch_sr_delay_timer = bsr_cfg_s::lc_ch_sr_delay_timer_opts::sf2560;
         break;
       default:
-        srsran_assertion_failure("Invalid BSR LC SR Delay Timer={}", cfg.lc_sr_delay_timer.value());
+        srsran_assertion_failure("Invalid BSR LC SR Delay Timer={}", fmt::underlying(cfg.lc_sr_delay_timer.value()));
     }
   }
 }
@@ -2977,7 +3073,7 @@ static tag_s make_asn1_rrc_tag_config(const time_alignment_group& cfg)
       tag_cfg.time_align_timer = time_align_timer_opts::infinity;
       break;
     default:
-      srsran_assertion_failure("Invalid Time Align. Timer={}", cfg.ta_timer);
+      srsran_assertion_failure("Invalid Time Align. Timer={}", fmt::underlying(cfg.ta_timer));
   }
 
   return tag_cfg;
@@ -3011,7 +3107,7 @@ static void make_asn1_rrc_phr_config(asn1::rrc_nr::phr_cfg_s& out, const phr_con
       out.phr_periodic_timer = phr_cfg_s::phr_periodic_timer_opts::infinity;
       break;
     default:
-      srsran_assertion_failure("Invalid PHR Periodic Timer={}", cfg.periodic_timer);
+      srsran_assertion_failure("Invalid PHR Periodic Timer={}", fmt::underlying(cfg.periodic_timer));
   }
 
   switch (cfg.prohibit_timer) {
@@ -3040,7 +3136,7 @@ static void make_asn1_rrc_phr_config(asn1::rrc_nr::phr_cfg_s& out, const phr_con
       out.phr_prohibit_timer = phr_cfg_s::phr_prohibit_timer_opts::sf1000;
       break;
     default:
-      srsran_assertion_failure("Invalid PHR Prohibit Timer={}", cfg.prohibit_timer);
+      srsran_assertion_failure("Invalid PHR Prohibit Timer={}", fmt::underlying(cfg.prohibit_timer));
   }
 
   switch (cfg.power_factor_change) {
@@ -3057,7 +3153,7 @@ static void make_asn1_rrc_phr_config(asn1::rrc_nr::phr_cfg_s& out, const phr_con
       out.phr_tx_pwr_factor_change = phr_cfg_s::phr_tx_pwr_factor_change_opts::infinity;
       break;
     default:
-      srsran_assertion_failure("Invalid PHR Prohibit Timer={}", cfg.power_factor_change);
+      srsran_assertion_failure("Invalid PHR Prohibit Timer={}", fmt::underlying(cfg.power_factor_change));
   }
 
   out.multiple_phr         = cfg.multiple_phr;
@@ -3072,7 +3168,7 @@ static void make_asn1_rrc_phr_config(asn1::rrc_nr::phr_cfg_s& out, const phr_con
       out.phr_mode_other_cg = phr_cfg_s::phr_mode_other_cg_opts::virtual_value;
       break;
     default:
-      srsran_assertion_failure("Invalid PHR Mode={}", cfg.phr_mode);
+      srsran_assertion_failure("Invalid PHR Mode={}", fmt::underlying(cfg.phr_mode));
   }
 }
 
@@ -3146,6 +3242,11 @@ static static_vector<rlc_bearer_config, MAX_NOF_RB_LCIDS> fill_rlc_bearers(const
     bearer.rlc_cfg            = &drb.rlc_cfg;
     bearer.mac_cfg            = &drb.mac_cfg;
   }
+
+  // Note: DRB ID and LCID assignments are not necessarily in the same order.
+  std::sort(
+      list.begin(), list.end(), [](const rlc_bearer_config& a, const rlc_bearer_config& b) { return a.lcid < b.lcid; });
+
   return list;
 }
 
@@ -3212,7 +3313,7 @@ static ssb_mtc_s make_ssb_mtc(const du_cell_config& du_cell_cfg)
       ret.periodicity_and_offset.set_sf160() = 0;
       break;
     default:
-      report_fatal_error("Invalud SSB period={}", du_cell_cfg.ssb_cfg.ssb_period);
+      report_fatal_error("Invalud SSB period={}", fmt::underlying(du_cell_cfg.ssb_cfg.ssb_period));
   }
   ret.dur.value = ssb_mtc_s::dur_opts::sf5;
 
@@ -3299,6 +3400,26 @@ bool srsran::srs_du::calculate_reconfig_with_sync_diff(asn1::rrc_nr::recfg_with_
 
   out.t304.value = recfg_with_sync_s::t304_opts::ms2000;
 
+  // In case of CFRA.
+  out.rach_cfg_ded_present = dest.cfra.has_value();
+  if (out.rach_cfg_ded_present) {
+    const auto&     rach_common = *du_cell_cfg.ul_cfg_common.init_ul_bwp.rach_cfg_common;
+    rach_cfg_ded_s& rach_ded    = out.rach_cfg_ded.set_ul();
+    rach_ded.cfra_present       = true;
+    // Use rachConfigCommon to get "occasions".
+    rach_ded.cfra.occasions_present = false;
+    // Note: All RA preambles not used for CBRA are used for CFRA.
+    rach_ded.cfra.ext                          = true;
+    rach_ded.cfra.total_nof_ra_preambs_present = true;
+    rach_ded.cfra.total_nof_ra_preambs = rach_common.total_nof_ra_preambles - rach_common.nof_cb_preambles_per_ssb;
+    // Make CFRA-SSB-Resource.
+    auto&          cfra_ssb = rach_ded.cfra.res.set_ssb();
+    cfra_ssb_res_s ssbres;
+    ssbres.ssb           = 0;
+    ssbres.ra_preamb_idx = dest.cfra.value().preamble_id;
+    cfra_ssb.ssb_res_list.push_back(ssbres);
+  }
+
   out.ext = true;
   out.smtc.set_present();
   *out.smtc = make_ssb_mtc(du_cell_cfg);
@@ -3314,7 +3435,10 @@ static gap_cfg_s make_gap_cfg(const meas_gap_config& cfg)
 
   gap.gap_offset = cfg.offset;
   gap.mgl.value  = (asn1::rrc_nr::gap_cfg_s::mgl_opts::options)cfg.mgl;
-  gap.mgrp.value = (asn1::rrc_nr::gap_cfg_s::mgrp_opts::options)cfg.mgrp;
+  if (not asn1::number_to_enum(gap.mgrp, (uint8_t)cfg.mgrp)) {
+    gap.mgrp.value = asn1::rrc_nr::gap_cfg_s::mgrp_opts::nulltype;
+  }
+  gap.mgta.value = gap_cfg_s::mgta_opts::ms0;
 
   return gap;
 }

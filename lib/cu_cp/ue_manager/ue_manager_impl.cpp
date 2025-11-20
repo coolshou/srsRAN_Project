@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,6 +21,7 @@
  */
 
 #include "ue_manager_impl.h"
+#include "srsran/cu_cp/cu_cp_configuration.h"
 #include "srsran/cu_cp/security_manager_config.h"
 
 using namespace srsran;
@@ -32,6 +33,7 @@ void cu_cp_ue::stop()
 }
 
 ue_manager::ue_manager(const cu_cp_configuration& cu_cp_cfg) :
+  cu_cp_config(cu_cp_cfg),
   ue_config(cu_cp_cfg.ue),
   up_config(up_resource_manager_cfg{cu_cp_cfg.bearers.drb_config, cu_cp_cfg.admission.max_nof_drbs_per_ue}),
   sec_config(security_manager_config{cu_cp_cfg.security.int_algo_pref_list, cu_cp_cfg.security.enc_algo_pref_list}),
@@ -46,7 +48,6 @@ void ue_manager::stop()
 }
 
 ue_index_t ue_manager::add_ue(du_index_t                     du_index,
-                              plmn_identity                  plmn,
                               std::optional<gnb_du_id_t>     du_id,
                               std::optional<pci_t>           pci,
                               std::optional<rnti_t>          rnti,
@@ -58,7 +59,7 @@ ue_index_t ue_manager::add_ue(du_index_t                     du_index,
   }
 
   if (du_id.has_value() && du_id.value() == gnb_du_id_t::invalid) {
-    logger.warning("CU-CP UE creation Failed. Cause: Invalid gNB-DU ID={}", du_id.value());
+    logger.warning("CU-CP UE creation Failed. Cause: Invalid gNB-DU ID={}", fmt::underlying(du_id.value()));
     return ue_index_t::invalid;
   }
 
@@ -98,22 +99,29 @@ ue_index_t ue_manager::add_ue(du_index_t                     du_index,
   ue_task_scheduler_impl ue_sched = ue_task_scheds.create_ue_task_sched(new_ue_index);
 
   // Create UE object
-  ues.emplace(
-      std::piecewise_construct,
-      std::forward_as_tuple(new_ue_index),
-      std::forward_as_tuple(
-          new_ue_index, du_index, up_config, sec_config, std::move(ue_sched), plmn, du_id, pci, rnti, pcell_index));
+  ues.emplace(std::piecewise_construct,
+              std::forward_as_tuple(new_ue_index),
+              std::forward_as_tuple(new_ue_index,
+                                    du_index,
+                                    *cu_cp_config.services.timers,
+                                    *cu_cp_config.services.cu_cp_executor,
+                                    up_config,
+                                    sec_config,
+                                    std::move(ue_sched),
+                                    du_id,
+                                    pci,
+                                    rnti,
+                                    pcell_index));
 
   // Add PCI and RNTI to lookup.
   if (pci.has_value() && rnti.has_value()) {
     pci_rnti_to_ue_index.emplace(std::make_tuple(pci.value(), rnti.value()), new_ue_index);
   }
 
-  logger.info("ue={} du_index={} plmn={}{}{}{}{}: Created new CU-CP UE",
+  logger.info("ue={} du_index={}{}{}{}{}: Created new CU-CP UE",
               new_ue_index,
               du_index,
-              plmn,
-              du_id.has_value() ? fmt::format(" gnb_du_id={}", du_id.value()) : "",
+              du_id.has_value() ? fmt::format(" gnb_du_id={}", fmt::underlying(du_id.value())) : "",
               pci.has_value() ? fmt::format(" pci={}", pci.value()) : "",
               rnti.has_value() ? fmt::format(" rnti={}", rnti.value()) : "",
               pcell_index.has_value() ? fmt::format(" pcell_index={}", pcell_index.value()) : "");
@@ -150,6 +158,59 @@ void ue_manager::remove_ue(ue_index_t ue_index)
   ues.erase(ue_index);
 
   logger.debug("ue={}: Removed", ue_index);
+}
+
+bool ue_manager::set_plmn(ue_index_t ue_index, const plmn_identity& plmn)
+{
+  if (ue_index == ue_index_t::invalid) {
+    logger.warning("Can't set PLMN for UE with invalid UE index");
+    return false;
+  }
+
+  if (ues.find(ue_index) == ues.end()) {
+    logger.warning("ue={}: Set PLMN called for inexistent UE", ue_index);
+    return false;
+  }
+
+  if (blocked_plmns.find(plmn) != blocked_plmns.end()) {
+    logger.warning(
+        "ue={}: CU-CP UE creation Failed. Cause: UE connections for PLMN {} are currently not allowed", ue_index, plmn);
+    return false;
+  }
+
+  ues.at(ue_index).get_ue_context().plmn = plmn;
+  logger.debug("ue={}: Set PLMN to {}", ue_index, plmn);
+  return true;
+}
+
+void ue_manager::add_blocked_plmns(const std::vector<plmn_identity>& plmns)
+{
+  for (const auto& plmn : plmns) {
+    if (blocked_plmns.insert(plmn).second) {
+      logger.info("Blocking new UE connections for PLMN {}", plmn);
+    }
+  }
+}
+
+void ue_manager::remove_blocked_plmns(const std::vector<plmn_identity>& plmns)
+{
+  for (const auto& plmn : plmns) {
+    if (blocked_plmns.erase(plmn)) {
+      logger.info("Re-allowing new UE connections for PLMN {}", plmn);
+    }
+  }
+}
+
+std::vector<cu_cp_ue*> ue_manager::find_ues(plmn_identity plmn)
+{
+  std::vector<cu_cp_ue*> found_ues;
+  for (auto& ue : ues) {
+    if (ue.second.get_ue_context().plmn == plmn) {
+      found_ues.push_back(&ue.second);
+    }
+  }
+
+  return found_ues;
 }
 
 ue_index_t ue_manager::get_ue_index(pci_t pci, rnti_t rnti)
@@ -210,8 +271,12 @@ cu_cp_ue* ue_manager::set_ue_du_context(ue_index_t      ue_index,
   // Add PCI and RNTI to lookup.
   pci_rnti_to_ue_index.emplace(std::make_tuple(pci, rnti), ue_index);
 
-  logger.debug(
-      "ue={}: Updated UE with gnb_du_id={} pci={} rnti={} pcell_index={}", ue_index, du_id, pci, rnti, pcell_index);
+  logger.debug("ue={}: Updated UE with gnb_du_id={} pci={} rnti={} pcell_index={}",
+               fmt::underlying(ue_index),
+               fmt::underlying(du_id),
+               pci,
+               rnti,
+               fmt::underlying(pcell_index));
 
   return &ue;
 }
@@ -237,14 +302,18 @@ size_t ue_manager::get_nof_du_ues(du_index_t du_index)
   return ue_count;
 }
 
-std::vector<metrics_report::ue_info> ue_manager::handle_ue_metrics_report_request() const
+std::vector<cu_cp_metrics_report::ue_info> ue_manager::handle_ue_metrics_report_request() const
 {
-  std::vector<metrics_report::ue_info> report;
+  if (!cu_cp_config.metrics.layers_cfg.enable_rrc) {
+    return {};
+  }
+
+  std::vector<cu_cp_metrics_report::ue_info> report;
   report.reserve(ues.size());
 
   for (const auto& ue : ues) {
     report.emplace_back();
-    metrics_report::ue_info& ue_report = report.back();
+    cu_cp_metrics_report::ue_info& ue_report = report.back();
 
     ue_report.rnti  = ue.second.get_c_rnti();
     ue_report.du_id = ue.second.get_du_id();

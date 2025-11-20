@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2024 Software Radio Systems Limited
+# Copyright 2021-2025 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -19,13 +19,16 @@
 #
 
 set(SOURCES
+        du_low_executor_mapper.cpp
         du_low_factory.cpp
         du_low_impl.cpp
+        du_low_metrics_collector_impl.cpp
         o_du_low_factory.cpp
-        o_du_low_impl.cpp)
+        o_du_low_impl.cpp
+        o_du_low_metrics_collector_impl.cpp)
 
 add_library(srsran_o_du_low STATIC ${SOURCES})
-set(DU_LOW_LIBRARIES srsran_phy_fapi_adaptor srsran_upper_phy srsran_channel_precoder)
+set(DU_LOW_LIBRARIES srsran_phy_fapi_adaptor srsran_upper_phy)
 
 # Hardware acceleration for both PUSCH and PDSCH is enabled by default when using DPDK.
 if (DPDK_FOUND)

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -39,7 +39,7 @@ enum lcid_t : uint16_t {
   INVALID_LCID     = 64
 };
 
-constexpr inline lcid_t uint_to_lcid(std::underlying_type_t<lcid_t> val)
+constexpr lcid_t uint_to_lcid(std::underlying_type_t<lcid_t> val)
 {
   return static_cast<lcid_t>(val);
 }
@@ -48,7 +48,7 @@ constexpr inline lcid_t uint_to_lcid(std::underlying_type_t<lcid_t> val)
 /// \remark See TS 38.331, maxLC-ID.
 constexpr lcid_t MAX_LCID = LCID_MAX_DRB;
 
-inline bool is_srb(lcid_t lcid)
+constexpr bool is_srb(lcid_t lcid)
 {
   return lcid <= LCID_SRB3;
 }

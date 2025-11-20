@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2024 Software Radio Systems Limited
+ * Copyright 2021-2025 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,52 +22,11 @@
 
 #pragma once
 
-#include "srsran/ran/gnb_du_id.h"
-#include "srsran/ran/nr_cgi.h"
-#include "srsran/ran/pci.h"
-#include "srsran/ran/rnti.h"
-#include "srsran/rrc/rrc_ue.h"
+#include "srsran/cu_cp/cu_cp_metrics_notifier.h"
 #include <chrono>
 #include <memory>
 
-namespace srsran {
-namespace srs_cu_cp {
-
-/// CU-CP Metrics report.
-struct metrics_report {
-  struct ue_info {
-    /// Current C-RNTI of the UE.
-    rnti_t rnti;
-    /// ID of the DU the UE is connected to.
-    gnb_du_id_t du_id;
-    /// PCI of the UE's PCell.
-    pci_t pci;
-    /// RRC connection state of the UE.
-    rrc_state rrc_connection_state;
-  };
-  struct cell_info {
-    nr_cell_global_id_t cgi;
-    pci_t               pci;
-  };
-  struct du_info {
-    /// ID of the DU connected to the CU-CP.
-    gnb_du_id_t            id;
-    std::vector<cell_info> cells;
-  };
-
-  std::vector<ue_info> ues;
-  std::vector<du_info> dus;
-};
-
-/// Interface used by the CU-CP to report metrics.
-class metrics_report_notifier
-{
-public:
-  virtual ~metrics_report_notifier() = default;
-
-  /// \brief Used to notify a new metrics report.
-  virtual void notify_metrics_report_request(const metrics_report& report) = 0;
-};
+namespace srsran::srs_cu_cp {
 
 /// Request for CU-CP metrics reporting.
 struct periodic_metric_report_request {
@@ -75,7 +34,7 @@ struct periodic_metric_report_request {
   /// sent once.
   std::chrono::milliseconds period{0};
   /// \brief The notifier used by the CU-CP to report metrics.
-  metrics_report_notifier* report_notifier = nullptr;
+  cu_cp_metrics_report_notifier* report_notifier = nullptr;
 };
 
 /// Metric Report session instance.
@@ -107,8 +66,7 @@ public:
   ///
   /// Note: Given its blocking nature, avoid calling this method in contexts other than unit tests.
   /// \return The metrics report.
-  virtual metrics_report request_metrics_report() const = 0;
+  virtual cu_cp_metrics_report request_metrics_report() const = 0;
 };
 
-} // namespace srs_cu_cp
-} // namespace srsran
+} // namespace srsran::srs_cu_cp
