@@ -14,7 +14,8 @@ Build-Depends:
     libsctp-dev,
     libuhd-dev,
     uhd-host,
-    txt2man
+    txt2man,
+    libyaml-cpp-dev
 Standards-Version: 4.2.1
 Homepage: http://www.softwareradiosystems.com
 Vcs-Git: https://github.com/srsRAN/srsRAN.git
